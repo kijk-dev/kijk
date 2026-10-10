@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>kijk</title>
+<link rel="icon" href="favicon.png" sizes="32x32">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<aside id="rail" aria-label="Agents">
+  <header>
+    <span>Agents</span>
+    <button id="rail-toggle" class="icon-btn" aria-label="Hide agents" data-tip="Hide agents">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m11 17-5-5 5-5"/><path d="m18 17-5-5 5-5"/></svg>
+    </button>
+  </header>
+  <p id="status" class="status" hidden></p>
+  <ul id="rows"></ul>
+</aside>
+<div class="split" data-var="--rail" role="separator" aria-controls="rail" aria-orientation="vertical" aria-label="Resize agents pane" tabindex="0"></div>
+<aside id="sidebar" aria-label="Folder">
+  <div id="sidebar-head" hidden>
+    <span id="folder-name"></span>
+    <button id="goto-btn" class="icon-btn" aria-label="Go to file" data-tip="Go to file">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+    </button>
+    <nav id="tabs" hidden>
+      <button data-tab="files" class="active" data-tip="Files" aria-label="Files" aria-pressed="true">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>
+      </button>
+      <button data-tab="git" data-tip="Git" aria-label="Git" aria-pressed="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3v12"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
+      </button>
+    </nav>
+  </div>
+  <p id="git-note" class="note" hidden></p>
+  <div id="files"></div>
+  <div id="git" hidden>
+    <div id="branchbar">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3v12"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
+      <span id="branch-name"></span>
+      <span id="branch-total"></span>
+      <button id="ahead" class="pill" hidden></button>
+      <span id="behind" class="pill" hidden></span>
+      <button id="push-btn" class="tool" hidden>Push</button>
+    </div>
+    <div id="syncline" hidden>
+      <span id="sync-text"></span>
+      <button id="fetch-btn" class="tool" title="Fetch from the remote" hidden>Fetch</button>
+    </div>
+    <div id="prline" hidden></div>
+    <div id="git-lists">
+      <div id="changes" tabindex="-1"></div>
+    </div>
+    <div id="graph"></div>
+    <pre id="git-output" hidden></pre>
+    <form id="commit">
+      <textarea id="message" rows="3" placeholder="Commit message" aria-label="Commit message"></textarea>
+      <label class="check" hidden><input type="checkbox" id="push-after"> <span id="push-after-text">Push after commit</span></label>
+      <button id="commit-btn" type="submit" disabled>Commit</button>
+    </form>
+  </div>
+</aside>
+<div class="split" data-var="--side" role="separator" aria-controls="sidebar" aria-orientation="vertical" aria-label="Resize files pane" tabindex="0"></div>
+<main>
+  <div id="filetabs" role="tablist" aria-label="Open files" hidden></div>
+  <div id="findbar" hidden></div>
+  <div id="viewer"><p class="empty">Select an agent</p></div>
+</main>
+<footer id="statusbar" aria-label="Status" tabindex="-1"></footer>
+<p id="announce" class="sr-only" aria-live="polite"></p>
+<script type="module" src="app.js"></script>
+</body>
+</html>
