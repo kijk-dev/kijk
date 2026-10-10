@@ -1,9 +1,6 @@
-<h1>
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset=".github/assets/kijk-logo-dark.svg">
-    <img alt="kijk" src=".github/assets/kijk-logo.svg" height="72">
-  </picture>
-</h1>
+<img alt="" src=".github/assets/kijk-icon.svg" width="96">
+
+# kijk
 
 kijk is an agent-native code viewer: a small, fast, read-only view of the work of your running coding agents.
 
