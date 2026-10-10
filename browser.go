@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -89,9 +90,10 @@ func (s system) isDefault(b browser) bool {
 func (s system) locate(b browser) string {
 	switch s.goos {
 	case "darwin":
-		for _, dir := range []string{"/Applications", filepath.Join(s.home, "Applications")} {
-			app := filepath.Join(dir, b.macApp+".app")
-			if s.exists(filepath.Join(app, "Contents", "MacOS", b.macApp)) {
+		// path, not filepath: these are macOS paths even when the tests run on Windows.
+		for _, dir := range []string{"/Applications", path.Join(s.home, "Applications")} {
+			app := path.Join(dir, b.macApp+".app")
+			if s.exists(path.Join(app, "Contents", "MacOS", b.macApp)) {
 				return app
 			}
 		}
