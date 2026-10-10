@@ -31,7 +31,12 @@ function Install-Kijk {
             if ($f.Count -eq 2 -and $f[1].TrimStart('*') -eq $name) { $f[0].ToLower() }
         })
         if ($want.Count -ne 1) { throw "checksums.txt has no single line for $name. Nothing was installed." }
-        if ((Get-FileHash -Algorithm SHA256 $tmp).Hash.ToLower() -ne $want[0]) {
+        # Not Get-FileHash: Windows PowerShell started from PowerShell 7 cannot load it.
+        $sha = [Security.Cryptography.SHA256]::Create()
+        $file = [IO.File]::OpenRead($tmp)
+        try { $hash = -join ($sha.ComputeHash($file) | ForEach-Object { $_.ToString('x2') }) }
+        finally { $file.Dispose(); $sha.Dispose() }
+        if ($hash -ne $want[0]) {
             throw "$name does not match checksums.txt. Nothing was installed."
         }
         $new = ((& $tmp version) -replace '^kijk ', '').Trim()
