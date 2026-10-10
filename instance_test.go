@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"testing/fstest"
 )
@@ -46,11 +47,13 @@ func TestSecondStartFindsTheRunningOne(t *testing.T) {
 	}
 
 	p, _ := statePath(port)
-	if st, _ := os.Stat(p); st.Mode().Perm() != 0o600 {
-		t.Fatalf("state file mode = %v", st.Mode().Perm())
-	}
-	if st, _ := os.Stat(filepath.Join(dir, "kijk")); st.Mode().Perm() != 0o700 {
-		t.Fatalf("state folder mode = %v", st.Mode().Perm())
+	if runtime.GOOS != "windows" {
+		if st, _ := os.Stat(p); st.Mode().Perm() != 0o600 {
+			t.Fatalf("state file mode = %v", st.Mode().Perm())
+		}
+		if st, _ := os.Stat(filepath.Join(dir, "kijk")); st.Mode().Perm() != 0o700 {
+			t.Fatalf("state folder mode = %v", st.Mode().Perm())
+		}
 	}
 	remove()
 	if _, err := os.Stat(p); !os.IsNotExist(err) {
