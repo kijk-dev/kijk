@@ -1,0 +1,26 @@
+name: release
+on:
+  push:
+    tags: ['v*.*.*']
+permissions:
+  contents: write
+jobs:
+  release:
+    # macOS, because the macOS binaries need cgo for the file watcher.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Check that kijk points at this repo
+        run: |
+          want="https://github.com/$GITHUB_REPOSITORY/releases"
+          for f in release.go install.sh install.ps1; do
+            grep -q "$want" "$f" || { echo "$f does not point at $want"; exit 1; }
+          done
+      - run: go test ./...
+      - run: scripts/release.sh "${GITHUB_REF_NAME#v}"
+      - run: gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}
