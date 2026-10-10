@@ -48,14 +48,10 @@ The name is Dutch for "look".
 
 ### Git
 
-- The Git tab lists conflicts, staged files and unstaged files, with `+N −N` line counts.
-- Click a file to see a unified diff. Jump between the changes, show more context, or show the full file.
-- Review with the keyboard: arrow keys move from file to file, and Space stages or unstages a file.
-- A branch graph shows your branch, its upstream, the main line and the pull request target. It includes the commits that are not pushed yet. Click a commit to see its files and their diffs.
-- The branch bar shows how many lines the whole branch adds and removes, compared with its pull request target or the main line.
-- Actions: stage and unstage whole files, commit, push (or publish a new branch) and fetch.
-- kijk uses your installed `git`, so your config, credentials, hooks and worktrees all apply.
-- kijk has no discard, checkout, pull or stash, so a click cannot destroy an agent's work.
+- The Git tab lists the changed files with `+N −N` line counts. Click a file to see its diff, or review with the arrow keys and Space to stage.
+- A branch graph shows your branch, the main line and the pull request target, with the commits that are not pushed yet.
+- Stage, commit, push and fetch. There is no discard, checkout, pull or stash, so a click cannot destroy an agent's work.
+- kijk uses your installed `git`, so your config, credentials and hooks apply.
 
 ### Pull requests
 
