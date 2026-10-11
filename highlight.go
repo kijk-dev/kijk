@@ -103,7 +103,6 @@ func highlight(lexer chroma.Lexer, lines []string) [][]tok {
 }
 
 // hlCache keeps colored windows of recently viewed files.
-// ponytail: evicts an arbitrary entry at 16; LRU if scrolling back through big files gets slow.
 type hlCache struct {
 	mu sync.Mutex
 	m  map[string][][]tok
@@ -112,8 +111,6 @@ type hlCache struct {
 func newHlCache() *hlCache { return &hlCache{m: map[string][][]tok{}} }
 
 // lines returns lines [from, to) of the file, colored.
-// ponytail: in files over hlWholeFile, a comment or string opened more than hlContext lines above
-// the window is colored as code; a full background pass would fix that for big files too.
 func (c *hlCache) lines(path string, idx *fileIndex, from, to int) ([][]tok, error) {
 	to = min(to, idx.Lines)
 	if from >= to {

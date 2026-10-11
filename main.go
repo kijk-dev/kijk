@@ -41,6 +41,7 @@ func main() {
 	noOpen := flag.Bool("no-open", false, "do not open the browser")
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	noCheck := flag.Bool("no-update-check", false, "do not check GitHub for a new kijk version")
+	noTelemetry := flag.Bool("no-telemetry", false, "do not send anonymous usage events")
 	flag.Parse()
 	if *showVersion {
 		fmt.Println("kijk", kijkVersion)
@@ -89,9 +90,16 @@ func main() {
 	if isRelease(kijkVersion) {
 		go u.run(updateCheckOn(*noCheck))
 	}
+	var tel *telemetry
+	if telemetryOn(*noTelemetry, kijkVersion, posthogKey) {
+		tel = newTelemetry(posthogKey, kijkVersion)
+		if !restarted {
+			tel.send("kijk started", nil)
+		}
+	}
 	h := newHub()
 	rts := &roots{}
-	go watchSessions(newScanner(claudeDir()), h, rts, u)
+	go watchSessions(newScanner(claudeDir()), h, rts, u, tel)
 
 	web, _ := fs.Sub(webFiles, "web")
 	url := uiURL(*port, token)
@@ -130,9 +138,8 @@ func sessionMessage(rows []Row, err error, k kijkState) []byte {
 	return b
 }
 
-// ponytail: 1 s poll of the sessions folder; add a file watcher if the poll shows up in CPU use.
 // An update state change publishes at once, with the rows from the last poll.
-func watchSessions(s *scanner, h *hub, rts *roots, u *updater) {
+func watchSessions(s *scanner, h *hub, rts *roots, u *updater, tel *telemetry) {
 	var rows []Row
 	var err error
 	next := time.Now()
@@ -140,6 +147,7 @@ func watchSessions(s *scanner, h *hub, rts *roots, u *updater) {
 		if !time.Now().Before(next) {
 			rows, err = s.scan()
 			rts.set(rows)
+			tel.scanned(agentCount(rows), time.Now())
 			next = time.Now().Add(time.Second)
 		}
 		h.publish(sessionMessage(rows, err, u.state()))

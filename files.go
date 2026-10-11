@@ -177,7 +177,6 @@ type fileIndex struct {
 }
 
 // indexCache keeps the line index of recently opened files.
-// ponytail: evicts an arbitrary entry when full; LRU if tab switching gets slow.
 type indexCache struct {
 	mu sync.Mutex
 	m  map[string]*fileIndex

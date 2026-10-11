@@ -420,7 +420,7 @@ func graph(root, target string) (graphResult, error) {
 			res.Fork = fork
 			since, _ := git(root, append(append([]string{"rev-list", "--count"}, refs...), "^"+fork, "--")...)
 			k, _ := strconv.Atoi(since)
-			n = min(300, max(n, k+10)) // ponytail: when main ran more than 300 commits ahead, older ones of HEAD drop off
+			n = min(300, max(n, k+10))
 		}
 	}
 	// Each commit since the split takes the colour of the first branch that has it; older ones are this branch's.
