@@ -294,7 +294,6 @@ const external = url => /^([a-z][a-z0-9+.-]*:|\/\/)/i.test(url);
 const slug = s => s.trim().toLowerCase().replace(/[^\p{L}\p{N}\s_-]/gu, '').replace(/\s/g, '-');
 
 // prepare opens web links in a new tab and links to files in a kijk tab.
-// ponytail: images from the folder show as their name until kijk can serve them.
 function prepare(frag, file, md, doc) {
   for (const img of frag.querySelectorAll('img')) {
     if (!external(img.getAttribute('src') || '')) {

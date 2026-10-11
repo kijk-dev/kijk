@@ -86,7 +86,6 @@ func lastCwd(path string) string {
 	}
 }
 
-// ponytail: first prompt is looked for in the first 1 MB only.
 func firstPrompt(path string) string {
 	f, err := os.Open(path)
 	if err != nil {

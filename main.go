@@ -138,7 +138,6 @@ func sessionMessage(rows []Row, err error, k kijkState) []byte {
 	return b
 }
 
-// ponytail: 1 s poll of the sessions folder; add a file watcher if the poll shows up in CPU use.
 // An update state change publishes at once, with the rows from the last poll.
 func watchSessions(s *scanner, h *hub, rts *roots, u *updater, tel *telemetry) {
 	var rows []Row
