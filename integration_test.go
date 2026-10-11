@@ -108,7 +108,7 @@ func startKijk(t *testing.T, exe string) *kijkProcess {
 	ln.Close()
 	k := &kijkProcess{port: port, exited: make(chan struct{}), env: []string{
 		"HOME=" + home, "XDG_CONFIG_HOME=" + filepath.Join(home, ".config"), "APPDATA=" + home,
-		"CLAUDE_CONFIG_DIR=" + t.TempDir(), "KIJK_NO_UPDATE_CHECK=1",
+		"CLAUDE_CONFIG_DIR=" + t.TempDir(), "KIJK_NO_UPDATE_CHECK=1", "KIJK_NO_TELEMETRY=1",
 	}}
 	k.cmd = exec.Command(exe, "-port", fmt.Sprint(port), "-no-open")
 	k.cmd.Env = append(os.Environ(), k.env...)

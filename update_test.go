@@ -17,8 +17,6 @@ func TestMain(m *testing.M) {
 		os.Stdout.WriteString("kijk " + v + "\n")
 		os.Exit(0)
 	}
-	// The kijk binaries the integration tests build are releases with the real key.
-	os.Setenv("KIJK_NO_TELEMETRY", "1")
 	os.Exit(m.Run())
 }
 

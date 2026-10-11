@@ -87,6 +87,15 @@ func (t *telemetry) scanned(agents int, now time.Time) {
 	}
 }
 
+// agentCount counts sessions, not rows: one row holds every agent in the same repo.
+func agentCount(rows []Row) int {
+	n := 0
+	for _, r := range rows {
+		n += len(r.Names)
+	}
+	return n
+}
+
 func (t *telemetry) run() {
 	for e := range t.events {
 		t.post(e)

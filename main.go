@@ -148,9 +148,7 @@ func watchSessions(s *scanner, h *hub, rts *roots, u *updater, tel *telemetry) {
 		if !time.Now().Before(next) {
 			rows, err = s.scan()
 			rts.set(rows)
-			if err == nil {
-				tel.scanned(len(rows), time.Now())
-			}
+			tel.scanned(agentCount(rows), time.Now())
 			next = time.Now().Add(time.Second)
 		}
 		h.publish(sessionMessage(rows, err, u.state()))

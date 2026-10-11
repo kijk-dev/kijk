@@ -136,6 +136,55 @@ func TestActiveOncePerLocalDay(t *testing.T) {
 	}
 }
 
+func TestAgentCountCountsSessions(t *testing.T) {
+	rows := []Row{{Names: []string{"a", "b", "c"}}, {Names: []string{"d"}}}
+	if n := agentCount(rows); n != 4 {
+		t.Fatalf("agentCount = %d, want 4", n)
+	}
+}
+
+func TestSlowOrFailingServerDoesNotStopLaterEvents(t *testing.T) {
+	var mu sync.Mutex
+	var got []string
+	delivered := make(chan struct{}, 3)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var e capturedEvent
+		json.NewDecoder(r.Body).Decode(&e)
+		switch e.Event {
+		case "error":
+			w.WriteHeader(http.StatusInternalServerError)
+		case "slow":
+			select {
+			case <-r.Context().Done():
+			case <-time.After(5 * time.Second):
+			}
+			return
+		}
+		mu.Lock()
+		got = append(got, e.Event)
+		mu.Unlock()
+		delivered <- struct{}{}
+	}))
+	t.Cleanup(srv.Close)
+	tel := &telemetry{url: srv.URL, client: &http.Client{Timeout: 200 * time.Millisecond}, events: make(chan telemetryEvent, 16)}
+	go tel.run()
+	for _, name := range []string{"error", "slow", "after"} {
+		tel.send(name, nil)
+	}
+	for range 2 {
+		select {
+		case <-delivered:
+		case <-time.After(3 * time.Second):
+			t.Fatal("events after a slow or failing request were not sent")
+		}
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if !slices.Equal(got, []string{"error", "after"}) {
+		t.Fatalf("delivered %v", got)
+	}
+}
+
 func TestSendNeverBlocks(t *testing.T) {
 	tel := &telemetry{events: make(chan telemetryEvent, 1)}
 	done := make(chan struct{})
@@ -189,6 +238,7 @@ func TestInstallIDInReadOnlyFolder(t *testing.T) {
 
 func TestNoInstallIDWhenOff(t *testing.T) {
 	dir := useConfigDir(t)
+	t.Setenv("KIJK_NO_TELEMETRY", "")
 	t.Setenv("DO_NOT_TRACK", "1")
 	var tel *telemetry
 	if telemetryOn(false, "0.3.0", "phc_x") {
