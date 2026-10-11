@@ -23,3 +23,15 @@ _Avoid_: diff size, diffstat, churn
 **Branch total**:
 The line counts of everything a branch adds to its PR target or main line: its commits since they split, plus its uncommitted work. A folder that is on the main line itself has no branch total.
 _Avoid_: PR size, branch diff
+
+**Telemetry**:
+The anonymous usage events kijk sends about itself: that it started, that it ran on a day, its version, operating system, and how many agents run. Never folder paths, names, code, or an IP address. On by default, and the user can turn it off.
+_Avoid_: analytics, tracking, usage stats
+
+**Install ID**:
+A random ID that tells one kijk install apart from another, so active days count per install. It says nothing about the user or the machine.
+_Avoid_: user ID, device ID, distinct ID
+
+**Active day**:
+A calendar day on which kijk ran on an install, even if it was started on an earlier day.
+_Avoid_: session, visit

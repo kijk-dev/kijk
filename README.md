@@ -202,6 +202,13 @@ export KIJK_NO_UPDATE_CHECK=1
 
 You can also start kijk with `-no-update-check`. `kijk update` and the **Update** button still work.
 
+## Telemetry
+
+kijk sends anonymous usage data, so we know how many people use it and on which systems.
+It never sends your code, your folder or file names, or anything about you.
+
+To turn it off, set `KIJK_NO_TELEMETRY=1` or `DO_NOT_TRACK=1`, or start kijk with `-no-telemetry`.
+
 ## Uninstall
 
 1. Stop kijk.
