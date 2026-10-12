@@ -30,32 +30,38 @@ func uiURL(port int, token string) string {
 }
 
 // runningURL gives the UI address of a kijk that already serves port for this user, else "".
-// A state file left by a crash points at a dead or foreign server, so it does not count.
 func runningURL(port int) string {
+	s, ok := runningInstance(port)
+	if !ok {
+		return ""
+	}
+	return uiURL(port, s.Token)
+}
+
+// runningInstance reads the state file of port and checks that a kijk answers there.
+// A state file left by a crash points at a dead or foreign server, so it does not count.
+func runningInstance(port int) (instance, bool) {
+	var s instance
 	p, err := statePath(port)
 	if err != nil {
-		return ""
+		return s, false
 	}
 	b, err := os.ReadFile(p)
 	if err != nil {
-		return ""
+		return s, false
 	}
-	var s instance
 	if json.Unmarshal(b, &s) != nil || s.Port != port || s.Token == "" {
-		return ""
+		return s, false
 	}
 	req, _ := http.NewRequest("GET", fmt.Sprintf("http://127.0.0.1:%d/api/ping", port), nil)
 	req.AddCookie(&http.Cookie{Name: cookieName(port), Value: s.Token})
 	resp, err := (&http.Client{Timeout: time.Second}).Do(req)
 	if err != nil {
-		return ""
+		return s, false
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 16))
-	if resp.StatusCode != http.StatusOK || string(body) != "kijk" {
-		return ""
-	}
-	return uiURL(port, s.Token)
+	return s, resp.StatusCode == http.StatusOK && string(body) == "kijk"
 }
 
 // saveInstance writes the state file, readable only by the user, and returns a func that removes it.

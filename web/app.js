@@ -1,6 +1,6 @@
-import { el, get, post } from './api.js';
+import { el, get, post, base, folderKey, splitKey, storeKey } from './api.js';
 import { showTree, paint, refreshTree, openFolders, selectFile } from './tree.js';
-import { refreshView, jumpChange } from './view.js';
+import { refreshView, jumpChange, showMessage } from './view.js';
 import { setTabs, tabState, openTab, activeTab, recentFiles, closeActive, goPlace } from './tabs.js';
 import { refreshTip } from './tip.js';
 import { showPR } from './pr.js';
@@ -37,11 +37,11 @@ let pr = null; // pull request status of the open folder
 const prs = new Map(); // last status per folder, shown at once when a folder opens again
 
 // cachedPR also looks in localStorage, so the last status survives a reload.
-function cachedPR(root) {
-  if (!prs.has(root)) {
-    try { prs.set(root, JSON.parse(localStorage.getItem(`kijk.pr:${root}`))); } catch { prs.set(root, null); }
+function cachedPR(key) {
+  if (!prs.has(key)) {
+    try { prs.set(key, JSON.parse(localStorage.getItem(`kijk.pr:${storeKey(key)}`))); } catch { prs.set(key, null); }
   }
-  return prs.get(root);
+  return prs.get(key);
 }
 let prCall = 0;
 let prTimer = 0;
@@ -54,25 +54,33 @@ const drafts = new Map(); // unsent commit message per folder
 let busy = false;
 let git = null; // last status of the open folder
 const viewer = document.getElementById('viewer');
-let rows = [];
-let openRoot = null; // stays open when its session ends, until the user picks another row
+const staleBar = document.getElementById('stalebar');
+const staleText = document.getElementById('stale-text');
+let rows = []; // every row in the list, local and remote, each with its folder key and machine
+let machines = null; // the saved remote machines from the last message; null when none is saved
+let numbered = []; // the rows that have a Ctrl+Alt number, in order
+let openKey = null; // stays open when its session ends, until the user picks another row
+let openMachine = '';
+let offline = false; // the open folder's machine is not connected, so the view is frozen
 let folderEvents = null;
 const finished = new Set(); // folders whose agent went idle since the user last opened them
+const collapsed = new Set(); // machine groups folded by the user; '' is Local
+try { for (const g of JSON.parse(localStorage.getItem('kijk.collapsed')) || []) collapsed.add(g); } catch { /* storage blocked */ }
 const mac = /Mac/.test(navigator.platform);
 let sidebar = 'files'; // the sidebar tab chosen for the open folder
 let reopen = null; // the folder open before a reload, opened again once its row shows up
 try { reopen = localStorage.getItem('kijk.last'); } catch { /* storage blocked */ }
 
 // Per-folder state: file tabs, expanded tree folders and sidebar tab. It survives reloads and restarts.
-function loadState(root) {
-  try { return JSON.parse(localStorage.getItem(`kijk.folder:${root}`)) || {}; } catch { return {}; }
+function loadState(key) {
+  try { return JSON.parse(localStorage.getItem(`kijk.folder:${storeKey(key)}`)) || {}; } catch { return {}; }
 }
 
 function saveState() {
-  if (!openRoot) return;
+  if (!openKey) return;
   try {
-    localStorage.setItem(`kijk.folder:${openRoot}`, JSON.stringify({ ...tabState(), open: openFolders(), sidebar }));
-    localStorage.setItem('kijk.last', openRoot);
+    localStorage.setItem(`kijk.folder:${storeKey(openKey)}`, JSON.stringify({ ...tabState(), open: openFolders(), sidebar }));
+    localStorage.setItem('kijk.last', openKey);
   } catch { /* storage blocked */ }
 }
 
@@ -98,8 +106,8 @@ function showStatus(text, isError) {
 // Row elements are kept and updated in place, so a click is not lost when the list refreshes.
 const rowEls = new Map();
 
-function rowEl(root) {
-  let li = rowEls.get(root);
+function rowEl(key) {
+  let li = rowEls.get(key);
   if (li) return li;
   li = el('li');
   li.tabIndex = 0;
@@ -124,7 +132,7 @@ function rowEl(root) {
   li.badge.append(li.initials, li.key);
   top.append(li.agent, li.badge, li.names, li.done, li.when);
   li.append(top, li.repo);
-  rowEls.set(root, li);
+  rowEls.set(key, li);
   return li;
 }
 
@@ -143,78 +151,314 @@ function initials(name) {
 // hue gives each folder a stable badge tint, so two repos with the same initials still differ.
 const hue = s => [...s].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 360, 0);
 
+function rowItem(r, n) {
+  const li = rowEl(r.key);
+  li.row = r;
+  li.classList.toggle('selected', r.key === openKey);
+  li.classList.toggle('busy', r.busy && !r.stale);
+  li.classList.toggle('finished', finished.has(r.key));
+  li.classList.toggle('stale', !!r.stale);
+  li.toggleAttribute('aria-disabled', !!r.stale);
+  const state = r.stale ? `${r.machine} is unreachable` : r.busy ? 'Busy' : finished.has(r.key) ? 'Finished since you last looked' : 'Idle';
+  const where = r.branch ? `${r.repo} · ${r.branch}` : r.repo;
+  const key = n ? `${mac ? '⌃⌥' : 'Ctrl+Alt+'}${n} to open` : '';
+  li.initials.textContent = initials(r.repo);
+  li.badge.style.setProperty('--hue', hue(r.machine + r.root));
+  li.key.textContent = n || '';
+  li.names.textContent = r.names.join(', ');
+  li.when.textContent = ago(r.lastActivity);
+  const agent = AGENTS[r.agent] || { label: r.agent, icon: '' };
+  if (li.agent.dataset.kind !== r.agent) {
+    li.agent.dataset.kind = r.agent;
+    li.agent.className = `agent ${r.agent}`;
+    li.agent.innerHTML = agent.icon; // a fixed string from AGENTS, never server text
+  }
+  li.where.textContent = where;
+  li.dataset.tip = [r.names.join(', '), where, `${agent.label} · ${state} · ${ago(r.lastActivity)}`, r.machine ? `${r.machine}:${r.root}` : r.root, key].filter(Boolean).join('\n');
+  li.setAttribute('aria-label', `${r.names.join(', ')}, ${agent.label}, ${where}, ${state}`);
+  return li;
+}
+
+const CHEVRON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>';
+const LAPTOP = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 16V7a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v9m16 0H4m16 0 1.28 2.55a1 1 0 0 1-.9 1.45H3.62a1 1 0 0 1-.9-1.45L4 16"/></svg>';
+const SERVER = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="7" rx="1.5"/><rect x="3" y="13" width="18" height="7" rx="1.5"/><path d="M7 7.5h.01M7 16.5h.01"/></svg>';
+const COPY = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+
+// Each machine state: the class of its dot and the word on its header.
+const STATES = {
+  connected: ['connected', 'connected'],
+  connecting: ['connecting', 'connecting…'],
+  'needs-login': ['login', 'needs login'],
+  unreachable: ['unreachable', 'unreachable'],
+  error: ['error', 'error'],
+  'install-failed': ['error', 'install failed'],
+  disabled: ['disabled', 'disabled'],
+};
+
+const groupEls = new Map();
+
+function toggleGroup(name) {
+  if (collapsed.has(name)) collapsed.delete(name);
+  else collapsed.add(name);
+  try { localStorage.setItem('kijk.collapsed', JSON.stringify([...collapsed])); } catch { /* storage blocked */ }
+  render();
+}
+
+function groupEl(name) {
+  let g = groupEls.get(name);
+  if (g) return g;
+  g = el('li', 'mgroup');
+  g.rail = el('div', 'mdiv');
+  g.head = el('button', 'mhead');
+  g.head.type = 'button';
+  g.railIcon = el('span', 'micon');
+  g.icon = el('span', 'micon');
+  g.name = el('span', 'mname');
+  g.right = el('span', 'mright');
+  g.note = el('div', 'mnote');
+  g.list = el('ul');
+  const caret = el('span', 'caret');
+  caret.innerHTML = CHEVRON;
+  g.rail.append(g.railIcon);
+  g.head.append(caret, g.icon, g.name, el('span', 'mrule'), g.right);
+  g.append(g.rail, g.head, g.note, g.list);
+  g.head.onclick = g.rail.onclick = () => {
+    if (!g.classList.contains('disabled')) toggleGroup(name);
+  };
+  groupEls.set(name, g);
+  return g;
+}
+
+function command(text) {
+  const box = el('div', 'cmd');
+  const copy = el('button', 'icon-btn');
+  copy.type = 'button';
+  copy.innerHTML = COPY;
+  copy.setAttribute('aria-label', `Copy ${text}`);
+  copy.dataset.tip = 'Copy';
+  copy.onclick = () => {
+    navigator.clipboard?.writeText(text).catch(() => {});
+    copy.dataset.tip = 'Copied';
+    refreshTip();
+    setTimeout(() => { copy.dataset.tip = 'Copy'; }, 1500);
+  };
+  box.append(el('span', null, text), copy);
+  return box;
+}
+
+// note is what a group shows under its header when it has no rows to show, or nothing.
+function note(m, count) {
+  switch (m.state) {
+    case 'connected':
+      return count ? [] : [el('p', null, m.message || 'No running agents')];
+    case 'needs-login':
+      return [el('p', null, 'Log in from a terminal:'), command(`kijk machine login ${m.name}`)];
+    case 'unreachable':
+      return count ? [] : [el('p', null, 'Trying again in a moment.'), el('p', 'said', m.message)];
+    case 'error':
+    case 'install-failed':
+      return [el('p', null, m.message)];
+  }
+  return [];
+}
+
+function groupItem(m, own, open, items) {
+  const local = m.name === '';
+  const off = m.state === 'disabled';
+  const live = m.state === 'connected';
+  const [dot, word] = STATES[m.state] || ['error', m.state];
+  const g = groupEl(m.name);
+  g.classList.toggle('open', open);
+  g.classList.toggle('disabled', off);
+  const icon = (local ? LAPTOP : SERVER) + (local ? '' : `<span class="mdot ${dot}"></span>`);
+  if (g.icon.dataset.icon !== icon) {
+    g.icon.dataset.icon = icon;
+    g.icon.innerHTML = g.railIcon.innerHTML = icon; // fixed strings, never server text
+  }
+  g.name.textContent = local ? 'Local' : m.name;
+  const agents = `${own.length} agent${own.length === 1 ? '' : 's'}`;
+  const tip = local ? `Local\nThis computer · ${agents}`
+    : off ? `${m.name}\nDisabled · kijk does not connect to it\nkijk machine enable ${m.name} enables it again`
+    : [`${m.name}\n${word[0].toUpperCase()}${word.slice(1)}${live ? `${m.system ? ` · ${m.system}` : ''} · ${agents}` : ''}`, live ? '' : m.message].filter(Boolean).join('\n');
+  g.head.dataset.tip = g.rail.dataset.tip = tip;
+  g.head.setAttribute('aria-label', `${local ? 'Local' : m.name}, ${local ? 'this computer' : word}, ${agents}`);
+  if (off) {
+    g.head.removeAttribute('aria-expanded');
+    g.head.setAttribute('aria-disabled', 'true');
+  } else {
+    g.head.setAttribute('aria-expanded', open);
+    g.head.removeAttribute('aria-disabled');
+  }
+  const right = [];
+  if (!local && !live) right.push(el('span', null, word));
+  if (!open && own.length) {
+    const dots = el('span', 'mact');
+    dots.setAttribute('aria-hidden', 'true');
+    for (const r of own.slice(0, 6)) dots.append(el('i', r.stale ? '' : r.busy ? 'busy' : finished.has(r.key) ? 'fin' : ''));
+    if (own.length > 6) dots.append(el('b', null, `+${own.length - 6}`));
+    right.push(dots);
+  }
+  g.right.replaceChildren(...right);
+  const lines = open ? note(local ? { state: 'connected' } : m, own.length) : [];
+  g.note.replaceChildren(...lines);
+  g.note.hidden = !lines.length;
+  sync(g.list, open ? items : []);
+  return g;
+}
+
+// sync puts items into list, touching the page only when the order changed.
+function sync(list, items) {
+  const same = items.length === list.children.length && items.every((li, i) => list.children[i] === li);
+  if (!same) list.replaceChildren(...items);
+}
+
 function render() {
-  const items = rows.map((r, i) => {
-    const li = rowEl(r.root);
-    li.row = r;
-    li.classList.toggle('selected', r.root === openRoot);
-    li.classList.toggle('busy', r.busy);
-    li.classList.toggle('finished', finished.has(r.root));
-    const state = r.busy ? 'Busy' : finished.has(r.root) ? 'Finished since you last looked' : 'Idle';
-    const where = r.branch ? `${r.repo} · ${r.branch}` : r.repo;
-    const key = i < 9 ? `${mac ? '⌃⌥' : 'Ctrl+Alt+'}${i + 1} to open` : '';
-    li.initials.textContent = initials(r.repo);
-    li.badge.style.setProperty('--hue', hue(r.root));
-    li.key.textContent = i < 9 ? i + 1 : '';
-    li.names.textContent = r.names.join(', ');
-    li.when.textContent = ago(r.lastActivity);
-    const agent = AGENTS[r.agent] || { label: r.agent, icon: '' };
-    if (li.agent.dataset.kind !== r.agent) {
-      li.agent.dataset.kind = r.agent;
-      li.agent.className = `agent ${r.agent}`;
-      li.agent.innerHTML = agent.icon; // a fixed string from AGENTS, never server text
-    }
-    li.where.textContent = where;
-    li.dataset.tip = [r.names.join(', '), where, `${agent.label} · ${state} · ${ago(r.lastActivity)}`, r.root, key].filter(Boolean).join('\n');
-    li.setAttribute('aria-label', `${r.names.join(', ')}, ${agent.label}, ${where}, ${state}`);
-    return li;
-  });
-  for (const root of rowEls.keys()) if (!rows.some(r => r.root === root)) rowEls.delete(root);
-  const same = items.length === rowsEl.children.length && items.every((li, i) => rowsEl.children[i] === li);
-  if (!same) rowsEl.replaceChildren(...items);
+  numbered = [];
+  const number = r => {
+    if (r.stale || numbered.length >= 9) return 0;
+    numbered.push(r);
+    return numbered.length;
+  };
+  if (!machines) {
+    sync(rowsEl, rows.map(r => rowItem(r, number(r))));
+    groupEls.clear();
+  } else {
+    const groups = [{ name: '', state: 'connected' }, ...machines];
+    sync(rowsEl, groups.map(m => {
+      const own = rows.filter(r => r.machine === m.name);
+      const open = m.state !== 'disabled' && !collapsed.has(m.name);
+      return groupItem(m, own, open, own.map(r => rowItem(r, open ? number(r) : 0)));
+    }));
+    for (const name of groupEls.keys()) if (!groups.some(m => m.name === name)) groupEls.delete(name);
+  }
+  for (const key of rowEls.keys()) if (!rows.some(r => r.key === key)) rowEls.delete(key);
   refreshTip();
 }
 
 function open(r) {
-  if (r.root === openRoot) return;
-  if (openRoot) drafts.set(openRoot, messageEl.value);
+  if (r.key === openKey || r.stale) return;
+  if (openKey) drafts.set(openKey, messageEl.value);
   saveState();
-  openRoot = r.root;
-  finished.delete(r.root);
-  const state = loadState(r.root);
+  openKey = r.key;
+  openMachine = r.machine;
+  offline = false;
+  showOffline();
+  finished.delete(r.key);
+  const state = loadState(r.key);
   sidebar = state.sidebar || 'files';
-  messageEl.value = drafts.get(r.root) || '';
+  messageEl.value = drafts.get(r.key) || '';
   git = null;
   showOutput('');
   updateCommit();
-  showTree(filesEl, r.root, {
+  showTree(filesEl, r.key, {
     open: state.open,
     reveal: r.cwd,
-    onFile: (path, pin) => openTab({ kind: 'file', path }, pin),
+    onFile: (path, pin) => { if (!offline) openTab({ kind: 'file', path }, pin); },
     onToggle: saveState,
   });
-  setTabs(r.root, state, tabsChanged);
+  setTabs(r.key, state, tabsChanged);
   tabsEl.hidden = true;
   sidebarHead.hidden = false;
-  folderName.textContent = r.repo;
-  folderName.title = r.root;
+  showFolderName(r);
   document.title = `${r.repo} — kijk`;
   gitNote.hidden = true;
-  pr = cachedPR(r.root);
+  pr = cachedPR(r.key);
   upHash = null;
   showPR(prLine, pr);
   refreshPR();
   selectTab('files');
   refreshGit();
   render();
+  followFolder();
+}
+
+// showFolderName names the open folder and, for a remote folder, its machine.
+function showFolderName(r) {
+  const parts = [r.repo];
+  if (r.machine) {
+    const on = el('span', 'onm');
+    on.innerHTML = SERVER;
+    on.append(r.machine);
+    on.dataset.tip = `On ${r.machine}\n${r.root}`;
+    parts.push(on);
+  }
+  folderName.replaceChildren(...parts);
+  folderName.title = r.machine ? '' : r.root;
+}
+
+function followFolder() {
   folderEvents?.close();
-  folderEvents = new EventSource('/api/folder-events?' + new URLSearchParams({ root: r.root }));
+  const { machine, root } = splitKey(openKey);
+  folderEvents = new EventSource(`${base(machine)}/api/folder-events?` + new URLSearchParams({ root }));
   folderEvents.onmessage = e => {
+    if (offline) return;
     const change = JSON.parse(e.data);
     refreshGit();
     refreshTree(change);
     refreshView(change);
   };
+}
+
+// closeFolder empties the viewer, as when kijk starts: for a folder whose machine was disabled.
+function closeFolder() {
+  if (openKey) drafts.set(openKey, messageEl.value);
+  saveState();
+  folderEvents?.close();
+  folderEvents = null;
+  openKey = null;
+  openMachine = '';
+  offline = false;
+  showOffline();
+  git = null;
+  pr = null;
+  setTabs(null, {}, () => {});
+  showMessage(viewer, 'Select an agent');
+  filesEl.replaceChildren();
+  sidebarHead.hidden = true;
+  tabsEl.hidden = true;
+  gitNote.hidden = true;
+  selectTab('files');
+  document.title = 'kijk';
+}
+
+// followMachine keeps the open remote folder in step with its machine: frozen while the machine
+// is away, reloaded when it is back, closed when it is disabled or removed.
+function followMachine() {
+  if (!openKey || !openMachine) return;
+  const m = machines?.find(x => x.name === openMachine);
+  if (!m || m.state === 'disabled') return closeFolder();
+  const down = m.state !== 'connected';
+  if (down !== offline) {
+    offline = down;
+    showOffline(m);
+    if (!down) reload();
+  } else if (down) {
+    showOffline(m);
+  }
+}
+
+function showOffline(m) {
+  document.body.classList.toggle('offline', offline);
+  staleBar.hidden = !offline;
+  if (offline && m) {
+    const name = el('b', null, m.name);
+    const first = m.state === 'needs-login'
+      ? [name, ` needs a login. Run kijk machine login ${m.name}`]
+      : [name, ' is unreachable. Reconnecting…'];
+    staleText.replaceChildren(...first, el('br'), el('span', 'then', 'Git actions and opening files are off until it is back.'));
+  }
+  updateCommit();
+  updatePush();
+}
+
+// reload refreshes everything on screen after the open folder's machine is back.
+function reload() {
+  const all = { all: true, git: true, paths: [] };
+  followFolder();
+  refreshGit();
+  refreshTree(all);
+  refreshView(all);
+  refreshPR();
 }
 
 // An open PR's target branch is what "behind", conflicts and the graph compare with.
@@ -224,7 +468,8 @@ const prTarget = () => (['open', 'draft'].includes(pr?.pr?.state) ? pr.pr.target
 // and every minute while CI runs.
 async function refreshPR() {
   clearTimeout(prTimer);
-  const root = openRoot, call = ++prCall;
+  if (offline) return;
+  const root = openKey, call = ++prCall;
   let res;
   try {
     res = await get('pr', { root });
@@ -232,8 +477,8 @@ async function refreshPR() {
     res = cachedPR(root); // keep what was shown
   }
   prs.set(root, res);
-  try { localStorage.setItem(`kijk.pr:${root}`, JSON.stringify(res)); } catch { /* storage blocked */ }
-  if (root !== openRoot || call !== prCall) return;
+  try { localStorage.setItem(`kijk.pr:${storeKey(root)}`, JSON.stringify(res)); } catch { /* storage blocked */ }
+  if (root !== openKey || call !== prCall) return;
   const before = prTarget();
   pr = res;
   showPR(prLine, pr);
@@ -242,14 +487,15 @@ async function refreshPR() {
 }
 
 async function refreshGit() {
-  const root = openRoot;
+  if (offline) return; // keep what is on screen until the machine is back
+  const root = openKey;
   let st;
   try {
     st = await get('status', { root, target: prTarget() });
   } catch (err) {
     st = { git: false, error: err.message };
   }
-  if (root !== openRoot) return;
+  if (root !== openKey || offline) return;
   tabsEl.hidden = !st.git;
   gitNote.hidden = !st.error;
   gitNote.textContent = st.error || '';
@@ -283,7 +529,7 @@ async function refreshGit() {
   pushAfterText.textContent = st.upstream ? `Push to ${st.upstream}` : 'Publish to origin';
   updatePush();
 
-  const openChange = (change, mode, pin) => openTab(mode === 'conflict'
+  const openChange = (change, mode, pin) => !offline && openTab(mode === 'conflict'
     ? { kind: 'file', path: change.path }
     : { kind: 'diff', mode, path: change.path, orig: change.orig, hash: change.hash }, pin);
   showGraph(graphEl, root, openChange, prTarget());
@@ -329,33 +575,33 @@ function showOutput(text, ok) {
 }
 
 function updateCommit() {
-  commitBtn.disabled = busy || !git?.staged.length || !messageEl.value.trim();
+  commitBtn.disabled = busy || offline || !git?.staged.length || !messageEl.value.trim();
   commitBtn.textContent = busy ? 'Working…' : 'Commit';
 }
 
 function updatePush() {
-  pushBtn.disabled = busy || !git || (!!git.upstream && !git.ahead);
-  fetchBtn.disabled = busy;
+  pushBtn.disabled = busy || offline || !git || (!!git.upstream && !git.ahead);
+  fetchBtn.disabled = busy || offline;
 }
 
 // run sends a git action for the open folder and refreshes. On failure it shows git's output.
 async function run(kind, body = {}) {
-  if (busy) return null;
+  if (busy || offline) return null;
   busy = true;
   updateCommit();
   updatePush();
   showOutput('');
-  const root = openRoot;
+  const root = openKey;
   let res = null;
   try {
     res = await post(kind, { root, ...body });
   } catch (err) {
-    if (root === openRoot) showOutput(err.message);
+    if (root === openKey) showOutput(err.message);
   }
   busy = false;
   updateCommit();
   updatePush();
-  if (root === openRoot) refreshGit();
+  if (root === openKey) refreshGit();
   return res;
 }
 
@@ -383,7 +629,7 @@ commitForm.onsubmit = async e => {
   if (commitBtn.disabled) return;
   if (!(await run('commit', { message: messageEl.value }))) return;
   messageEl.value = '';
-  drafts.delete(openRoot);
+  drafts.delete(openKey);
   updateCommit();
   if (pushAfterEl.checked && !pushAfterEl.parentElement.hidden) await pushNow();
 };
@@ -418,7 +664,7 @@ tabsEl.onclick = e => {
 
 // The sidebar keys also move the focus there, as IntelliJ's tool window keys do.
 function showSidebar(tab) {
-  if (!openRoot || (tab === 'git' && tabsEl.hidden)) return;
+  if (!openKey || (tab === 'git' && tabsEl.hidden)) return;
   switchSidebar(tab);
   const list = tab === 'files' ? filesEl : changesEl;
   (list.querySelector('[tabindex="0"]') || list).focus();
@@ -432,7 +678,7 @@ commitBtn.title = `Commit (${keyLabel('commit')})`;
 onKey('filesTab', () => showSidebar('files'));
 onKey('gitTab', () => showSidebar('git'));
 onKey('commit', () => {
-  if (!openRoot || tabsEl.hidden) return;
+  if (!openKey || tabsEl.hidden) return;
   switchSidebar('git');
   messageEl.focus();
 });
@@ -446,12 +692,12 @@ onKey('back', () => goPlace(-1));
 onKey('forward', () => goPlace(1));
 onKey('nextChange', () => jumpChange(1));
 onKey('prevChange', () => jumpChange(-1));
-onKey('recentFiles', () => openRecent(openRoot && recentFiles(), path => openTab({ kind: 'file', path }, true)));
+onKey('recentFiles', () => openRecent(openKey && !offline && recentFiles(), path => openTab({ kind: 'file', path }, true)));
 
 // Ctrl+Alt+1…9 opens the folder of rows 1 to 9. e.code, because Alt changes e.key on macOS.
 document.addEventListener('keydown', e => {
   const n = /^Digit([1-9])$/.exec(e.code)?.[1];
-  const r = n && rows[n - 1];
+  const r = n && numbered[n - 1];
   if (!r || !e.ctrlKey || !e.altKey || e.metaKey || e.shiftKey) return;
   e.preventDefault();
   open(r);
@@ -479,7 +725,7 @@ narrow.onchange = fitRail;
 fitRail();
 addEventListener('pagehide', saveState);
 
-const gotoFile = () => openGotoFile(openRoot, path => openTab({ kind: 'file', path }, true));
+const gotoFile = () => openGotoFile(!offline && openKey, path => openTab({ kind: 'file', path }, true));
 gotoBtn.dataset.tip = `Go to file\n${keyLabel('gotoFile')}`;
 gotoBtn.onclick = gotoFile;
 onKey('gotoFile', gotoFile);
@@ -536,14 +782,22 @@ const events = new EventSource('/api/events');
 events.onmessage = e => {
   const msg = JSON.parse(e.data);
   showKijk(msg.kijk);
-  for (const r of msg.rows || []) {
-    if (r.busy) finished.delete(r.root);
-    else if (r.root !== openRoot && rows.find(x => x.root === r.root)?.busy) finished.add(r.root);
+  machines = msg.machines || null;
+  const next = (msg.rows || []).map(r => ({ ...r, key: r.root, machine: '' }));
+  for (const m of machines || []) {
+    for (const r of m.rows) next.push({ ...r, key: folderKey(m.name, r.root), machine: m.name, stale: m.stale });
   }
-  rows = msg.rows || [];
+  for (const r of next) {
+    if (r.stale) continue;
+    if (r.busy) finished.delete(r.key);
+    else if (r.key !== openKey && rows.find(x => x.key === r.key)?.busy) finished.add(r.key);
+  }
+  rows = next;
+  // With machines, an empty group says so under its own header.
   if (msg.error) showStatus(msg.error, true);
-  else showStatus(rows.length ? '' : 'No running agents');
-  const last = !openRoot && rows.find(r => r.root === reopen);
+  else showStatus(rows.length || machines ? '' : 'No running agents');
+  followMachine();
+  const last = !openKey && rows.find(r => r.key === reopen && !r.stale);
   if (last) open(last);
   else render();
 };

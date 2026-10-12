@@ -12,7 +12,6 @@ import (
 	"net/url"
 	"os"
 	"path"
-	"runtime"
 	"strings"
 	"time"
 )
@@ -100,11 +99,11 @@ func checksumFor(sums []byte, name string) (string, error) {
 	return found, nil
 }
 
-// downloadRelease writes this platform's binary of release v to w, checked against checksums.txt.
-func downloadRelease(v string, w io.Writer) error {
+// downloadRelease writes the goos/goarch binary of release v to w, checked against checksums.txt.
+func downloadRelease(v, goos, goarch string, w io.Writer) error {
 	client := &http.Client{Timeout: 5 * time.Minute}
 	base := releasesURL() + "/download/v" + v + "/"
-	name := assetName(runtime.GOOS, runtime.GOARCH)
+	name := assetName(goos, goarch)
 	var sums bytes.Buffer
 	if err := download(client, base+"checksums.txt", &sums); err != nil {
 		return err

@@ -59,7 +59,7 @@ func installVersion(v, exe string) error {
 	}
 	tmp := f.Name()
 	defer os.Remove(tmp)
-	err = downloadRelease(v, f)
+	err = downloadRelease(v, runtime.GOOS, runtime.GOARCH, f)
 	if cerr := f.Close(); err == nil {
 		err = cerr
 	}

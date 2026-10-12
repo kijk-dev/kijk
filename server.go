@@ -18,10 +18,18 @@ import (
 // viewers on different ports would otherwise log each other out.
 func cookieName(port int) string { return fmt.Sprintf("kijk-%d", port) }
 
-func newServer(token string, port int, web fs.FS, h *hub, rts *roots, u *updater) http.Handler {
+// newServer builds the routes. kijk serve passes no web files, updater or machines: it has no
+// window, does not update itself, and does not reach other machines.
+func newServer(token string, port int, web fs.FS, h *hub, rts *roots, u *updater, mm *machineManager) http.Handler {
 	a := &api{roots: rts, index: newIndexCache(), hl: newHlCache()}
 	mux := http.NewServeMux()
-	mux.Handle("GET /", http.FileServerFS(web))
+	if web != nil {
+		mux.Handle("GET /", http.FileServerFS(web))
+	}
+	if mm != nil {
+		mux.HandleFunc("GET /m/{machine}/api/", mm.serveMachine)
+		mux.HandleFunc("POST /m/{machine}/api/", mm.serveMachine)
+	}
 	mux.HandleFunc("GET /api/ping", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("kijk")) })
 	mux.HandleFunc("GET /api/events", h.serveEvents)
 	mux.HandleFunc("GET /api/tree", a.tree)
@@ -41,6 +49,9 @@ func newServer(token string, port int, web fs.FS, h *hub, rts *roots, u *updater
 	mux.HandleFunc("POST /api/fetch", a.gitAction(func(req actionRequest) (string, error) { return fetch(req.Root) }))
 	mux.HandleFunc("POST /api/push", a.gitAction(func(req actionRequest) (string, error) { return push(req.Root) }))
 	mux.HandleFunc("POST /api/commit", a.gitAction(func(req actionRequest) (string, error) { return commit(req.Root, req.Message) }))
+	if u == nil {
+		return guard(token, port, secure(mux))
+	}
 	mux.HandleFunc("POST /api/update", func(w http.ResponseWriter, r *http.Request) {
 		if !isRelease(u.version) {
 			http.Error(w, errDev.Error(), http.StatusConflict)

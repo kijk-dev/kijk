@@ -98,7 +98,7 @@ func TestEventsCarryOnlyTheAgreedProperties(t *testing.T) {
 	f := startFakePostHog(t)
 	tel := newTelemetry("phc_test", "0.3.0")
 	tel.send("kijk started", nil)
-	tel.scanned(12, time.Now())
+	tel.scanned(5, 1, 3, time.Now())
 	ev := f.wait(t, 2)
 
 	id, _ := os.ReadFile(filepath.Join(dir, "kijk", "install-id"))
@@ -114,11 +114,11 @@ func TestEventsCarryOnlyTheAgreedProperties(t *testing.T) {
 		}
 	}
 	slices.SortFunc(ev, func(a, b capturedEvent) int { return strings.Compare(a.Event, b.Event) })
-	if ev[0].Event != "kijk active" || !slices.Equal(keys(ev[0].Properties), []string{"$os", "agents", "arch", "version"}) {
+	if ev[0].Event != "kijk active" || !slices.Equal(keys(ev[0].Properties), []string{"$os", "agents", "arch", "machines", "remote_agents", "version"}) {
 		t.Fatalf("kijk active: %v", ev[0].Properties)
 	}
-	if ev[0].Properties["agents"] != float64(12) {
-		t.Fatalf("agents = %v", ev[0].Properties["agents"])
+	if p := ev[0].Properties; p["agents"] != float64(5) || p["machines"] != float64(1) || p["remote_agents"] != float64(3) {
+		t.Fatalf("counts = %v", p)
 	}
 	if ev[1].Event != "kijk started" || !slices.Equal(keys(ev[1].Properties), []string{"$os", "arch", "version"}) {
 		t.Fatalf("kijk started: %v", ev[1].Properties)
@@ -129,7 +129,7 @@ func TestActiveOncePerLocalDay(t *testing.T) {
 	tel := &telemetry{version: "0.3.0", events: make(chan telemetryEvent, 16)}
 	mon := time.Date(2026, 10, 12, 9, 0, 0, 0, time.Local)
 	for _, at := range []time.Time{mon, mon.Add(time.Hour), mon.Add(15 * time.Hour), mon.Add(24 * time.Hour), mon.Add(48 * time.Hour)} {
-		tel.scanned(3, at)
+		tel.scanned(3, 0, 0, at)
 	}
 	if n := len(tel.events); n != 3 {
 		t.Fatalf("%d kijk active events over three days", n)
@@ -201,7 +201,7 @@ func TestSendNeverBlocks(t *testing.T) {
 	}
 	var off *telemetry
 	off.send("kijk started", nil)
-	off.scanned(1, time.Now())
+	off.scanned(1, 0, 0, time.Now())
 }
 
 func TestInstallID(t *testing.T) {

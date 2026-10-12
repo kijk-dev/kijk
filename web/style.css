@@ -459,3 +459,94 @@ button.pill:hover { background: color-mix(in srgb, var(--modified) 22%, var(--se
 @media (max-width: 520px) { #statusbar .long { display: none; } #statusbar .short { display: inline; } }
 @keyframes notice-in { from { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { #statusbar .kijk.news, #statusbar .dot.busy { animation: none; } }
+
+/* Remote machines: the Agents list groups rows under a header per machine. */
+body { --mh: color-mix(in srgb, var(--border) 65%, var(--panel)); }
+#rows li.mgroup, .rail-collapsed #rows li.mgroup { padding: 0; border-bottom: 0; cursor: default; }
+.mhead {
+  --mh-bg: var(--mh);
+  position: sticky; top: 0; z-index: 1; display: flex; align-items: center; gap: 7px; width: 100%; height: 30px;
+  padding: 0 12px 0 6px; border: 0; border-bottom: 1px solid var(--border); background: var(--mh-bg); color: var(--text);
+  font: 600 12.5px/1 system-ui, -apple-system, "Segoe UI", sans-serif; text-align: left; cursor: pointer;
+}
+#rows > .mgroup:first-child .mhead { border-top: 1px solid var(--border); }
+.mhead:hover { --mh-bg: color-mix(in srgb, var(--select) 55%, var(--mh)); }
+.mhead:focus-visible { outline: 2px solid var(--busy); outline-offset: -2px; }
+.mhead .caret { width: 12px; height: 12px; margin-right: -3px; }
+.mhead .caret svg { width: 12px; height: 12px; }
+.mgroup.open > .mhead .caret svg { transform: rotate(90deg); }
+.micon { position: relative; flex: none; display: flex; align-items: center; justify-content: center; color: var(--text); }
+.micon svg { width: 15px; height: 15px; }
+.micon .mdot { position: absolute; right: -3px; bottom: -2px; width: 7px; height: 7px; box-shadow: 0 0 0 2px var(--mh-bg); }
+.mname { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mrule { flex: 1; }
+.mright { flex: none; display: inline-flex; align-items: center; gap: 6px; font-weight: 400; font-size: 11px; color: var(--muted); }
+.mdot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--muted); }
+.mdot.connected { background: var(--added); }
+.mdot.connecting { background: var(--busy); animation: fade 1.2s ease-in-out infinite; }
+.mdot.login { background: var(--modified); }
+.mdot.unreachable, .mdot.error { background: var(--error); }
+.mdot.disabled { background: var(--mh-bg); border: 1.5px solid var(--edge); }
+
+/* A disabled machine: the header only, in muted ink, with nothing to fold. */
+.mgroup.disabled .mhead { cursor: default; }
+.mgroup.disabled .mhead:hover { --mh-bg: var(--mh); }
+.mgroup.disabled .mname, .mgroup.disabled .micon { color: var(--muted); }
+.mgroup.disabled .mname { font-weight: 400; }
+.mgroup.disabled .caret { visibility: hidden; }
+
+/* A folded group keeps one dot per agent: amber busy, blue finished, hollow idle. */
+.mact { display: inline-flex; align-items: center; gap: 3px; }
+.mact i { width: 6px; height: 6px; border-radius: 50%; border: 1px solid var(--edge); }
+.mact i.busy { border-color: var(--busy); background: var(--busy); animation: fade 1.2s ease-in-out infinite; }
+.mact i.fin { border-color: var(--modified); background: var(--modified); }
+.mact b { font-weight: 400; margin-left: 1px; }
+
+.mnote { padding: 6px 12px 8px 24px; border-bottom: 1px solid var(--border); font-size: 12px; color: var(--muted); }
+.mnote p { margin: 0; }
+.mnote p + * { margin-top: 5px; }
+.mnote .said { font: 11px/1.4 var(--code-font); overflow-wrap: anywhere; }
+.cmd {
+  display: flex; align-items: center; gap: 4px; max-width: 100%; padding: 2px 2px 2px 7px;
+  border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--text);
+  font: 11px/18px var(--code-font);
+}
+.cmd span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.cmd .icon-btn svg { width: 12px; height: 12px; }
+
+/* Rows of a machine that dropped: kept, quiet, not clickable. */
+#rows li.stale { cursor: default; }
+#rows li.stale .names { color: var(--muted); font-weight: 400; }
+#rows li.stale .agent { color: var(--muted); }
+#rows li.stale.selected { background: color-mix(in srgb, var(--select) 60%, transparent); }
+
+/* Folded rail: the machine icon, with its state dot, starts each group. */
+.rail-collapsed .mhead, .rail-collapsed .mnote { display: none; }
+.mdiv { display: none; }
+.rail-collapsed .mdiv {
+  --mh-bg: var(--mh); display: flex; align-items: center; justify-content: center; height: 26px;
+  border-bottom: 1px solid var(--border); background: var(--mh-bg); cursor: pointer;
+}
+.rail-collapsed #rows > .mgroup:first-child .mdiv { border-top: 1px solid var(--border); }
+.rail-collapsed .mdiv:hover { --mh-bg: color-mix(in srgb, var(--select) 55%, var(--mh)); }
+.rail-collapsed .mgroup.disabled .mdiv { cursor: default; }
+.rail-collapsed .mdiv .micon svg { width: 14px; height: 14px; }
+
+/* The machine of the open folder, after its name. */
+.onm { display: inline-flex; align-items: center; gap: 4px; margin-left: 6px; font-weight: 400; font-size: 12px; color: var(--muted); vertical-align: -1px; }
+.onm svg { width: 12px; height: 12px; }
+
+/* The open folder's machine dropped: the view stays, frozen. */
+#stalebar {
+  flex: none; display: flex; gap: 7px; padding: 6px 12px 7px; border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--error) 9%, var(--panel)); font-size: 12px; animation: notice-in .15s ease-out;
+}
+#stalebar[hidden] { display: none; }
+#stalebar .mdot { margin-top: 5px; }
+#stalebar b { font-weight: 600; }
+#stalebar .then { color: var(--muted); }
+.offline #files .item, .offline #git .item { cursor: default; }
+.offline #files .item:hover { background: none; }
+.offline #git .item input[type=checkbox], .offline #filetabs { pointer-events: none; }
+.offline #git .item input[type=checkbox] { opacity: .5; }
+@media (prefers-reduced-motion: reduce) { .mdot.connecting, .mact i.busy, #stalebar { animation: none; } }

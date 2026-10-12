@@ -77,13 +77,14 @@ func (t *telemetry) send(name string, extra map[string]any) {
 }
 
 // scanned sends "kijk active" after the first scan and again when the local date changes.
-func (t *telemetry) scanned(agents int, now time.Time) {
+// agents counts local agents only; remote ones are in remoteAgents.
+func (t *telemetry) scanned(agents, machines, remoteAgents int, now time.Time) {
 	if t == nil {
 		return
 	}
 	if day := now.Format(time.DateOnly); day != t.lastActive {
 		t.lastActive = day
-		t.send("kijk active", map[string]any{"agents": agents})
+		t.send("kijk active", map[string]any{"agents": agents, "machines": machines, "remote_agents": remoteAgents})
 	}
 }
 

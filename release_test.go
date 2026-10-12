@@ -102,7 +102,7 @@ func TestDownloadRelease(t *testing.T) {
 
 	startFakeRelease(t, "0.3.0", map[string][]byte{name: bin})
 	var got bytes.Buffer
-	if err := downloadRelease("0.3.0", &got); err != nil || got.String() != string(bin) {
+	if err := downloadRelease("0.3.0", runtime.GOOS, runtime.GOARCH, &got); err != nil || got.String() != string(bin) {
 		t.Fatalf("download = %q, %v", got.String(), err)
 	}
 
@@ -112,13 +112,13 @@ func TestDownloadRelease(t *testing.T) {
 		"mismatch":       strings.Repeat("0", 64) + "  " + name + "\n",
 	} {
 		startFakeRelease(t, "0.3.0", map[string][]byte{name: bin, "checksums.txt": []byte(sums)})
-		if err := downloadRelease("0.3.0", &bytes.Buffer{}); err == nil {
+		if err := downloadRelease("0.3.0", runtime.GOOS, runtime.GOARCH, &bytes.Buffer{}); err == nil {
 			t.Errorf("%s: want an error", label)
 		}
 	}
 
 	startFakeRelease(t, "0.3.0", map[string][]byte{"checksums.txt": []byte(line)})
-	if err := downloadRelease("0.3.0", &bytes.Buffer{}); err == nil {
+	if err := downloadRelease("0.3.0", runtime.GOOS, runtime.GOARCH, &bytes.Buffer{}); err == nil {
 		t.Error("missing binary: want an error")
 	}
 }
