@@ -10,10 +10,8 @@ import (
 	"strings"
 )
 
-// bootstrapScript finds, starts or reports the missing kijk serve on a remote machine, in one
-// round trip. It is POSIX sh on stdin, so the remote login shell does not matter.
-// The first line of output is "system <os> <cpu>"; the last is "serve <serve.json>",
-// "need-install", "no-kijk" or "start-failed" followed by the end of the log.
+// bootstrapScript finds or starts the remote kijk of one version, in one round trip. It is POSIX
+// sh on stdin, so the remote login shell does not matter. parseBoot reads what it prints.
 const bootstrapScript = `set -u
 v='%s'
 os=$(uname -s); cpu=$(uname -m)
@@ -22,20 +20,14 @@ case $os in
 Darwin) cfg="$HOME/Library/Application Support/kijk" ;;
 *) cfg="${XDG_CONFIG_HOME:-$HOME/.config}/kijk" ;;
 esac
-state="$cfg/serve.json"
+state="$cfg/serve-$v.json"
 dir="$HOME/.local/share/kijk/remote"
-field() { sed -n 's/.*"'"$1"'":"\{0,1\}\([^",}]*\).*/\1/p' "$state" 2>/dev/null; }
+field() { sed -n 's/.*"'"$1"'":"\{0,1\}\([^",}]*\).*/\1/p' "${2:-$state}" 2>/dev/null; }
 running() {
   [ -n "$1" ] && kill -0 "$1" 2>/dev/null || return 1
   { tr '\0' ' ' < "/proc/$1/cmdline" || ps -p "$1" -o args=; } 2>/dev/null | grep -q 'kijk.* serve'
 }
-ours() { [ "$v" = dev ] || [ "$(field version)" = "$v" ]; }
-pid=$(field pid)
-if running "$pid"; then
-  if ours; then printf 'serve %%s\n' "$(cat "$state")"; exit 0; fi
-  kill "$pid" 2>/dev/null
-  i=0; while kill -0 "$pid" 2>/dev/null && [ $i -lt 50 ]; do sleep 0.1; i=$((i+1)); done
-fi
+if running "$(field pid)"; then printf 'serve %%s\n' "$(cat "$state")"; exit 0; fi
 if [ "$v" = dev ]; then
   bin=$(command -v kijk 2>/dev/null) || bin="$HOME/.local/bin/kijk"
   [ -x "$bin" ] || { echo no-kijk; exit 0; }
@@ -44,12 +36,19 @@ else
   [ -x "$bin" ] || { echo need-install; exit 0; }
 fi
 mkdir -p "$cfg"
-nohup "$bin" serve </dev/null >"$cfg/serve.log" 2>&1 &
+nohup "$bin" serve "$v" </dev/null >"$cfg/serve-$v.log" 2>&1 &
 i=0
 while [ $i -lt 100 ]; do
-  if running "$(field pid)" && ours; then
+  if running "$(field pid)"; then
     if [ "$v" != dev ]; then
-      for d in "$dir"/*/; do [ -d "$d" ] && [ "$d" != "$dir/$v/" ] && rm -rf "$d"; done
+      # Keep a version a remote kijk runs from, or that another local kijk copied a moment ago.
+      for d in "$dir"/*/; do
+        w=$(basename "$d")
+        [ -d "$d" ] && [ "$w" != "$v" ] || continue
+        running "$(field pid "$cfg/serve-$w.json")" && continue
+        recent=$(find "$d" -mmin -10 2>/dev/null) || continue
+        [ -z "$recent" ] && rm -rf "$d"
+      done
     fi
     printf 'serve %%s\n' "$(cat "$state")"
     exit 0
@@ -57,7 +56,7 @@ while [ $i -lt 100 ]; do
   sleep 0.1; i=$((i+1))
 done
 echo start-failed
-tail -n 5 "$cfg/serve.log" 2>/dev/null
+tail -n 5 "$cfg/serve-$v.log" 2>/dev/null
 `
 
 // bootResult is what the bootstrap script reported.
@@ -67,7 +66,7 @@ type bootResult struct {
 	goarch string
 	serve  serveState
 	need   string // "", "need-install", "no-kijk" or "start-failed"
-	log    string // the end of serve.log after start-failed
+	log    string // the end of the serve log after start-failed
 }
 
 func parseBoot(out string) (bootResult, error) {

@@ -84,9 +84,9 @@ func (s *sshd) exec(user, script string) string {
 	return strings.TrimSpace(string(out))
 }
 
-func (s *sshd) serveState() serveState {
+func (s *sshd) serveState(version string) serveState {
 	var st serveState
-	json.Unmarshal([]byte(s.exec("kijk", "cat /home/kijk/.config/kijk/serve.json")), &st)
+	json.Unmarshal([]byte(s.exec("kijk", "cat /home/kijk/.config/kijk/serve-"+version+".json")), &st)
 	return st
 }
 
@@ -154,12 +154,12 @@ func TestRemoteMachine(t *testing.T) {
 	if got := s.exec("kijk", "ls /home/kijk/.local/share/kijk/remote"); got != "0.0.1" {
 		t.Fatalf("installed versions: %q", got)
 	}
-	first := s.serveState()
+	first := s.serveState("0.0.1")
 	if first.Version != "0.0.1" || first.PID == 0 {
-		t.Fatalf("serve.json %+v", first)
+		t.Fatalf("serve-0.0.1.json %+v", first)
 	}
-	if mode := s.exec("kijk", "stat -c %a /home/kijk/.config/kijk/serve.json"); mode != "600" {
-		t.Fatalf("serve.json mode %s", mode)
+	if mode := s.exec("kijk", "stat -c %a /home/kijk/.config/kijk/serve-0.0.1.json"); mode != "600" {
+		t.Fatalf("serve-0.0.1.json mode %s", mode)
 	}
 
 	// The proxy reaches the remote kijk.
@@ -176,7 +176,7 @@ func TestRemoteMachine(t *testing.T) {
 	// A second local kijk of the same version uses the same remote kijk.
 	b := s.manager("0.0.1", s.target)
 	waitMachine(t, b, s.target, connected)
-	if st := s.serveState(); st.PID != first.PID {
+	if st := s.serveState("0.0.1"); st.PID != first.PID {
 		t.Fatalf("a second local kijk started a new remote kijk: %d, was %d", st.PID, first.PID)
 	}
 
@@ -184,26 +184,29 @@ func TestRemoteMachine(t *testing.T) {
 	a.find(s.target).ssh.logout()
 	waitMachine(t, a, s.target, func(v machineView) bool { return v.State != stateConnected })
 	waitMachine(t, a, s.target, connected)
-	if st := s.serveState(); st.PID != first.PID {
+	if st := s.serveState("0.0.1"); st.PID != first.PID {
 		t.Fatalf("a reconnect restarted the remote kijk")
 	}
 	a.apply(nil)
 	b.apply(nil)
 
-	// The local kijk was updated: the old remote kijk stops, the new one starts, the old folder goes.
+	// A local kijk of another version gets its own remote kijk and leaves the first one running.
 	s.release("0.0.2")
 	c := s.manager("0.0.2", s.target)
 	waitMachine(t, c, s.target, connected)
-	if st := s.serveState(); st.Version != "0.0.2" || st.PID == first.PID {
+	if st := s.serveState("0.0.2"); st.Version != "0.0.2" || st.PID == first.PID {
 		t.Fatalf("after the version change: %+v", st)
 	}
-	if got := s.exec("kijk", "ls /home/kijk/.local/share/kijk/remote"); got != "0.0.2" {
+	if st := s.serveState("0.0.1"); st.PID != first.PID || s.exec("kijk", fmt.Sprintf("kill -0 %d && echo up", first.PID)) != "up" {
+		t.Fatalf("the 0.0.2 kijk stopped the 0.0.1 remote kijk: %+v", st)
+	}
+	if got := s.exec("kijk", "ls /home/kijk/.local/share/kijk/remote | tr '\\n' ' '"); got != "0.0.1 0.0.2" {
 		t.Fatalf("version folders: %q", got)
 	}
 	c.apply(nil)
 
 	// Two local kijks bootstrap at once: one remote kijk starts.
-	s.exec("kijk", `kill $(sed -n 's/.*"pid":\([0-9]*\).*/\1/p' /home/kijk/.config/kijk/serve.json); sleep 0.5`)
+	s.exec("kijk", `kill $(sed -n 's/.*"pid":\([0-9]*\).*/\1/p' /home/kijk/.config/kijk/serve-0.0.2.json); sleep 0.5`)
 	var wg sync.WaitGroup
 	var d, e *machineManager
 	wg.Go(func() { d = s.manager("0.0.2", s.target) })
@@ -211,8 +214,8 @@ func TestRemoteMachine(t *testing.T) {
 	wg.Wait()
 	waitMachine(t, d, s.target, connected)
 	waitMachine(t, e, s.target, connected)
-	if n := s.exec("kijk", "pgrep -f '[k]ijk serve' | wc -l"); n != "1" {
-		t.Fatalf("%s kijk serve processes run", n)
+	if n := s.exec("kijk", "pgrep -f '[k]ijk serve 0.0.2' | wc -l"); n != "1" {
+		t.Fatalf("%s 0.0.2 remote kijks run", n)
 	}
 
 	// A key the machine does not accept asks for a login, without a prompt.

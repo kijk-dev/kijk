@@ -44,7 +44,19 @@ func main() {
 				fmt.Fprintln(os.Stderr, "kijk serve:", errWindows)
 				os.Exit(1)
 			}
-			if err := runServe(); err != nil {
+			if len(os.Args) > 3 {
+				fmt.Fprintln(os.Stderr, "usage: kijk serve [version]")
+				os.Exit(2)
+			}
+			arg := ""
+			if len(os.Args) == 3 {
+				arg = os.Args[2]
+			}
+			name, err := serveName(arg)
+			if err == nil {
+				err = runServe(name)
+			}
+			if err != nil {
 				fmt.Fprintln(os.Stderr, "kijk serve:", err)
 				os.Exit(1)
 			}

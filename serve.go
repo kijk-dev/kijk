@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-// serveState is serve.json: how a local kijk reaches the headless kijk on this machine.
+// serveState is serve-<name>.json: how a local kijk reaches the remote kijk on this machine.
 type serveState struct {
 	Version string `json:"version"`
 	Port    int    `json:"port"`
@@ -28,8 +28,23 @@ var serveIdle = 10 * time.Minute
 
 var errLocked = errors.New("locked")
 
+// serveName checks the name a local kijk gives its remote kijk: its release version, or dev.
+// With no name, the remote kijk uses its own.
+func serveName(arg string) (string, error) {
+	switch {
+	case arg == "" && isRelease(kijkVersion):
+		return kijkVersion, nil
+	case arg == "" || arg == "dev":
+		return "dev", nil
+	case isRelease(arg):
+		return arg, nil
+	}
+	return "", fmt.Errorf("%q is not a kijk version", arg)
+}
+
 // runServe is kijk serve: the server without a window, for a local kijk to reach over SSH.
-func runServe() error {
+// One runs per kijk version and user, so local kijks of different versions never stop each other.
+func runServe(name string) error {
 	dir, err := configDir()
 	if err != nil {
 		return err
@@ -38,11 +53,11 @@ func runServe() error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	// One kijk serve per user: when two local kijks start one at once, the second exits here and
-	// their bootstrap waits for the first one's serve.json.
-	unlock, err := lockFile(filepath.Join(dir, "serve.lock"))
+	// When two local kijks start one at once, the second exits here and their bootstrap waits
+	// for the first one's state file.
+	unlock, err := lockFile(filepath.Join(dir, "serve-"+name+".lock"))
 	if errors.Is(err, errLocked) {
-		fmt.Fprintln(os.Stderr, "kijk serve already runs for this user")
+		fmt.Fprintf(os.Stderr, "kijk serve %s already runs for this user\n", name)
 		return nil
 	}
 	if err != nil {
@@ -61,7 +76,7 @@ func runServe() error {
 	go watchSessions(newScanner(claudeDir()), h, rts, nil, nil, nil)
 	srv := &http.Server{Handler: newServer(token, port, nil, h, rts, nil, nil)}
 
-	state := filepath.Join(dir, "serve.json")
+	state := filepath.Join(dir, "serve-"+name+".json")
 	b, _ := json.Marshal(serveState{kijkVersion, port, token, os.Getpid()})
 	if err := writePrivate(state, b); err != nil {
 		return err

@@ -28,6 +28,10 @@ _Avoid_: remote, server, host
 A remote machine the user has turned off in kijk, for example while it is shut down for the night. kijk does not connect to it or show its agents, and the UI marks it "disabled".
 _Avoid_: paused, offline, unreachable (unreachable means kijk tries and fails)
 
+**Remote kijk**:
+The kijk that runs without a window on a remote machine, started by a local kijk to serve it. A remote machine runs one remote kijk per kijk version and user, and local kijks of that version share it.
+_Avoid_: server, daemon, headless kijk
+
 **Change**:
 One file entry in the Git tab: a file that differs, with git's status letter (added, modified, deleted, renamed, untracked, conflict).
 _Avoid_: using "change" for a whole body of work
