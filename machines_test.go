@@ -130,6 +130,21 @@ func startFakeRemote(t *testing.T) (*fakeRemote, *http.Cookie, string) {
 	return f, &http.Cookie{Name: "kijk-4012", Value: "remote-token"}, u.Host
 }
 
+func TestBackoff(t *testing.T) {
+	for _, c := range []struct{ wait, up, sleep, next time.Duration }{
+		{time.Second, 0, time.Second, 2 * time.Second},
+		{8 * time.Second, 2 * time.Second, 8 * time.Second, 16 * time.Second},
+		{4 * time.Second, 59 * time.Second, 4 * time.Second, 8 * time.Second},
+		{4 * time.Second, 60 * time.Second, time.Second, 2 * time.Second},
+		{2 * time.Minute, 0, 2 * time.Minute, 2 * time.Minute},
+		{2 * time.Minute, 90 * time.Second, time.Second, 2 * time.Second},
+	} {
+		if sleep, next := backoff(c.wait, c.up); sleep != c.sleep || next != c.next {
+			t.Errorf("backoff(%v, %v) = %v, %v; want %v, %v", c.wait, c.up, sleep, next, c.sleep, c.next)
+		}
+	}
+}
+
 func TestDisableWinsOverLateConnect(t *testing.T) {
 	mm := newMachineManager("0.9.0")
 	r := &remoteMachine{name: "azvm", mm: mm, ssh: newSSHClient("azvm"), state: stateConnecting}

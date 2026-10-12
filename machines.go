@@ -208,10 +208,12 @@ func (r *remoteMachine) set(ctx context.Context, f func()) {
 func (r *remoteMachine) loop(ctx context.Context) {
 	wait := time.Second
 	for {
+		var up time.Duration
 		err := r.connect(ctx)
 		if err == nil {
-			wait = time.Second
+			start := time.Now()
 			err = r.follow(ctx)
+			up = time.Since(start)
 		}
 		if ctx.Err() != nil {
 			return
@@ -219,9 +221,19 @@ func (r *remoteMachine) loop(ctx context.Context) {
 		state, msg := r.classify(err)
 		r.set(ctx, func() { r.state, r.message, r.proxy = state, msg, nil })
 		r.ssh.closeAll()
-		r.sleep(ctx, wait, state)
-		wait = min(wait*2, 2*time.Minute)
+		var sleep time.Duration
+		sleep, wait = backoff(wait, up)
+		r.sleep(ctx, sleep, state)
 	}
+}
+
+// backoff gives the wait before this retry and the one after it. Only a connection that stayed
+// up for a minute starts over at 1 second, so one that drops at once cannot retry every second.
+func backoff(wait, up time.Duration) (sleep, next time.Duration) {
+	if up >= time.Minute {
+		wait = time.Second
+	}
+	return wait, min(wait*2, 2*time.Minute)
 }
 
 func (r *remoteMachine) classify(err error) (string, string) {
