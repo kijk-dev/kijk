@@ -26,6 +26,8 @@ func TestClassify(t *testing.T) {
 	cases := []struct{ stderr, state, has string }{
 		{"abhinav@10.129.63.250: Permission denied (publickey).", stateNeedsLogin, "kijk machine login azvm"},
 		{"Host key verification failed.", stateNeedsLogin, "kijk machine login azvm"},
+		// An ssh-agent, 1Password or a YubiKey that refuses to sign.
+		{"sign_and_send_pubkey: signing failed for ED25519 \"/home/a/.ssh/id.pub\" from agent: agent refused operation\nabhinav@10.129.63.250: Permission denied (publickey).", stateNeedsLogin, "kijk machine login azvm"},
 		{"Stdio forwarding request failed: Session open refused by peer", stateError, "AllowTcpForwarding"},
 		{"channel 0: open failed: connect failed: Connection refused\nstdio forwarding failed", stateError, "kijk is not running"},
 		{"ssh: connect to host 10.129.63.250 port 22: Operation timed out", stateUnreachable, "Operation timed out"},
