@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"net/http/httputil"
 	"os"
@@ -441,9 +442,22 @@ func newRemoteProxy(t *http.Transport, addr string, cookie *http.Cookie) *remote
 			pr.Out.AddCookie(cookie)
 		},
 		ModifyResponse: func(resp *http.Response) error {
-			resp.Header.Del("Set-Cookie")
-			resp.Header.Set("X-Content-Type-Options", "nosniff")
-			resp.Header.Set("Content-Security-Policy", "sandbox")
+			// Only what the UI reads passes: a remote kijk must not set local headers, or serve a
+			// type the local page could run as script.
+			ct := "text/plain; charset=utf-8"
+			if t, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type")); t == "application/json" || t == "text/event-stream" {
+				ct = t
+			}
+			h := http.Header{}
+			for _, k := range []string{"Cache-Control", "Content-Length"} {
+				if v := resp.Header.Get(k); v != "" {
+					h.Set(k, v)
+				}
+			}
+			h.Set("Content-Type", ct)
+			h.Set("X-Content-Type-Options", "nosniff")
+			h.Set("Content-Security-Policy", "sandbox")
+			resp.Header = h
 			return nil
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {

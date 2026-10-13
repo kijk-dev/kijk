@@ -237,6 +237,44 @@ func TestMachineProxy(t *testing.T) {
 	}
 }
 
+// A remote kijk must not be able to serve script to the local page, or set its headers.
+func TestMachineProxyPassesOnlySafeResponses(t *testing.T) {
+	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/json":
+			w.Header().Set("Content-Type", "application/json")
+		case "/api/events":
+			w.Header().Set("Content-Type", "text/event-stream")
+		default:
+			w.Header().Set("Content-Type", "text/javascript")
+		}
+		w.Header().Set("Clear-Site-Data", `"*"`)
+		w.Header().Set("Refresh", "0; url=https://example.com")
+		w.Header().Set("Location", "/api/commit")
+		w.Header().Set("Cache-Control", "no-cache")
+		io.WriteString(w, "x")
+	}))
+	t.Cleanup(remote.Close)
+	p := newRemoteProxy(&http.Transport{}, strings.TrimPrefix(remote.URL, "http://"), &http.Cookie{Name: "c", Value: "v"})
+	for path, want := range map[string]string{
+		"/api/json":   "application/json",
+		"/api/events": "text/event-stream",
+		"/api/x.js":   "text/plain; charset=utf-8",
+	} {
+		w := httptest.NewRecorder()
+		p.ServeHTTP(w, httptest.NewRequest("GET", "/m/azvm"+path, nil))
+		h := w.Header()
+		if h.Get("Content-Type") != want || h.Get("X-Content-Type-Options") != "nosniff" || h.Get("Cache-Control") != "no-cache" {
+			t.Errorf("%s: %v", path, h)
+		}
+		for _, k := range []string{"Clear-Site-Data", "Refresh", "Location"} {
+			if h.Get(k) != "" {
+				t.Errorf("%s: the remote set %s", path, k)
+			}
+		}
+	}
+}
+
 func TestMachineProxyStreamsEvents(t *testing.T) {
 	_, cookie, addr := startFakeRemote(t)
 	mm := newMachineManager("0.9.0")
