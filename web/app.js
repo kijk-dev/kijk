@@ -159,7 +159,8 @@ function rowItem(r, n) {
   li.classList.toggle('finished', finished.has(r.key));
   li.classList.toggle('stale', !!r.stale);
   li.toggleAttribute('aria-disabled', !!r.stale);
-  const state = r.stale ? `${r.machine} is unreachable` : r.busy ? 'Busy' : finished.has(r.key) ? 'Finished since you last looked' : 'Idle';
+  const gone = machines?.find(m => m.name === r.machine)?.state === 'reconnecting' ? 'is reconnecting' : 'is unreachable';
+  const state = r.stale ? `${r.machine} ${gone}` : r.busy ? 'Busy' : finished.has(r.key) ? 'Finished since you last looked' : 'Idle';
   const where = r.branch ? `${r.repo} · ${r.branch}` : r.repo;
   const key = n ? `${mac ? '⌃⌥' : 'Ctrl+Alt+'}${n} to open` : '';
   li.initials.textContent = initials(r.repo);
@@ -188,6 +189,7 @@ const COPY = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" widt
 const STATES = {
   connected: ['connected', 'connected'],
   connecting: ['connecting', 'connecting…'],
+  reconnecting: ['connecting', 'reconnecting…'],
   'needs-login': ['login', 'needs login'],
   unreachable: ['unreachable', 'unreachable'],
   error: ['error', 'error'],
@@ -254,6 +256,7 @@ function note(m, count) {
     case 'needs-login':
       return [el('p', null, 'Log in from a terminal:'), command(`kijk machine login ${m.name}`)];
     case 'unreachable':
+    case 'reconnecting':
       return count ? [] : [el('p', null, 'Trying again in a moment.'), el('p', 'said', m.message)];
     case 'error':
     case 'install-failed':
@@ -442,8 +445,8 @@ function showOffline(m) {
   staleBar.hidden = !offline;
   if (offline && m) {
     const name = el('b', null, m.name);
-    const first = m.state === 'needs-login'
-      ? [name, ` needs a login. Run kijk machine login ${m.name}`]
+    const first = m.state === 'needs-login' ? [name, ` needs a login. Run kijk machine login ${m.name}`]
+      : m.state === 'reconnecting' ? ['The connection to ', name, ' ended. Reconnecting…']
       : [name, ' is unreachable. Reconnecting…'];
     staleText.replaceChildren(...first, el('br'), el('span', 'then', 'Git actions and opening files are off until it is back.'));
   }

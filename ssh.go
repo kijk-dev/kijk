@@ -385,6 +385,7 @@ const (
 	stateDisabled      = "disabled"
 	stateConnecting    = "connecting"
 	stateConnected     = "connected"
+	stateReconnecting  = "reconnecting"
 	stateNeedsLogin    = "needs-login"
 	stateUnreachable   = "unreachable"
 	stateError         = "error"

@@ -668,3 +668,23 @@ func TestRemoteMachineHostKey(t *testing.T) {
 		t.Fatalf("add: %v\n%s", err, out.String())
 	}
 }
+
+// A connection that ends shows reconnecting, not unreachable; a reconnect that fails shows why.
+func TestRemoteMachineReconnecting(t *testing.T) {
+	f := newFakeMachines(t)
+	vm := f.add("vm", "vm", "")
+	f.release("0.0.1")
+	mm := f.manager("0.0.1", vm)
+	waitMachine(t, mm, vm, connected)
+
+	mm.find(vm).ssh.logout()
+	v := waitMachine(t, mm, vm, func(v machineView) bool { return v.State != stateConnected })
+	if v.State != stateReconnecting || v.Message != "The connection to kijk on "+vm+" ended." {
+		t.Fatalf("after the connection ended: %+v", v)
+	}
+	waitMachine(t, mm, vm, connected)
+
+	f.with(vm, func(t *fakeTarget) { t.Mode = modeOffline })
+	mm.find(vm).ssh.logout()
+	waitMachine(t, mm, vm, func(v machineView) bool { return v.State == stateUnreachable })
+}

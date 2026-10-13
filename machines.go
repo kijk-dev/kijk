@@ -230,7 +230,8 @@ func (r *remoteMachine) loop(ctx context.Context) {
 	for {
 		var up time.Duration
 		err := r.connect(ctx)
-		if err == nil {
+		wasUp := err == nil
+		if wasUp {
 			start := time.Now()
 			err = r.follow(ctx)
 			up = time.Since(start)
@@ -239,6 +240,10 @@ func (r *remoteMachine) loop(ctx context.Context) {
 			return
 		}
 		state, msg := r.classify(err)
+		// kijk reached the machine a moment ago, so it is not known to be unreachable yet.
+		if wasUp && state == stateUnreachable {
+			state, msg = stateReconnecting, fmt.Sprintf("The connection to kijk on %s ended.", r.name)
+		}
 		r.set(ctx, func() { r.state, r.message, r.proxy = state, msg, nil })
 		r.ssh.closeAll()
 		var sleep time.Duration
