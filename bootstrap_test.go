@@ -122,3 +122,27 @@ func TestBootstrapDeletesOnlyUnusedOldVersions(t *testing.T) {
 		t.Fatalf("a version copied a moment ago was deleted: %v", err)
 	}
 }
+
+// sshd ends a copy cut short by closing stdin, so cat exits 0 with part of the file.
+func TestInstallRefusesACutOffCopy(t *testing.T) {
+	skipWithoutSh(t)
+	bin := []byte("#!/bin/sh\necho kijk\n")
+	for _, tc := range []struct {
+		name string
+		sent []byte
+		ok   bool
+	}{{"whole", bin, true}, {"cut off", bin[:7], false}} {
+		home := t.TempDir()
+		cmd := exec.Command("sh", "-c", installScript("0.9.0", int64(len(bin))))
+		cmd.Env = append(os.Environ(), "HOME="+home)
+		cmd.Stdin = strings.NewReader(string(tc.sent))
+		err := cmd.Run()
+		got, _ := os.ReadFile(filepath.Join(home, ".local", "share", "kijk", "remote", "0.9.0", "kijk"))
+		if tc.ok && (err != nil || string(got) != string(bin)) {
+			t.Errorf("%s: %v, installed %q", tc.name, err, got)
+		}
+		if !tc.ok && (err == nil || got != nil) {
+			t.Errorf("%s: %v, installed %q", tc.name, err, got)
+		}
+	}
+}

@@ -144,16 +144,23 @@ func installRemote(ctx context.Context, s *sshClient, v, goos, goarch string) er
 		return &installError{err}
 	}
 	defer f.Close()
-	// cat, not scp or sftp: the remote only needs a shell. The temp name has the shell's pid, so
-	// two installs at once, such as from two local kijks, do not write into one file.
-	script := fmt.Sprintf(`umask 077; d="$HOME/.local/share/kijk/remote/%s"; t="$d/kijk.tmp.$$"; trap "rm -f \"$t\"" EXIT; mkdir -p "$d" && cat > "$t" && chmod 755 "$t" && mv "$t" "$d/kijk"`, v)
-	if _, err := s.run(ctx, f, "sh", "-c", "'"+script+"'"); err != nil {
+	st, err := f.Stat()
+	if err != nil {
+		return &installError{err}
+	}
+	if _, err := s.run(ctx, f, "sh", "-c", "'"+installScript(v, st.Size())+"'"); err != nil {
 		if x, ok := errors.AsType[*sshError](err); ok && x.exit == 255 {
 			return err // ssh itself failed, so the machine is unreachable, not the install broken
 		}
 		return &installError{fmt.Errorf("could not copy kijk to the remote machine: %w", err)}
 	}
 	return nil
+}
+
+// installScript copies stdin to the folder for v with cat, as the remote only needs a shell. sshd
+// ends a cut-off copy with end of file, so cat exits 0: the size check catches it.
+func installScript(v string, size int64) string {
+	return fmt.Sprintf(`umask 077; d="$HOME/.local/share/kijk/remote/%s"; t="$d/kijk.tmp.$$"; trap "rm -f \"$t\"" EXIT; mkdir -p "$d" && cat > "$t" && n=$(wc -c < "$t") && [ $n -eq %d ] && chmod 755 "$t" && mv "$t" "$d/kijk"`, v, size)
 }
 
 var cacheDir = os.UserCacheDir
