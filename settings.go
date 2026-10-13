@@ -169,6 +169,9 @@ func machinesOf(raw map[string]json.RawMessage) ([]savedMachine, error) {
 		if m.Target == "" || slices.ContainsFunc(out, func(o savedMachine) bool { return o.Target == m.Target }) {
 			continue
 		}
+		if err := checkTarget(m.Target); err != nil {
+			return nil, fmt.Errorf("its machines list is not valid: %w", err)
+		}
 		out = append(out, savedMachine{m.Target, m.Enabled == nil || *m.Enabled})
 	}
 	return out, nil

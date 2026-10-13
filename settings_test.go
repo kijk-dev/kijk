@@ -109,7 +109,7 @@ func TestBrokenMachinesFileIsRefused(t *testing.T) {
 	useConfigDir(t)
 	p, _ := machinesPath()
 	os.MkdirAll(filepath.Dir(p), 0o700)
-	for _, broken := range []string{`{"machines":`, `{"machines":[{"target":"a","enabled":"yes"}]}`, `{"machines":"nope"}`} {
+	for _, broken := range []string{`{"machines":`, `{"machines":[{"target":"a","enabled":"yes"}]}`, `{"machines":"nope"}`, `{"machines":[{"target":"-oProxyCommand=sh -c evil"}]}`} {
 		os.WriteFile(p, []byte(broken), 0o600)
 		if _, err := savedMachines(); err == nil || !strings.Contains(err.Error(), p) {
 			t.Errorf("%s: read error %v", broken, err)
@@ -187,9 +187,17 @@ func TestMachineCommands(t *testing.T) {
 			t.Errorf("%v: %d %q", args, code, out)
 		}
 	}
-	for _, target := range []string{"-oProxyCommand=evil", "a b", "a/b", "a;b"} {
+	for _, target := range []string{"-oProxyCommand=evil", "a b", "a/b", "a;b", "azvm\x1b[2J", "a\x7f", strings.Repeat("a", 256)} {
 		if code, out := run("add", target); code != 1 || !strings.Contains(out, "is not an SSH target") {
 			t.Errorf("add %q: %d %q", target, code, out)
+		}
+	}
+	if code, out := run("add", "alice:secret@azvm"); code != 1 || !strings.Contains(out, "a password") || strings.Contains(out, "secret") {
+		t.Errorf("add with a password: %d %q", code, out)
+	}
+	for _, target := range []string{"alice@fe80::1", "alice@azvm", strings.Repeat("a", 255)} {
+		if err := checkTarget(target); err != nil {
+			t.Errorf("%q: %v", target, err)
 		}
 	}
 	if code, out := run("list"); code != 0 || !strings.Contains(out, "No machines are saved") {

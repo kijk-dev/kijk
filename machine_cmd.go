@@ -13,6 +13,7 @@ import (
 	"strings"
 	"text/tabwriter"
 	"time"
+	"unicode"
 )
 
 var errWindows = errors.New("remote machines are not supported on Windows yet")
@@ -66,10 +67,15 @@ func runMachine(args []string, in io.Reader, out, errOut io.Writer) int {
 	return 0
 }
 
-// checkTarget refuses what ssh would read as an option, and what does not fit in a URL path.
+// checkTarget refuses what ssh would read as an option, what does not fit in a URL path, and
+// a password, which would be saved in machines.json and shown in the URL.
 func checkTarget(target string) error {
-	if target == "" || strings.HasPrefix(target, "-") || strings.ContainsAny(target, " \t\r\n/\\'\"`$;&|<>") {
+	if target == "" || len(target) > 255 || strings.HasPrefix(target, "-") || strings.ContainsAny(target, " /\\'\"`$;&|<>") ||
+		strings.ContainsFunc(target, unicode.IsControl) {
 		return fmt.Errorf("%q is not an SSH target. Use a Host alias from ~/.ssh/config or user@host", target)
+	}
+	if user, _, ok := strings.Cut(target, "@"); ok && strings.Contains(user, ":") {
+		return errors.New("the SSH target has a password in it (user:password@host). kijk does not save passwords: use a key, or log in with kijk machine login")
 	}
 	return nil
 }
