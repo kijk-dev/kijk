@@ -11,8 +11,17 @@ import (
 )
 
 // TestMain lets a copy of the test binary stand in for a kijk release: with KIJK_TEST_VERSION
-// set, "<binary> version" answers like kijk would.
+// set, "<binary> version" answers like kijk would. Started as ssh or as kijk serve, it plays
+// those parts for the fake ssh tests.
 func TestMain(m *testing.M) {
+	switch filepath.Base(os.Args[0]) {
+	case "ssh":
+		os.Exit(fakeSSH(os.Args[1:]))
+	case "kijk":
+		if len(os.Args) == 3 && os.Args[1] == "serve" {
+			os.Exit(fakeServe(os.Args[2]))
+		}
+	}
 	if v := os.Getenv("KIJK_TEST_VERSION"); v != "" && len(os.Args) > 1 && os.Args[1] == "version" {
 		os.Stdout.WriteString("kijk " + v + "\n")
 		os.Exit(0)
