@@ -146,7 +146,6 @@ Requirements:
 
 ## Limits
 
-- kijk reads the files that each agent keeps for its own use. A new release of an agent can change these files. Then kijk needs an update.
 - You cannot edit files in kijk.
 
 ## Install
@@ -260,11 +259,11 @@ To turn it off, set `KIJK_NO_TELEMETRY=1` or `DO_NOT_TRACK=1`, or start kijk wit
 
 1. Stop kijk.
 2. Delete the `kijk` binary. Run `command -v kijk` (macOS, Linux) or `where.exe kijk` (Windows) to find it.
-3. Delete the `kijk` folder in your user config folder:
+3. Delete kijk's folders:
 
-| System | Folder |
+| System | Folders |
 |---|---|
-| macOS | `~/Library/Application Support/kijk` |
+| macOS | `~/.config/kijk` (or `$XDG_CONFIG_HOME/kijk`) and `~/Library/Application Support/kijk` |
 | Linux | `~/.config/kijk` (or `$XDG_CONFIG_HOME/kijk`) |
 | Windows | `%AppData%\kijk` |
 
