@@ -150,11 +150,19 @@ type settingsFile struct {
 	size int64
 	raw  map[string]json.RawMessage
 	err  error
+	gone bool // missing on the last call, after it was there
 }
 
 // load returns the current keys and whether they changed since the last call.
 func (s *settingsFile) load() (map[string]json.RawMessage, bool) {
 	st, err := os.Stat(s.path)
+	// An editor can move the file away for a moment while it saves, and dropping the machines
+	// would close their logins: a file counts as gone only when it is still missing a call later.
+	if errors.Is(err, fs.ErrNotExist) && s.raw != nil && s.size >= 0 && !s.gone {
+		s.gone = true
+		return s.raw, false
+	}
+	s.gone = false
 	var mod time.Time
 	var size int64 = -1
 	if err == nil {

@@ -165,6 +165,39 @@ func TestSettingsFileReloadsOnChange(t *testing.T) {
 	}
 }
 
+// An editor can move the file away for a moment while it saves, as Vim does.
+func TestSettingsFileWaitsForAMissingFile(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "machines.json")
+	s := settingsFile{path: p}
+	mod := time.Now()
+	write := func() {
+		os.WriteFile(p, []byte(`{"machines":[{"target":"azvm"}]}`), 0o600)
+		mod = mod.Add(time.Second)
+		os.Chtimes(p, mod, mod)
+	}
+	machines := func(raw map[string]json.RawMessage) int {
+		list, _ := machinesOf(raw)
+		return len(list)
+	}
+	write()
+	s.load()
+
+	os.Remove(p)
+	if raw, changed := s.load(); changed || machines(raw) != 1 {
+		t.Fatalf("missing once: %v %v", raw, changed)
+	}
+	write()
+	if raw, changed := s.load(); machines(raw) != 1 {
+		t.Fatalf("back after a save: %v %v", raw, changed)
+	}
+
+	os.Remove(p)
+	s.load()
+	if raw, changed := s.load(); !changed || machines(raw) != 0 {
+		t.Fatalf("still missing: %v %v", raw, changed)
+	}
+}
+
 func TestMachineCommands(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		var errOut bytes.Buffer
