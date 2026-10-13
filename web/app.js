@@ -54,6 +54,7 @@ const drafts = new Map(); // unsent commit message per folder
 let busy = false;
 let git = null; // last status of the open folder
 const viewer = document.getElementById('viewer');
+const start = document.getElementById('start');
 const staleBar = document.getElementById('stalebar');
 const staleText = document.getElementById('stale-text');
 let rows = []; // every row in the list, local and remote, each with its folder key and machine
@@ -415,7 +416,7 @@ function closeFolder() {
   git = null;
   pr = null;
   setTabs(null, {}, () => {});
-  showMessage(viewer, 'Select an agent');
+  showMessage(viewer, start);
   filesEl.replaceChildren();
   sidebarHead.hidden = true;
   tabsEl.hidden = true;
@@ -796,6 +797,8 @@ events.onmessage = e => {
     else if (r.key !== openKey && rows.find(x => x.key === r.key)?.busy) finished.add(r.key);
   }
   rows = next;
+  start.lastElementChild.textContent = rows.some(r => !r.stale)
+    ? 'Select an agent' : 'Start a coding agent to see its work here';
   // With machines, an empty group says so under its own header.
   if (msg.error) showStatus(msg.error, true);
   else showStatus(rows.length || machines ? '' : 'No running agents');

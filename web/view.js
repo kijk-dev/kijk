@@ -9,9 +9,9 @@ let viewChanged = () => {};
 // onView runs after a file or diff is drawn, also after a reload, so find can search it again.
 export function onView(fn) { viewChanged = fn; }
 
-export function showMessage(viewer, text) {
+export function showMessage(viewer, msg) {
   current = null;
-  viewer.replaceChildren(el('p', 'empty', text));
+  viewer.replaceChildren(typeof msg === 'string' ? el('p', 'empty', msg) : msg);
 }
 
 // virtual renders only the rows on screen; drawRange(first, last) returns their elements.
