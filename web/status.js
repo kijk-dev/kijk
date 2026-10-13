@@ -67,7 +67,12 @@ function draw() {
       button('Update', `Download and install kijk ${v}`, () => post('update', {})),
       closeButton(() => remember('out', v))));
   } else {
-    parts.push(el('span', 'kijk', `kijk ${k.version}`));
+    const icon = el('img', 'icon');
+    icon.src = 'favicon.svg';
+    icon.alt = '';
+    const version = el('span', 'kijk');
+    version.append(icon, `kijk ${k.version}`);
+    parts.push(version);
   }
 
   const key = parts.map(p => p.outerHTML).join('');
