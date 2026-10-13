@@ -48,6 +48,8 @@ const (
 	modeOffline      = "offline"
 	modeWrongKey     = "wrong-key"
 	modeNoForwarding = "no-forwarding"
+	modeHostUnknown  = "host-key-unknown"
+	modeHostChanged  = "host-key-changed"
 )
 
 func fakeSSH(args []string) int {
@@ -126,6 +128,16 @@ func fakeSSH(args []string) int {
 		return sshFail("ssh: connect to host %s port 22: Connection refused", target)
 	case modeWrongKey:
 		return sshFail("kijk@%s: Permission denied (publickey).", target)
+	case modeHostUnknown:
+		return sshFail("Host key verification failed.\r")
+	case modeHostChanged:
+		return sshFail("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\r\n"+
+			"@    WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!     @\r\n"+
+			"@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\r\n"+
+			"IT IS POSSIBLE THAT SOMEONE IS DOING SOMETHING NASTY!\r\n"+
+			"Offending ED25519 key in %s/.ssh/known_hosts:1\r\n"+
+			"Host key for %s has changed and you have requested strict checking.\r\n"+
+			"Host key verification failed.\r", t.Home, cmp.Or(t.HostName, target))
 	}
 	// ControlMaster=auto: the first connection becomes the shared login.
 	if !exists(ctl) {
@@ -631,5 +643,28 @@ func TestMachineAddRefusesADuplicateLogin(t *testing.T) {
 	}
 	if want := []string{vm, bob, jumped}; !slices.Equal(names, want) {
 		t.Fatalf("saved %v, want %v", names, want)
+	}
+}
+
+func TestRemoteMachineHostKey(t *testing.T) {
+	f := newFakeMachines(t)
+	useConfigDir(t)
+	unknown, changed := f.add("unknown", "vm", modeHostUnknown), f.add("changed", "vm", modeHostChanged)
+	f.with(changed, func(t *fakeTarget) { t.HostName = "10.0.0.5" })
+	mm := f.manager("0.0.1", unknown, changed)
+	settled := func(v machineView) bool { return v.State != stateConnecting }
+	if v := waitMachine(t, mm, unknown, settled); v.State != stateNeedsLogin {
+		t.Errorf("unknown host key: %+v", v)
+	}
+	v := waitMachine(t, mm, changed, settled)
+	if v.State != stateError || !strings.Contains(v.Message, "ssh-keygen -R '10.0.0.5'") || strings.Contains(v.Message, "\r") {
+		t.Errorf("changed host key: %+v", v)
+	}
+
+	// add does not offer a login in the terminal, which cannot fix a changed key.
+	var out bytes.Buffer
+	err := machineAdd(changed, strings.NewReader("y\n"), &out)
+	if err == nil || !strings.Contains(err.Error(), "has changed") || strings.Contains(out.String(), "Log in now") {
+		t.Fatalf("add: %v\n%s", err, out.String())
 	}
 }

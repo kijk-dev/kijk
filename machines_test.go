@@ -25,7 +25,11 @@ import (
 func TestClassify(t *testing.T) {
 	cases := []struct{ stderr, state, has string }{
 		{"abhinav@10.129.63.250: Permission denied (publickey).", stateNeedsLogin, "kijk machine login azvm"},
+		// An unknown host key: kijk machine login lets ssh ask whether to trust it.
 		{"Host key verification failed.", stateNeedsLogin, "kijk machine login azvm"},
+		// A changed host key: a new login cannot fix it.
+		{"Offending ED25519 key in /Users/a/.ssh/known_hosts:12\r\nHost key for 10.129.63.250 has changed and you have requested strict checking.\r\nHost key verification failed.\r\n", stateError, "ssh-keygen -R '10.129.63.250', then run kijk machine login azvm"},
+		{"Offending ED25519 key in /tmp/known_hosts:1\nHost key for [127.0.0.1]:32816 has changed and you have requested strict checking.\nHost key verification failed.", stateError, "ssh-keygen -R '[127.0.0.1]:32816'"},
 		// An ssh-agent, 1Password or a YubiKey that refuses to sign.
 		{"sign_and_send_pubkey: signing failed for ED25519 \"/home/a/.ssh/id.pub\" from agent: agent refused operation\nabhinav@10.129.63.250: Permission denied (publickey).", stateNeedsLogin, "kijk machine login azvm"},
 		{"Stdio forwarding request failed: Session open refused by peer", stateError, "AllowTcpForwarding"},
@@ -379,5 +383,18 @@ func TestParseSSHConfig(t *testing.T) {
 func TestLastLines(t *testing.T) {
 	if got := lastLines("a\r\nb\r\nc\r\nd\r\n", 3); got != "b\nc\nd" {
 		t.Fatalf("got %q", got)
+	}
+}
+
+func TestHostKeyChangedMessage(t *testing.T) {
+	_, msg := classify("azvm", &sshError{255, "Host key for 10.129.63.250 has changed and you have requested strict checking.\nHost key verification failed."})
+	if !strings.Contains(msg, "host key of azvm has changed") || !strings.Contains(msg, "Check with: ssh azvm") {
+		t.Fatalf("message %q", msg)
+	}
+	// Without a host name kijk can trust, the message leaves the command out.
+	for _, stderr := range []string{"has changed and you have requested strict checking.", "Host key for a'b has changed and you have requested strict checking."} {
+		if _, msg := classify("azvm", &sshError{255, stderr}); strings.Contains(msg, "ssh-keygen") {
+			t.Errorf("%q: %q", stderr, msg)
+		}
 	}
 }

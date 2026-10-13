@@ -108,6 +108,10 @@ func machineAdd(target string, in io.Reader, out io.Writer) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	err := s.login(ctx)
 	cancel()
+	if isHostKeyChanged(err) {
+		_, msg := classify(target, err)
+		return errors.New(msg)
+	}
 	if err != nil {
 		fmt.Fprintf(out, "kijk cannot log in to %s without a prompt: %v\n", target, err)
 		if !ask(in, out, "Log in now in this terminal? [Y/n] ") {

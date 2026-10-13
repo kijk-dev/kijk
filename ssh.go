@@ -369,6 +369,8 @@ func classify(target string, err error) (state, message string) {
 		msg = x.stderr
 	}
 	switch {
+	case isHostKeyChanged(err):
+		return stateError, hostKeyChanged(target, msg)
 	case strings.Contains(msg, "Permission denied"), strings.Contains(msg, "Host key verification failed"),
 		strings.Contains(msg, "Too many authentication failures"):
 		return stateNeedsLogin, fmt.Sprintf("The login to %s needs you. Run kijk machine login %s", target, target)
@@ -380,6 +382,26 @@ func classify(target string, err error) (state, message string) {
 		msg = "no answer"
 	}
 	return stateUnreachable, fmt.Sprintf("%s is unreachable: %s", target, firstLine(msg))
+}
+
+// isHostKeyChanged tells a changed host key, which a new login cannot fix, from an unknown one,
+// which kijk machine login lets ssh ask about.
+func isHostKeyChanged(err error) bool {
+	x, ok := errors.AsType[*sshError](err)
+	return ok && strings.Contains(x.stderr, "has changed and you have requested strict checking")
+}
+
+// hostKeyChanged takes the host from ssh's own line, as known_hosts stores it, such as
+// [127.0.0.1]:2222. macOS ssh does not print the ssh-keygen command itself.
+func hostKeyChanged(target, msg string) string {
+	s := fmt.Sprintf("The host key of %s has changed. The machine may have been reinstalled, or someone may be intercepting the connection. Check with: ssh %s", target, target)
+	for line := range strings.Lines(msg) {
+		rest, ok := strings.CutPrefix(strings.TrimSpace(line), "Host key for ")
+		if host, _, ok2 := strings.Cut(rest, " has changed"); ok && ok2 && host != "" && !strings.ContainsAny(host, "' ") {
+			return s + fmt.Sprintf(". If the change is expected, remove the old key with: ssh-keygen -R '%s', then run kijk machine login %s", host, target)
+		}
+	}
+	return s
 }
 
 func firstLine(s string) string {
