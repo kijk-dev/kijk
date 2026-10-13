@@ -398,3 +398,43 @@ func TestHostKeyChangedMessage(t *testing.T) {
 		}
 	}
 }
+
+// The login sockets' folder is used only when no other user can have put a socket in it.
+func TestPrivateDir(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("remote machines need macOS or Linux")
+	}
+	me := os.Getuid()
+	base := t.TempDir()
+	os.Chmod(base, 0o755|os.ModeSticky)
+	dir := filepath.Join(base, "kijk-x")
+	for range 2 {
+		if err := privateDir(base, dir, me, me); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if st, _ := os.Lstat(dir); !st.IsDir() || st.Mode().Perm() != 0o700 {
+		t.Fatalf("made %v", st.Mode())
+	}
+	refused := func(why string, me, root int) {
+		t.Helper()
+		err := privateDir(base, dir, me, root)
+		if _, ok := errors.AsType[*remoteError](err); !ok || !strings.Contains(err.Error(), why) {
+			t.Errorf("%s: %v", why, err)
+		}
+	}
+	os.Chmod(dir, 0o755)
+	refused("other users can open it", me, me)
+	os.Chmod(dir, 0o700)
+	refused("belongs to another user", me+1, me)
+	refused("is not owned by root", me, me+1)
+	os.Remove(dir)
+	os.Symlink(t.TempDir(), dir)
+	refused("is a symlink", me, me)
+	os.Remove(dir)
+	os.WriteFile(dir, nil, 0o600)
+	refused("is not a folder", me, me)
+	os.Remove(dir)
+	os.Chmod(base, 0o755)
+	refused("has no sticky bit", me, me)
+}

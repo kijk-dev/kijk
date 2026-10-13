@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"net/http"
 	"os"
@@ -59,18 +60,42 @@ func (s *sshClient) command(ctx context.Context, args ...string) *exec.Cmd {
 	return cmd
 }
 
-func ensureSSHDir() error {
-	if err := os.MkdirAll(sshDir(), 0o700); err != nil {
-		return err
-	}
-	st, err := os.Stat(sshDir())
+func ensureSSHDir() error { return privateDir("/tmp", sshDir(), os.Getuid(), 0) }
+
+// privateDir makes dir in base, or accepts it only when no other user can have put a socket in
+// it: ssh's ControlMaster=auto would use that socket. me and root are uids, for tests.
+func privateDir(base, dir string, me, root int) error {
+	st, err := os.Stat(base) // /tmp is a link to /private/tmp on macOS
 	if err != nil {
 		return err
 	}
-	if st.Mode().Perm() != 0o700 {
-		return os.Chmod(sshDir(), 0o700)
+	if st.Mode()&fs.ModeSticky == 0 {
+		return &remoteError{fmt.Sprintf("kijk will not put its SSH logins in %s: it has no sticky bit, so other users could replace them", base)}
 	}
-	return nil
+	if fileOwner(st) != root {
+		return &remoteError{fmt.Sprintf("kijk will not put its SSH logins in %s: it is not owned by root", base)}
+	}
+	if err := os.Mkdir(dir, 0o700); err != nil && !errors.Is(err, fs.ErrExist) {
+		return err
+	}
+	st, err = os.Lstat(dir)
+	if err != nil {
+		return err
+	}
+	why := ""
+	switch {
+	case st.Mode()&fs.ModeSymlink != 0:
+		why = "it is a symlink"
+	case !st.IsDir():
+		why = "it is not a folder"
+	case fileOwner(st) != me:
+		why = "it belongs to another user"
+	case st.Mode().Perm() != 0o700:
+		why = fmt.Sprintf("other users can open it (mode %o)", st.Mode().Perm())
+	default:
+		return nil
+	}
+	return &remoteError{fmt.Sprintf("kijk will not use %s for its SSH logins: %s. Remove it (this may need sudo) and kijk tries again.", dir, why)}
 }
 
 // sshError is a failed ssh command, with the last lines ssh wrote to stderr.
