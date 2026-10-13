@@ -45,6 +45,7 @@ func (s *sshClient) opts(batch bool) []string {
 	if batch {
 		a = append(a, "-o", "BatchMode=yes")
 	}
+	// ServerAlive also ends a silent -W stream about 40 s after the link dies; follow relies on it.
 	return append(a, "-o", "ControlMaster=auto", "-o", "ControlPersist=10m", "-o", "ControlPath="+s.ctl,
 		"-o", "ConnectTimeout=10", "-o", "ServerAliveInterval=10", "-o", "ServerAliveCountMax=3")
 }
