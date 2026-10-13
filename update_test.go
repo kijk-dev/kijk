@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -26,7 +27,10 @@ func TestMain(m *testing.M) {
 		os.Stdout.WriteString("kijk " + v + "\n")
 		os.Exit(0)
 	}
-	os.Exit(m.Run())
+	sshDirName = fmt.Sprintf("kijk-test-%d-%d", os.Getuid(), os.Getpid())
+	code := m.Run()
+	os.RemoveAll(sshDir())
+	os.Exit(code)
 }
 
 var selfBytes = sync.OnceValue(func() []byte {

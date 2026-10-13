@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -444,4 +445,11 @@ func TestPrivateDir(t *testing.T) {
 	os.Remove(dir)
 	os.Chmod(base, 0o755)
 	refused("has no sticky bit", me, me)
+}
+
+// Tests must never reach the user's real logins: a running kijk would see them close.
+func TestTestsUseTheirOwnLoginFolder(t *testing.T) {
+	if real := filepath.Join("/tmp", fmt.Sprintf("kijk-%d", os.Getuid())); sshDir() == real {
+		t.Fatalf("tests use the real login folder %s", real)
+	}
 }

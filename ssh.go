@@ -30,9 +30,13 @@ type sshClient struct {
 	conns map[*pipeConn]struct{}
 }
 
+// sshDirName names the folder in /tmp that holds the login sockets. Tests use their own, so
+// they never close a running kijk's logins.
+var sshDirName = fmt.Sprintf("kijk-%d", os.Getuid())
+
 // sshDir holds the login sockets. macOS limits a socket path to 104 bytes, so $TMPDIR is too long.
 func sshDir() string {
-	return filepath.Join("/tmp", fmt.Sprintf("kijk-%d", os.Getuid()))
+	return filepath.Join("/tmp", sshDirName)
 }
 
 // The socket is named after the target, not ssh's %C, so kijk can see a login open without ssh.
