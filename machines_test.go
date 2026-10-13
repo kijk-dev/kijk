@@ -141,16 +141,23 @@ func startFakeRemote(t *testing.T) (*fakeRemote, *http.Cookie, string) {
 }
 
 func TestBackoff(t *testing.T) {
-	for _, c := range []struct{ wait, up, sleep, next time.Duration }{
-		{time.Second, 0, time.Second, 2 * time.Second},
-		{8 * time.Second, 2 * time.Second, 8 * time.Second, 16 * time.Second},
-		{4 * time.Second, 59 * time.Second, 4 * time.Second, 8 * time.Second},
-		{4 * time.Second, 60 * time.Second, time.Second, 2 * time.Second},
-		{2 * time.Minute, 0, 2 * time.Minute, 2 * time.Minute},
-		{2 * time.Minute, 90 * time.Second, time.Second, 2 * time.Second},
+	for _, c := range []struct {
+		state                 string
+		wait, up, sleep, next time.Duration
+	}{
+		{stateUnreachable, time.Second, 0, time.Second, 2 * time.Second},
+		{stateUnreachable, 8 * time.Second, 2 * time.Second, 8 * time.Second, 16 * time.Second},
+		{stateUnreachable, 4 * time.Second, 59 * time.Second, 4 * time.Second, 8 * time.Second},
+		{stateUnreachable, 4 * time.Second, 60 * time.Second, time.Second, 2 * time.Second},
+		{stateUnreachable, 2 * time.Minute, 0, 2 * time.Minute, 2 * time.Minute},
+		{stateUnreachable, 2 * time.Minute, 90 * time.Second, time.Second, 2 * time.Second},
+		{stateNeedsLogin, 4 * time.Second, 0, 4 * time.Second, 8 * time.Second},
+		// A retry cannot fix these by itself, so it comes every 30 s, not fast at first.
+		{stateError, time.Second, 0, 30 * time.Second, 2 * time.Second},
+		{stateInstallFailed, 2 * time.Minute, 0, 30 * time.Second, 2 * time.Minute},
 	} {
-		if sleep, next := backoff(c.wait, c.up); sleep != c.sleep || next != c.next {
-			t.Errorf("backoff(%v, %v) = %v, %v; want %v, %v", c.wait, c.up, sleep, next, c.sleep, c.next)
+		if sleep, next := backoff(c.state, c.wait, c.up); sleep != c.sleep || next != c.next {
+			t.Errorf("backoff(%s, %v, %v) = %v, %v; want %v, %v", c.state, c.wait, c.up, sleep, next, c.sleep, c.next)
 		}
 	}
 }

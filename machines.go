@@ -242,18 +242,24 @@ func (r *remoteMachine) loop(ctx context.Context) {
 		r.set(ctx, func() { r.state, r.message, r.proxy = state, msg, nil })
 		r.ssh.closeAll()
 		var sleep time.Duration
-		sleep, wait = backoff(wait, up)
+		sleep, wait = backoff(state, wait, up)
 		r.sleep(ctx, sleep, state)
 	}
 }
 
 // backoff gives the wait before this retry and the one after it. Only a connection that stayed
 // up for a minute starts over at 1 second, so one that drops at once cannot retry every second.
-func backoff(wait, up time.Duration) (sleep, next time.Duration) {
+// An error or a failed install waits 30 s: only a fix outside kijk helps, and a retry may
+// download again.
+func backoff(state string, wait, up time.Duration) (sleep, next time.Duration) {
 	if up >= time.Minute {
 		wait = time.Second
 	}
-	return wait, min(wait*2, 2*time.Minute)
+	next = min(wait*2, 2*time.Minute)
+	if state == stateError || state == stateInstallFailed {
+		return 30 * time.Second, next
+	}
+	return wait, next
 }
 
 func (r *remoteMachine) classify(err error) (string, string) {
