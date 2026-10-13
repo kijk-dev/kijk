@@ -374,3 +374,10 @@ func TestParseSSHConfig(t *testing.T) {
 		t.Fatalf("no jump host: %+v", got)
 	}
 }
+
+// ssh ends its lines with \r\n; a message must not carry the \r into the terminal or the UI.
+func TestLastLines(t *testing.T) {
+	if got := lastLines("a\r\nb\r\nc\r\nd\r\n", 3); got != "b\nc\nd" {
+		t.Fatalf("got %q", got)
+	}
+}

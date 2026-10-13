@@ -101,7 +101,7 @@ func runErr(err error, stderr []byte) error {
 }
 
 func lastLines(s string, n int) string {
-	lines := strings.Split(strings.TrimSpace(s), "\n")
+	lines := strings.Split(strings.TrimSpace(strings.ReplaceAll(s, "\r\n", "\n")), "\n")
 	return strings.TrimSpace(strings.Join(lines[max(0, len(lines)-n):], "\n"))
 }
 
