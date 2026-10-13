@@ -89,8 +89,35 @@ func updateSettings(path string, change func(raw map[string]json.RawMessage) err
 	return writeSettings(path, raw)
 }
 
+// linkedFile gives the file a symlink at path points to, so a save keeps the link that a dotfile
+// manager such as GNU stow made.
+func linkedFile(path string) (string, error) {
+	st, err := os.Lstat(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return path, nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if st.Mode()&fs.ModeSymlink == 0 {
+		return path, nil
+	}
+	real, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return "", fmt.Errorf("%s is a link that points nowhere", path)
+	}
+	if st, err := os.Stat(real); err != nil || !st.Mode().IsRegular() {
+		return "", fmt.Errorf("%s does not link to a file", path)
+	}
+	return real, nil
+}
+
 // writeSettings writes the keys atomically, readable only by the user.
 func writeSettings(path string, raw map[string]json.RawMessage) error {
+	path, err := linkedFile(path)
+	if err != nil {
+		return err
+	}
 	b, err := json.MarshalIndent(raw, "", "  ")
 	if err != nil {
 		return err

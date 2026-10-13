@@ -240,3 +240,50 @@ func TestAsk(t *testing.T) {
 		}
 	}
 }
+
+// A save writes through a symlink, as dotfile managers such as GNU stow make, and keeps the link.
+func TestSaveThroughASymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need extra rights on Windows")
+	}
+	useConfigDir(t)
+	p, _ := machinesPath()
+	os.MkdirAll(filepath.Dir(p), 0o700)
+	real := filepath.Join(t.TempDir(), "dotfiles", "machines.json")
+	os.MkdirAll(filepath.Dir(real), 0o700)
+	os.WriteFile(real, []byte(`{}`), 0o644)
+	if err := os.Symlink(real, p); err != nil {
+		t.Fatal(err)
+	}
+	add := func(target string) error {
+		return changeMachines(func(l []savedMachine) ([]savedMachine, error) { return append(l, savedMachine{target, true}), nil })
+	}
+	if err := add("azvm"); err != nil {
+		t.Fatal(err)
+	}
+	if st, err := os.Lstat(p); err != nil || st.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("the link was replaced: %v %v", st.Mode(), err)
+	}
+	if b, _ := os.ReadFile(real); !strings.Contains(string(b), "azvm") {
+		t.Fatalf("the real file did not change: %s", b)
+	}
+	if left, _ := os.ReadDir(filepath.Dir(p)); len(left) != 1 {
+		t.Errorf("left next to the link: %v", left)
+	}
+
+	os.Remove(real)
+	if err := add("other"); err == nil || !strings.Contains(err.Error(), "points nowhere") {
+		t.Errorf("dangling link: %v", err)
+	}
+	if st, err := os.Lstat(p); err != nil || st.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("a refused save replaced the link: %v", err)
+	}
+
+	// settings.json starts over when it is broken, so only the save itself can refuse a device.
+	sp, _ := settingsPath()
+	os.Symlink(os.DevNull, sp)
+	err := updateSettings(sp, func(raw map[string]json.RawMessage) error { raw["theme"] = json.RawMessage(`"nord"`); return nil })
+	if err == nil || !strings.Contains(err.Error(), "does not link to a file") {
+		t.Errorf("link to %s: %v", os.DevNull, err)
+	}
+}
