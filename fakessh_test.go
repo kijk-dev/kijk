@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -30,6 +32,9 @@ type fakeSSHConfig struct {
 type fakeTarget struct {
 	Home string `json:"home"` // targets with one home are one user on one machine
 	Mode string `json:"mode,omitempty"`
+	// Gate pauses a sh -c call after 1 MB of stdin: it creates Gate+".paused" and goes on once
+	// Gate exists.
+	Gate string `json:"gate,omitempty"`
 }
 
 // Modes of a fake target. The messages are what OpenSSH prints.
@@ -41,7 +46,7 @@ const (
 
 func fakeSSH(args []string) int {
 	var ctl, forward, control string
-	master := false
+	master, noTTY, noRemoteCommand := false, false, false
 	i := 0
 	for ; i < len(args) && strings.HasPrefix(args[i], "-"); i++ {
 		switch args[i] {
@@ -55,6 +60,7 @@ func fakeSSH(args []string) int {
 				if v, ok := strings.CutPrefix(args[i], "ControlPath="); ok {
 					ctl = v
 				}
+				noRemoteCommand = noRemoteCommand || args[i] == "RemoteCommand=none"
 			case "-W":
 				forward = args[i]
 			case "-O":
@@ -62,7 +68,9 @@ func fakeSSH(args []string) int {
 			}
 		case "-M":
 			master = true
-		case "-N", "-f", "-T":
+		case "-T":
+			noTTY = true
+		case "-N", "-f":
 		default:
 			return sshFail("fake ssh: unknown option %s", args[i])
 		}
@@ -120,10 +128,34 @@ func fakeSSH(args []string) int {
 	if len(command) == 0 {
 		return 0
 	}
+	// As if the user's config had RemoteCommand and RequestTTY force: both break a command call.
+	if !noRemoteCommand {
+		return sshFail("Cannot execute command-line and remote command.")
+	}
+	if !noTTY {
+		return sshFail("fake ssh: a command needs -T, or RequestTTY in the user's config gives it a terminal")
+	}
 	// sshd joins the words with spaces and hands them to the user's shell.
 	cmd := exec.Command("sh", "-c", strings.Join(command, " "))
 	cmd.Dir, cmd.Env = t.Home, remoteEnv(t.Home)
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+	if t.Gate == "" || len(command) < 2 || command[0] != "sh" || command[1] != "-c" {
+		cmd.Stdin = os.Stdin
+	} else {
+		w, err := cmd.StdinPipe()
+		if err != nil {
+			return sshFail("fake ssh: %v", err)
+		}
+		go func() {
+			defer w.Close()
+			io.CopyN(w, os.Stdin, 1<<20)
+			os.WriteFile(t.Gate+".paused", nil, 0o600)
+			for !exists(t.Gate) {
+				time.Sleep(20 * time.Millisecond)
+			}
+			io.Copy(w, os.Stdin)
+		}()
+	}
 	if err := cmd.Run(); err != nil {
 		if x, ok := errors.AsType[*exec.ExitError](err); ok {
 			return x.ExitCode()
@@ -239,14 +271,30 @@ func (f *fakeMachines) add(name, home, mode string) string {
 		f.t.Fatal(err)
 	}
 	f.conf.Targets[target] = t
-	b, _ := json.Marshal(f.conf)
-	if err := os.WriteFile(os.Getenv("KIJK_FAKE_SSH"), b, 0o600); err != nil {
-		f.t.Fatal(err)
-	}
+	f.save()
 	return target
 }
 
 func (f *fakeMachines) home(target string) string { return f.conf.Targets[target].Home }
+
+// pause makes the target's next install stop halfway. It returns the file that appears then, and
+// the one that lets it go on.
+func (f *fakeMachines) pause(target string) (paused, resume string) {
+	f.t.Helper()
+	t := f.conf.Targets[target]
+	t.Gate = filepath.Join(f.dir, target+".gate")
+	f.conf.Targets[target] = t
+	f.save()
+	return t.Gate + ".paused", t.Gate
+}
+
+func (f *fakeMachines) save() {
+	f.t.Helper()
+	b, _ := json.Marshal(f.conf)
+	if err := os.WriteFile(os.Getenv("KIJK_FAKE_SSH"), b, 0o600); err != nil {
+		f.t.Fatal(err)
+	}
+}
 
 // release publishes the test binary as kijk version for this machine.
 func (f *fakeMachines) release(version string) {
@@ -478,5 +526,43 @@ func TestRemoteInstallChecksumMismatch(t *testing.T) {
 	}
 	if got := remoteVersions(t, f.home(vm)); got != "" {
 		t.Fatalf("something was copied: %q", got)
+	}
+}
+
+// Two installs of one version on one machine at once, such as from two local kijks, must not
+// write into each other's file.
+func TestRemoteInstallsAtOnce(t *testing.T) {
+	f := newFakeMachines(t)
+	slow, fast := f.add("slow", "vm", ""), f.add("fast", "vm", "")
+	f.release("0.0.1")
+	if _, err := cachedRelease("0.0.1", runtime.GOOS, runtime.GOARCH); err != nil {
+		t.Fatal(err)
+	}
+	paused, resume := f.pause(slow)
+	ctx := context.Background()
+
+	first := make(chan error, 1)
+	go func() { first <- installRemote(ctx, newSSHClient(slow), "0.0.1", runtime.GOOS, runtime.GOARCH) }()
+	for !exists(paused) {
+		select {
+		case err := <-first:
+			t.Fatalf("the first install did not pause: %v", err)
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
+	if err := installRemote(ctx, newSSHClient(fast), "0.0.1", runtime.GOOS, runtime.GOARCH); err != nil {
+		t.Fatalf("second install: %v", err)
+	}
+	os.WriteFile(resume, nil, 0o600)
+	if err := <-first; err != nil {
+		t.Fatalf("first install: %v", err)
+	}
+
+	d := filepath.Join(f.home(slow), ".local", "share", "kijk", "remote", "0.0.1")
+	if b, _ := os.ReadFile(filepath.Join(d, "kijk")); !bytes.Equal(b, selfBytes()) {
+		t.Error("the installed kijk is not the release")
+	}
+	if entries, _ := os.ReadDir(d); len(entries) != 1 {
+		t.Errorf("left in the version folder: %v", entries)
 	}
 }

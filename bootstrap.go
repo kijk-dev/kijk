@@ -144,8 +144,9 @@ func installRemote(ctx context.Context, s *sshClient, v, goos, goarch string) er
 		return &installError{err}
 	}
 	defer f.Close()
-	// cat, not scp or sftp: the remote only needs a shell.
-	script := fmt.Sprintf(`umask 077; d="$HOME/.local/share/kijk/remote/%s"; mkdir -p "$d" && cat > "$d/kijk.tmp" && chmod 755 "$d/kijk.tmp" && mv "$d/kijk.tmp" "$d/kijk"`, v)
+	// cat, not scp or sftp: the remote only needs a shell. The temp name has the shell's pid, so
+	// two installs at once, such as from two local kijks, do not write into one file.
+	script := fmt.Sprintf(`umask 077; d="$HOME/.local/share/kijk/remote/%s"; t="$d/kijk.tmp.$$"; trap "rm -f \"$t\"" EXIT; mkdir -p "$d" && cat > "$t" && chmod 755 "$t" && mv "$t" "$d/kijk"`, v)
 	if _, err := s.run(ctx, f, "sh", "-c", "'"+script+"'"); err != nil {
 		if x, ok := errors.AsType[*sshError](err); ok && x.exit == 255 {
 			return err // ssh itself failed, so the machine is unreachable, not the install broken

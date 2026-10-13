@@ -53,7 +53,9 @@ func startSSHD(t *testing.T) *sshd {
 	host := func(name, id string) string {
 		return fmt.Sprintf("Host %s\n  HostName 127.0.0.1\n  Port %s\n  User kijk\n  IdentityFile %s\n  IdentitiesOnly yes\n  UserKnownHostsFile %s/known_hosts\n  StrictHostKeyChecking accept-new\n", name, port, id, dir)
 	}
-	os.WriteFile(s.config, []byte(host(s.target, key)+host(s.target+"-wrong-key", key+"-other")), 0o600)
+	// A user config that runs a command and asks for a terminal, which kijk's own calls must ignore.
+	strict := host(s.target+"-strict", key) + "  RemoteCommand false\n  RequestTTY force\n"
+	os.WriteFile(s.config, []byte(host(s.target, key)+host(s.target+"-wrong-key", key+"-other")+strict), 0o600)
 	s.goarch, _ = goPlatformArch(s.exec("kijk", "uname -m"))
 	for i := 0; ; i++ { // sshd needs a moment after the container starts
 		if exec.Command("ssh", "-F", s.config, "-o", "BatchMode=yes", s.target, "true").Run() == nil {
@@ -108,11 +110,16 @@ func TestRemoteMachineOverRealSSH(t *testing.T) {
 	useCacheDir(t)
 	s.release("0.0.1")
 
-	mm := s.manager("0.0.1", s.target)
-	v := waitMachine(t, mm, s.target, connected)
-	if !strings.HasPrefix(v.System, "Linux ") {
-		t.Fatalf("system %q", v.System)
+	// The first connection installs kijk, so the binary goes through the strict config too.
+	strict := s.manager("0.0.1", s.target+"-strict")
+	v := waitMachine(t, strict, s.target+"-strict", func(v machineView) bool { return v.State != stateConnecting })
+	if v.State != stateConnected || !strings.HasPrefix(v.System, "Linux ") {
+		t.Fatalf("strict config: %+v", v)
 	}
+	proxiedPing(t, strict, s.target+"-strict")
+
+	mm := s.manager("0.0.1", s.target)
+	waitMachine(t, mm, s.target, connected)
 	proxiedPing(t, mm, s.target)
 
 	wrong := s.manager("0.0.1", s.target+"-wrong-key")
