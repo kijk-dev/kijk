@@ -100,9 +100,52 @@ A normal browser tab keeps some of these keys for itself. For those actions, kij
 
 kijk runs on macOS, Linux and Windows.
 
+## Remote machines
+
+kijk can also show the agents that run on another machine, such as a VM without a screen. They
+appear in the same Agents list, under a header per machine. You can read their files and diffs,
+and stage, commit, push and fetch there.
+
+Save a machine with an alias from `~/.ssh/config` or `user@host`:
+
+```sh
+kijk machine add azvm
+```
+
+kijk tests the SSH login first. When the login needs a passphrase or a password, kijk offers to
+log in in the terminal, and `ssh` asks for it. kijk never sees it.
+
+| Command | What it does |
+|---|---|
+| `kijk machine add <ssh-target>` | Save a machine |
+| `kijk machine login <machine>` | Log in again, for example when a key with a passphrase is not in ssh-agent |
+| `kijk machine list` | Show the saved machines and their states |
+| `kijk machine disable <machine>` | Stop connecting, for example while the VM is shut down |
+| `kijk machine enable <machine>` | Connect again |
+| `kijk machine remove <machine>` | Forget a machine |
+
+How it works:
+
+- kijk uses your own `ssh`, with your SSH config, keys, ssh-agent and known hosts. It opens no
+  port on either machine.
+- kijk runs itself on the remote machine, in a mode without a window (`kijk serve`). When the
+  remote machine has no kijk of the same version, kijk copies its own release there, into
+  `~/.local/share/kijk/remote/`. Adding the machine allows this. kijk does not change a kijk that
+  you installed there yourself.
+- The remote kijk stops by itself 10 minutes after the last local kijk disconnects.
+- When the machine is unreachable, its open folder stays on screen and Git actions are off until
+  it is back.
+
+Requirements:
+
+- The local machine runs macOS or Linux. The remote machine runs Linux or macOS, on x86_64 or
+  arm64. Remote machines are not supported on Windows yet.
+- OpenSSH on both machines, and `AllowTcpForwarding` on in the remote SSH server. It is on by
+  default.
+- On the remote machine: `git`, and optionally `gh` or `glab` for the pull request line.
+
 ## Limits
 
-- kijk reads the files that each agent keeps for its own use. A new release of an agent can change these files. Then kijk needs an update.
 - You cannot edit files in kijk.
 
 ## Install
@@ -206,6 +249,9 @@ You can also start kijk with `-no-update-check`. `kijk update` and the **Update*
 
 kijk sends anonymous usage data, so we know how many people use it and on which systems.
 It never sends your code, your folder or file names, or anything about you.
+It sends the number of agents on your machine, and how many remote machines you saved and how
+many agents run on them. It never sends their names or addresses. kijk on a remote machine sends
+nothing.
 
 To turn it off, set `KIJK_NO_TELEMETRY=1` or `DO_NOT_TRACK=1`, or start kijk with `-no-telemetry`.
 
@@ -213,11 +259,11 @@ To turn it off, set `KIJK_NO_TELEMETRY=1` or `DO_NOT_TRACK=1`, or start kijk wit
 
 1. Stop kijk.
 2. Delete the `kijk` binary. Run `command -v kijk` (macOS, Linux) or `where.exe kijk` (Windows) to find it.
-3. Delete the `kijk` folder in your user config folder:
+3. Delete kijk's folders:
 
-| System | Folder |
+| System | Folders |
 |---|---|
-| macOS | `~/Library/Application Support/kijk` |
+| macOS | `~/.config/kijk` (or `$XDG_CONFIG_HOME/kijk`) and `~/Library/Application Support/kijk` |
 | Linux | `~/.config/kijk` (or `$XDG_CONFIG_HOME/kijk`) |
 | Windows | `%AppData%\kijk` |
 

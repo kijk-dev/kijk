@@ -293,8 +293,33 @@ function changedBlocks(blocks, changes) {
 const external = url => /^([a-z][a-z0-9+.-]*:|\/\/)/i.test(url);
 const slug = s => s.trim().toLowerCase().replace(/[^\p{L}\p{N}\s_-]/gu, '').replace(/\s/g, '-');
 
+// What renderMarkdown makes. The HTML of a remote folder comes from that machine's kijk, so the
+// page keeps nothing else.
+const mdTags = new Set(['A', 'BLOCKQUOTE', 'BR', 'CODE', 'DEL', 'EM', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'HR',
+  'IMG', 'INPUT', 'LI', 'OL', 'P', 'PRE', 'SPAN', 'STRONG', 'TABLE', 'TBODY', 'TD', 'TH', 'THEAD', 'TR', 'UL']);
+const mdAttrs = new Set(['href', 'src', 'alt', 'title', 'class', 'data-lines', 'align', 'type', 'checked', 'disabled', 'start']);
+// Browsers skip control characters in a URL, so java\tscript: is still a scheme.
+const safeURL = url => {
+  const u = url.replace(/[\x00-\x20]/g, '');
+  return !/^[a-z][a-z0-9+.-]*:/i.test(u) || /^(https?:|mailto:|data:image\/(png|gif|jpeg|webp);)/i.test(u);
+};
+
+function clean(frag) {
+  for (const n of [...frag.querySelectorAll('*')]) {
+    if (!mdTags.has(n.tagName)) {
+      n.remove();
+      continue;
+    }
+    for (const { name, value } of [...n.attributes]) {
+      if (!mdAttrs.has(name) || ((name === 'href' || name === 'src') && !safeURL(value))) n.removeAttribute(name);
+    }
+    if (n.tagName === 'INPUT') n.disabled = true;
+  }
+}
+
 // prepare opens web links in a new tab and links to files in a kijk tab.
 function prepare(frag, file, md, doc) {
+  clean(frag);
   for (const img of frag.querySelectorAll('img')) {
     if (!external(img.getAttribute('src') || '')) {
       img.replaceWith(el('span', 'md-img', `Image: ${img.getAttribute('alt') || img.getAttribute('src')}`));

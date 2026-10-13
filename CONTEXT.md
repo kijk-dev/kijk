@@ -9,8 +9,28 @@ Starts from the agents that run on the machine, not from projects the user opens
 _Avoid_: agent-aware, agentic
 
 **Agent**:
-A running coding agent and the folder it works in. The UI shows one row per folder.
+A running coding agent, the folder it works in, and the machine it runs on. The UI shows one row per folder on each machine.
 _Avoid_: Session
+
+**Machine**:
+A computer where agents run and kijk can see them. Either the local machine or a remote machine.
+_Avoid_: host, remote, device
+
+**Local machine**:
+The machine the kijk window runs on.
+_Avoid_: localhost, this device
+
+**Remote machine**:
+A machine the user has saved in kijk and reaches over SSH, such as a headless VM, together with the user kijk logs in as. One computer saved with two users is two remote machines; one saved twice with the same user is a duplicate.
+_Avoid_: remote, server, host
+
+**Disabled machine**:
+A remote machine the user has turned off in kijk, for example while it is shut down for the night. kijk does not connect to it or show its agents, and the UI marks it "disabled".
+_Avoid_: paused, offline, unreachable (unreachable means kijk tries and fails)
+
+**Remote kijk**:
+The kijk that runs without a window on a remote machine, started by a local kijk to serve it. A remote machine runs one remote kijk per kijk version and user, and local kijks of that version share it.
+_Avoid_: server, daemon, headless kijk
 
 **Change**:
 One file entry in the Git tab: a file that differs, with git's status letter (added, modified, deleted, renamed, untracked, conflict).
@@ -25,7 +45,7 @@ The line counts of everything a branch adds to its PR target or main line: its c
 _Avoid_: PR size, branch diff
 
 **Telemetry**:
-The anonymous usage events kijk sends about itself: that it started, that it ran on a day, its version, operating system, and how many agents run. Never folder paths, names, code, or an IP address. On by default, and the user can turn it off.
+The anonymous usage events kijk sends about itself: that it started, that it ran on a day, its version, operating system, how many agents run on the local machine, and how many remote machines and agents on them it sees. Never folder paths, names, code, or an IP address. On by default, and the user can turn it off.
 _Avoid_: analytics, tracking, usage stats
 
 **Install ID**:

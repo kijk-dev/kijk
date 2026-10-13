@@ -11,11 +11,14 @@ import (
 	"testing/fstest"
 )
 
+// useConfigDir points kijk's own folder at a temp folder, and the folder of the files the user
+// edits at its "user" subfolder.
 func useConfigDir(t *testing.T) string {
 	dir := t.TempDir()
-	old := configDir
+	old, oldUser := configDir, userConfigDir
 	configDir = func() (string, error) { return dir, nil }
-	t.Cleanup(func() { configDir = old })
+	userConfigDir = func() (string, error) { return filepath.Join(dir, "user"), nil }
+	t.Cleanup(func() { configDir, userConfigDir = old, oldUser })
 	return dir
 }
 
@@ -26,7 +29,7 @@ func serveKijk(t *testing.T, token string) int {
 		t.Fatal(err)
 	}
 	port := ln.Addr().(*net.TCPAddr).Port
-	srv := &http.Server{Handler: newServer(token, port, fstest.MapFS{}, newHub(), &roots{}, newUpdater("0.2.0", "", io.Discard))}
+	srv := &http.Server{Handler: newServer(token, port, fstest.MapFS{}, newHub(), &roots{}, newUpdater("0.2.0", "", io.Discard), nil)}
 	go srv.Serve(ln)
 	t.Cleanup(func() { srv.Close() })
 	return port

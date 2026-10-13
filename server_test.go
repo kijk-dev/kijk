@@ -11,7 +11,7 @@ import (
 
 func TestGuard(t *testing.T) {
 	web := fstest.MapFS{"index.html": {Data: []byte("hi")}}
-	srv := newServer("secret", 7717, web, newHub(), &roots{}, newUpdater("0.2.0", "", io.Discard))
+	srv := newServer("secret", 7717, web, newHub(), &roots{}, newUpdater("0.2.0", "", io.Discard), nil)
 	do := func(host, target string, cookie string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest("GET", target, nil)
 		r.Host = host
