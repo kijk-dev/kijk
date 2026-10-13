@@ -173,6 +173,45 @@ func (s *sshClient) run(ctx context.Context, stdin io.Reader, remoteCmd ...strin
 	return out.String(), err
 }
 
+// sshLogin is who ssh logs in as and where, as ssh -G resolves a target.
+type sshLogin struct{ user, host, port, jump string }
+
+func parseSSHConfig(out string) sshLogin {
+	var l sshLogin
+	for _, line := range strings.Split(out, "\n") {
+		k, v, _ := strings.Cut(strings.TrimSpace(line), " ")
+		switch k = strings.ToLower(k); k {
+		case "user":
+			l.user = v
+		case "hostname":
+			l.host = v
+		case "port":
+			l.port = v
+		case "proxyjump", "proxycommand":
+			if v != "none" {
+				l.jump = strings.TrimSpace(l.jump + " " + k + " " + v)
+			}
+		}
+	}
+	return l
+}
+
+// resolve asks ssh how it would log in to the target, without connecting.
+func (s *sshClient) resolve(ctx context.Context) (sshLogin, error) {
+	var stderr bytes.Buffer
+	cmd := s.command(ctx, "-G", s.target)
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err := runErr(err, stderr.Bytes()); err != nil {
+		return sshLogin{}, err
+	}
+	l := parseSSHConfig(string(out))
+	if l.host == "" {
+		return sshLogin{}, errors.New("ssh -G printed no host name")
+	}
+	return l, nil
+}
+
 // transport is an HTTP transport whose every connection is one ssh -W pipe to addr on the remote.
 func (s *sshClient) transport(addr string) *http.Transport {
 	return &http.Transport{

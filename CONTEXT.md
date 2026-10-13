@@ -21,7 +21,7 @@ The machine the kijk window runs on.
 _Avoid_: localhost, this device
 
 **Remote machine**:
-A machine the user has saved in kijk and reaches over SSH, such as a headless VM.
+A machine the user has saved in kijk and reaches over SSH, such as a headless VM, together with the user kijk logs in as. One computer saved with two users is two remote machines; one saved twice with the same user is a duplicate.
 _Avoid_: remote, server, host
 
 **Disabled machine**:

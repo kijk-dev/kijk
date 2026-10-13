@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -14,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -35,6 +37,10 @@ type fakeTarget struct {
 	// Gate pauses a sh -c call after 1 MB of stdin: it creates Gate+".paused" and goes on once
 	// Gate exists.
 	Gate string `json:"gate,omitempty"`
+	// What ssh -G prints: by default user kijk, the target as host name, and port 22.
+	User     string `json:"user,omitempty"`
+	HostName string `json:"hostname,omitempty"`
+	Jump     string `json:"jump,omitempty"`
 }
 
 // Modes of a fake target. The messages are what OpenSSH prints.
@@ -46,7 +52,7 @@ const (
 
 func fakeSSH(args []string) int {
 	var ctl, forward, control string
-	master, noTTY, noRemoteCommand := false, false, false
+	master, resolve, noTTY, noRemoteCommand := false, false, false, false
 	i := 0
 	for ; i < len(args) && strings.HasPrefix(args[i], "-"); i++ {
 		switch args[i] {
@@ -68,6 +74,8 @@ func fakeSSH(args []string) int {
 			}
 		case "-M":
 			master = true
+		case "-G":
+			resolve = true
 		case "-T":
 			noTTY = true
 		case "-N", "-f":
@@ -84,6 +92,13 @@ func fakeSSH(args []string) int {
 		return sshFail("fake ssh: no config in $KIJK_FAKE_SSH")
 	}
 	t, ok := conf.Targets[target]
+	if resolve {
+		fmt.Printf("user %s\nhostname %s\nport 22\n", cmp.Or(t.User, "kijk"), cmp.Or(t.HostName, target))
+		if t.Jump != "" {
+			fmt.Printf("proxyjump %s\n", t.Jump)
+		}
+		return 0
+	}
 	if !ok {
 		return sshFail("ssh: Could not resolve hostname %s: Name or service not known", target)
 	}
@@ -276,6 +291,15 @@ func (f *fakeMachines) add(name, home, mode string) string {
 }
 
 func (f *fakeMachines) home(target string) string { return f.conf.Targets[target].Home }
+
+// with changes how the fake ssh treats target.
+func (f *fakeMachines) with(target string, change func(*fakeTarget)) {
+	f.t.Helper()
+	t := f.conf.Targets[target]
+	change(&t)
+	f.conf.Targets[target] = t
+	f.save()
+}
 
 // pause makes the target's next install stop halfway. It returns the file that appears then, and
 // the one that lets it go on.
@@ -564,5 +588,48 @@ func TestRemoteInstallsAtOnce(t *testing.T) {
 	}
 	if entries, _ := os.ReadDir(d); len(entries) != 1 {
 		t.Errorf("left in the version folder: %v", entries)
+	}
+}
+
+// kijk machine add refuses a second name for a login that is already saved, before it logs in.
+func TestMachineAddRefusesADuplicateLogin(t *testing.T) {
+	f := newFakeMachines(t)
+	useConfigDir(t)
+	login := func(name, user, jump string) string {
+		target := f.add(name, user, "")
+		f.with(target, func(t *fakeTarget) { t.User, t.HostName, t.Jump = user, "10.0.0.5", jump })
+		return target
+	}
+	vm := login("vm", "abhinav", "")
+	byIP := login("abhinav-at-ip", "abhinav", "")
+	bob := login("bob-at-ip", "bob", "")
+	jumped := login("behind-a-jump-host", "abhinav", "bastion")
+	add := func(target string) (string, error) {
+		var out bytes.Buffer
+		err := machineAdd(target, strings.NewReader(""), &out)
+		return out.String(), err
+	}
+	if _, err := add(vm); err != nil {
+		t.Fatal(err)
+	}
+	out, err := add(byIP)
+	if err == nil || !strings.Contains(err.Error(), "is the same login as "+vm) || !strings.Contains(err.Error(), "user abhinav, host 10.0.0.5, port 22") {
+		t.Fatalf("duplicate: %v", err)
+	}
+	if strings.Contains(out, "Testing the login") {
+		t.Errorf("logged in before refusing: %q", out)
+	}
+	for _, target := range []string{bob, jumped} {
+		if _, err := add(target); err != nil {
+			t.Errorf("%s: %v", target, err)
+		}
+	}
+	var names []string
+	list, _ := savedMachines()
+	for _, m := range list {
+		names = append(names, m.Target)
+	}
+	if want := []string{vm, bob, jumped}; !slices.Equal(names, want) {
+		t.Fatalf("saved %v, want %v", names, want)
 	}
 }

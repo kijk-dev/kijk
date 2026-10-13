@@ -361,3 +361,14 @@ func TestManagerKeepsMachinesOnBrokenFile(t *testing.T) {
 		t.Fatalf("empty list: %v", got)
 	}
 }
+
+func TestParseSSHConfig(t *testing.T) {
+	out := "User abhinav\nhostname 10.0.0.5\nport 2222\nidentityfile ~/.ssh/id_ed25519\nproxyjump bastion\nproxycommand none\n"
+	want := sshLogin{user: "abhinav", host: "10.0.0.5", port: "2222", jump: "proxyjump bastion"}
+	if got := parseSSHConfig(out); got != want {
+		t.Fatalf("got %+v, want %+v", got, want)
+	}
+	if got := parseSSHConfig("user a\nhostname h\nport 22\n"); got != (sshLogin{user: "a", host: "h", port: "22"}) {
+		t.Fatalf("no jump host: %+v", got)
+	}
+}

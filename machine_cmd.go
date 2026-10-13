@@ -94,6 +94,9 @@ func machineAdd(target string, in io.Reader, out io.Writer) error {
 	if _, err := findSaved(target); err == nil {
 		return fmt.Errorf("%s is already saved", target)
 	}
+	if err := sameLogin(target); err != nil {
+		return err
+	}
 	s := newSSHClient(target)
 	fmt.Fprintf(out, "Testing the login to %s…\n", target)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -119,6 +122,27 @@ func machineAdd(target string, in io.Reader, out io.Writer) error {
 		return err
 	}
 	fmt.Fprintf(out, "Saved %s. kijk installs its own copy there when needed, and an open kijk window shows its agents within a few seconds.\n", target)
+	return nil
+}
+
+// sameLogin refuses a target that ssh resolves to the user, host, port and jump host of a saved
+// machine, whose agents would show twice. When ssh -G fails, the login test reports why.
+func sameLogin(target string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	want, err := newSSHClient(target).resolve(ctx)
+	if err != nil {
+		return nil
+	}
+	saved, err := savedMachines()
+	if err != nil {
+		return err
+	}
+	for _, m := range saved {
+		if got, err := newSSHClient(m.Target).resolve(ctx); err == nil && got == want {
+			return fmt.Errorf("%s is the same login as %s, which is already saved (user %s, host %s, port %s)", target, m.Target, want.user, want.host, want.port)
+		}
+	}
 	return nil
 }
 
