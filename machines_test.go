@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -10,7 +11,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -318,5 +322,42 @@ func TestServeStateJSON(t *testing.T) {
 	b, _ := json.Marshal(serveState{"0.9.0", 4012, "abc", 7})
 	if string(b) != `{"version":"0.9.0","port":4012,"token":"abc","pid":7}` {
 		t.Fatalf("the bootstrap script reads these keys with sed: %s", b)
+	}
+}
+
+// A broken machines.json keeps the machines of a running kijk, so a typo logs none of them out.
+func TestManagerKeepsMachinesOnBrokenFile(t *testing.T) {
+	useConfigDir(t)
+	p, _ := machinesPath()
+	os.MkdirAll(filepath.Dir(p), 0o700)
+	var log bytes.Buffer
+	mm := newMachineManager("dev")
+	mm.log = &log
+	mod := time.Now()
+	reload := func(content string) []string {
+		os.WriteFile(p, []byte(content), 0o600)
+		mod = mod.Add(time.Second)
+		os.Chtimes(p, mod, mod)
+		mm.reload()
+		var names []string
+		for _, v := range mm.views() {
+			names = append(names, v.Name)
+		}
+		return names
+	}
+	if got := reload(`{"machines":[{"target":"azvm","enabled":false}]}`); !slices.Equal(got, []string{"azvm"}) {
+		t.Fatalf("good file: %v", got)
+	}
+	for _, broken := range []string{`{"machines":`, `{"machines":[{"target":"azvm","enabled":"yes"}]}`} {
+		log.Reset()
+		if got := reload(broken); !slices.Equal(got, []string{"azvm"}) {
+			t.Errorf("%s: machines %v", broken, got)
+		}
+		if !strings.Contains(log.String(), p) || !strings.Contains(log.String(), "keeps the machines") {
+			t.Errorf("%s: log %q", broken, log.String())
+		}
+	}
+	if got := reload(`{"machines":[]}`); len(got) != 0 {
+		t.Fatalf("empty list: %v", got)
 	}
 }

@@ -15,7 +15,7 @@ import (
 func TestSettingsKeepUnknownKeys(t *testing.T) {
 	dir := useConfigDir(t)
 	p, _ := settingsPath()
-	if p != filepath.Join(dir, "kijk", "settings.json") {
+	if p != filepath.Join(dir, "user", "kijk", "settings.json") {
 		t.Fatalf("path %s", p)
 	}
 	raw, err := readSettings(p)
@@ -25,18 +25,15 @@ func TestSettingsKeepUnknownKeys(t *testing.T) {
 	os.MkdirAll(filepath.Dir(p), 0o700)
 	os.WriteFile(p, []byte(`{"theme":"nord","future":{"a":[1,2]}}`), 0o600)
 	err = updateSettings(p, func(raw map[string]json.RawMessage) error {
-		setMachines(raw, []savedMachine{{"azvm", true}})
+		raw["theme"] = json.RawMessage(`"dawn"`)
 		return nil
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	raw, _ = readSettings(p)
-	if string(raw["theme"]) != `"nord"` || !strings.Contains(string(raw["future"]), `"a"`) {
+	if string(raw["theme"]) != `"dawn"` || !strings.Contains(string(raw["future"]), `"a"`) {
 		t.Fatalf("unknown keys lost: %v", raw)
-	}
-	if got := machinesOf(raw); !slices.Equal(got, []savedMachine{{"azvm", true}}) {
-		t.Fatalf("machines = %v", got)
 	}
 	if runtime.GOOS != "windows" {
 		if st, _ := os.Stat(p); st.Mode().Perm() != 0o600 {
@@ -53,14 +50,80 @@ func TestSettingsBrokenFileIsKeptAsBak(t *testing.T) {
 	if _, err := readSettings(p); err == nil {
 		t.Fatal("broken file: want an error")
 	}
-	if err := changeMachines(func(l []savedMachine) ([]savedMachine, error) { return append(l, savedMachine{"azvm", true}), nil }); err != nil {
+	if err := updateSettings(p, func(raw map[string]json.RawMessage) error { raw["theme"] = json.RawMessage(`"nord"`); return nil }); err != nil {
 		t.Fatal(err)
 	}
 	if b, _ := os.ReadFile(p + ".bak"); string(b) != `{"theme":` {
 		t.Fatalf("bak = %q", b)
 	}
-	if list, err := savedMachines(); err != nil || len(list) != 1 {
-		t.Fatalf("after save: %v %v", list, err)
+	if raw, err := readSettings(p); err != nil || string(raw["theme"]) != `"nord"` {
+		t.Fatalf("after save: %v %v", raw, err)
+	}
+}
+
+func TestUserConfigDir(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows keeps os.UserConfigDir")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	for xdg, want := range map[string]string{"": filepath.Join(home, ".config"), "relative": filepath.Join(home, ".config"), "/x/conf": "/x/conf"} {
+		t.Setenv("XDG_CONFIG_HOME", xdg)
+		if got, err := defaultUserConfigDir(); err != nil || got != want {
+			t.Errorf("XDG_CONFIG_HOME=%q: %q %v, want %q", xdg, got, err, want)
+		}
+	}
+}
+
+// Machines live in machines.json, apart from settings.json, and keep its unknown keys.
+func TestMachinesFile(t *testing.T) {
+	dir := useConfigDir(t)
+	p, _ := machinesPath()
+	if p != filepath.Join(dir, "user", "kijk", "machines.json") {
+		t.Fatalf("path %s", p)
+	}
+	os.MkdirAll(filepath.Dir(p), 0o700)
+	os.WriteFile(p, []byte(`{"future":1}`), 0o600)
+	if err := changeMachines(func(l []savedMachine) ([]savedMachine, error) { return append(l, savedMachine{"azvm", true}), nil }); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := readSettings(p)
+	if string(raw["future"]) != "1" {
+		t.Fatalf("unknown key lost: %v", raw)
+	}
+	if list, err := savedMachines(); err != nil || !slices.Equal(list, []savedMachine{{"azvm", true}}) {
+		t.Fatalf("saved: %v %v", list, err)
+	}
+	if s, _ := settingsPath(); exists(s) {
+		t.Error("settings.json was written")
+	}
+	if runtime.GOOS != "windows" {
+		if st, _ := os.Stat(p); st.Mode().Perm() != 0o600 {
+			t.Errorf("mode %v", st.Mode())
+		}
+	}
+}
+
+// A broken machines.json is refused as it is, never replaced by an empty list.
+func TestBrokenMachinesFileIsRefused(t *testing.T) {
+	useConfigDir(t)
+	p, _ := machinesPath()
+	os.MkdirAll(filepath.Dir(p), 0o700)
+	for _, broken := range []string{`{"machines":`, `{"machines":[{"target":"a","enabled":"yes"}]}`, `{"machines":"nope"}`} {
+		os.WriteFile(p, []byte(broken), 0o600)
+		if _, err := savedMachines(); err == nil || !strings.Contains(err.Error(), p) {
+			t.Errorf("%s: read error %v", broken, err)
+		}
+		err := changeMachines(func(l []savedMachine) ([]savedMachine, error) { return append(l, savedMachine{"azvm", true}), nil })
+		if err == nil || !strings.Contains(err.Error(), "Fix or delete it") {
+			t.Errorf("%s: save error %v", broken, err)
+		}
+		if b, _ := os.ReadFile(p); string(b) != broken {
+			t.Errorf("%s: file changed to %s", broken, b)
+		}
+		if exists(p + ".bak") {
+			t.Errorf("%s: a .bak was written", broken)
+		}
 	}
 }
 
@@ -68,10 +131,10 @@ func TestMachinesOf(t *testing.T) {
 	raw := map[string]json.RawMessage{"machines": json.RawMessage(
 		`[{"target":"b"},{"target":"a","enabled":false},{"target":"b","enabled":false},{"target":""},{"target":"c","enabled":true}]`)}
 	want := []savedMachine{{"b", true}, {"a", false}, {"c", true}}
-	if got := machinesOf(raw); !slices.Equal(got, want) {
-		t.Fatalf("got %v, want %v", got, want)
+	if got, err := machinesOf(raw); err != nil || !slices.Equal(got, want) {
+		t.Fatalf("got %v %v, want %v", got, err, want)
 	}
-	if got := machinesOf(map[string]json.RawMessage{"machines": json.RawMessage(`"nope"`)}); got != nil {
+	if got, err := machinesOf(map[string]json.RawMessage{"machines": json.RawMessage(`"nope"`)}); err == nil {
 		t.Fatalf("bad key: %v", got)
 	}
 	setMachines(raw, nil)
@@ -81,7 +144,7 @@ func TestMachinesOf(t *testing.T) {
 }
 
 func TestSettingsFileReloadsOnChange(t *testing.T) {
-	p := filepath.Join(t.TempDir(), "settings.json")
+	p := filepath.Join(t.TempDir(), "machines.json")
 	s := settingsFile{path: p}
 	if raw, changed := s.load(); !changed || len(raw) != 0 {
 		t.Fatalf("first load: %v %v", raw, changed)
@@ -91,13 +154,13 @@ func TestSettingsFileReloadsOnChange(t *testing.T) {
 	}
 	os.WriteFile(p, []byte(`{"machines":[{"target":"azvm"}]}`), 0o600)
 	raw, changed := s.load()
-	if !changed || len(machinesOf(raw)) != 1 {
+	if list, _ := machinesOf(raw); !changed || len(list) != 1 {
 		t.Fatalf("after write: %v %v", raw, changed)
 	}
 	later := time.Now().Add(time.Minute)
 	os.WriteFile(p, []byte(`{"machines":[{"target":"other"}]}`), 0o600)
 	os.Chtimes(p, later, later)
-	if raw, changed := s.load(); !changed || machinesOf(raw)[0].Target != "other" {
+	if raw, changed := s.load(); !changed || string(raw["machines"]) != `[{"target":"other"}]` {
 		t.Fatalf("after edit: %v %v", raw, changed)
 	}
 }
@@ -113,7 +176,7 @@ func TestMachineCommands(t *testing.T) {
 		}
 		return
 	}
-	useConfigDir(t)
+	dir := useConfigDir(t)
 	run := func(args ...string) (int, string) {
 		var out bytes.Buffer
 		code := runMachine(args, strings.NewReader(""), &out, &out)
@@ -155,6 +218,10 @@ func TestMachineCommands(t *testing.T) {
 	}
 	if code, out := run("login", "azvm"); code != 1 || !strings.Contains(out, "no machine is saved") {
 		t.Fatalf("login unknown: %d %q", code, out)
+	}
+	os.WriteFile(filepath.Join(dir, "user", "kijk", "machines.json"), []byte(`{`), 0o600)
+	if code, out := run("list"); code != 1 || !strings.Contains(out, "machines.json is not valid JSON") {
+		t.Fatalf("list of a broken file: %d %q", code, out)
 	}
 }
 

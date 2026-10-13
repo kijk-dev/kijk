@@ -11,11 +11,14 @@ import (
 	"testing/fstest"
 )
 
+// useConfigDir points kijk's own folder at a temp folder, and the folder of the files the user
+// edits at its "user" subfolder.
 func useConfigDir(t *testing.T) string {
 	dir := t.TempDir()
-	old := configDir
+	old, oldUser := configDir, userConfigDir
 	configDir = func() (string, error) { return dir, nil }
-	t.Cleanup(func() { configDir = old })
+	userConfigDir = func() (string, error) { return filepath.Join(dir, "user"), nil }
+	t.Cleanup(func() { configDir, userConfigDir = old, oldUser })
 	return dir
 }
 

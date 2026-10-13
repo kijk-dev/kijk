@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"sync"
 	"time"
@@ -15,12 +16,38 @@ import (
 // settingsMu keeps two saves in this process from racing; the rename keeps readers whole.
 var settingsMu sync.Mutex
 
+// userConfigDir holds the files the user edits, in ~/.config on macOS as on Linux. kijk's own
+// files stay in configDir.
+var userConfigDir = defaultUserConfigDir
+
+func defaultUserConfigDir() (string, error) {
+	if runtime.GOOS == "windows" {
+		return os.UserConfigDir()
+	}
+	if d := os.Getenv("XDG_CONFIG_HOME"); filepath.IsAbs(d) {
+		return d, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".config"), nil
+}
+
 func settingsPath() (string, error) {
-	dir, err := configDir()
+	dir, err := userConfigDir()
 	if err != nil {
 		return "", err
 	}
 	return filepath.Join(dir, "kijk", "settings.json"), nil
+}
+
+func machinesPath() (string, error) {
+	dir, err := userConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "kijk", "machines.json"), nil
 }
 
 // readSettings gives every key of the settings file. A missing file is an empty map.
@@ -59,6 +86,11 @@ func updateSettings(path string, change func(raw map[string]json.RawMessage) err
 	if err := change(raw); err != nil {
 		return err
 	}
+	return writeSettings(path, raw)
+}
+
+// writeSettings writes the keys atomically, readable only by the user.
+func writeSettings(path string, raw map[string]json.RawMessage) error {
 	b, err := json.MarshalIndent(raw, "", "  ")
 	if err != nil {
 		return err
@@ -113,20 +145,24 @@ func (s *settingsFile) load() (map[string]json.RawMessage, bool) {
 	return raw, true
 }
 
-// savedMachine is one entry of the settings' machines list.
+// savedMachine is one entry of the machines list in machines.json.
 type savedMachine struct {
 	Target  string `json:"target"`
 	Enabled bool   `json:"enabled"`
 }
 
 // machinesOf reads the machines key. An entry without "enabled" is enabled.
-func machinesOf(raw map[string]json.RawMessage) []savedMachine {
+func machinesOf(raw map[string]json.RawMessage) ([]savedMachine, error) {
+	b, ok := raw["machines"]
+	if !ok {
+		return nil, nil
+	}
 	var list []struct {
 		Target  string `json:"target"`
 		Enabled *bool  `json:"enabled"`
 	}
-	if json.Unmarshal(raw["machines"], &list) != nil {
-		return nil
+	if err := json.Unmarshal(b, &list); err != nil {
+		return nil, fmt.Errorf("its machines list is not valid: %w", err)
 	}
 	var out []savedMachine
 	for _, m := range list {
@@ -135,7 +171,7 @@ func machinesOf(raw map[string]json.RawMessage) []savedMachine {
 		}
 		out = append(out, savedMachine{m.Target, m.Enabled == nil || *m.Enabled})
 	}
-	return out
+	return out, nil
 }
 
 func setMachines(raw map[string]json.RawMessage, list []savedMachine) {
@@ -149,30 +185,44 @@ func setMachines(raw map[string]json.RawMessage, list []savedMachine) {
 
 var errNotSaved = errors.New("not saved")
 
-// changeMachines edits the saved machines list in the settings file.
+// readMachines reads machines.json. A broken file is an error that names it, never an empty list,
+// so a typo cannot drop the saved machines.
+func readMachines(path string) (map[string]json.RawMessage, []savedMachine, error) {
+	raw, err := readSettings(path)
+	if err != nil {
+		return nil, nil, fmt.Errorf("%w. Fix or delete it", err)
+	}
+	list, err := machinesOf(raw)
+	if err != nil {
+		return nil, nil, fmt.Errorf("%s: %w. Fix or delete it", path, err)
+	}
+	return raw, list, nil
+}
+
+// changeMachines edits the saved machines list in machines.json.
 func changeMachines(change func([]savedMachine) ([]savedMachine, error)) error {
-	path, err := settingsPath()
+	path, err := machinesPath()
 	if err != nil {
 		return err
 	}
-	return updateSettings(path, func(raw map[string]json.RawMessage) error {
-		list, err := change(machinesOf(raw))
-		if err != nil {
-			return err
-		}
-		setMachines(raw, list)
-		return nil
-	})
+	settingsMu.Lock()
+	defer settingsMu.Unlock()
+	raw, list, err := readMachines(path)
+	if err != nil {
+		return err
+	}
+	if list, err = change(list); err != nil {
+		return err
+	}
+	setMachines(raw, list)
+	return writeSettings(path, raw)
 }
 
 func savedMachines() ([]savedMachine, error) {
-	path, err := settingsPath()
+	path, err := machinesPath()
 	if err != nil {
 		return nil, err
 	}
-	raw, err := readSettings(path)
-	if err != nil {
-		return nil, err
-	}
-	return machinesOf(raw), nil
+	_, list, err := readMachines(path)
+	return list, err
 }

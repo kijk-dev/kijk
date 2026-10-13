@@ -25,7 +25,7 @@ type machineView struct {
 	Rows    []Row  `json:"rows"`
 }
 
-// machineManager keeps one goroutine per enabled saved machine and follows settings.json.
+// machineManager keeps one goroutine per enabled saved machine and follows machines.json.
 type machineManager struct {
 	version  string // the version to run on remote machines; "dev" for a build from source
 	sshExtra []string
@@ -34,14 +34,15 @@ type machineManager struct {
 	mu       sync.Mutex
 	list     []*remoteMachine
 	settings settingsFile
+	log      io.Writer
 }
 
 func newMachineManager(version string) *machineManager {
-	p, _ := settingsPath()
+	p, _ := machinesPath()
 	if !isRelease(version) {
 		version = "dev"
 	}
-	return &machineManager{version: version, changed: make(chan struct{}, 1), settings: settingsFile{path: p}}
+	return &machineManager{version: version, changed: make(chan struct{}, 1), settings: settingsFile{path: p}, log: os.Stderr}
 }
 
 func (m *machineManager) notify() {
@@ -51,12 +52,10 @@ func (m *machineManager) notify() {
 	}
 }
 
-// run follows settings.json, so kijk machine add, remove, disable and enable reach a running kijk.
+// run follows machines.json, so kijk machine add, remove, disable and enable reach a running kijk.
 func (m *machineManager) run(ctx context.Context) {
 	for {
-		if raw, changed := m.settings.load(); changed {
-			m.apply(machinesOf(raw))
-		}
+		m.reload()
 		select {
 		case <-ctx.Done():
 			m.apply(nil)
@@ -64,6 +63,27 @@ func (m *machineManager) run(ctx context.Context) {
 		case <-time.After(time.Second):
 		}
 	}
+}
+
+// reload applies machines.json when it changed. A broken file keeps the machines as they are,
+// because dropping them would also close their logins.
+func (m *machineManager) reload() {
+	raw, changed := m.settings.load()
+	if !changed {
+		return
+	}
+	list, err := machinesOf(raw)
+	if err != nil {
+		err = fmt.Errorf("%s: %w", m.settings.path, err)
+	}
+	if m.settings.err != nil {
+		err = m.settings.err
+	}
+	if err != nil {
+		fmt.Fprintf(m.log, "kijk: %v. kijk keeps the machines it has until the file is fixed.\n", err)
+		return
+	}
+	m.apply(list)
 }
 
 func (m *machineManager) apply(saved []savedMachine) {
