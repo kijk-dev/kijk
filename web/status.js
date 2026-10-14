@@ -32,7 +32,7 @@ export function restarting() {
   return last?.busy === 'restarting' && Date.now() - restartSince < 15000;
 }
 
-// showCodexError draws the codexError field of an /api/events message.
+// showCodexError draws the codexError fields of an /api/events message, local and remote.
 export function showCodexError(err) {
   if ((err || '') === codexError) return;
   codexError = err || '';
@@ -84,8 +84,8 @@ function draw() {
     parts.push(version);
   }
   if (codexError) {
-    parts.unshift(news('error', ['Cannot read Codex agents ', then('· hidden until kijk supports this Codex version')], 'Codex agents hidden',
-      `Cannot read Codex agents\n${codexError}\nCodex agents are hidden until kijk supports this Codex version. Claude Code agents still show.`));
+    parts.unshift(news('error', ['Cannot read Codex agents ', then('· they are hidden')], 'Codex agents hidden',
+      `Cannot read Codex agents\n${codexError}\nCodex agents are hidden until kijk can read them again. Other agents still show.`));
     parts[0].classList.add('agent-error');
   }
 

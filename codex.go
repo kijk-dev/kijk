@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 )
 
@@ -23,6 +24,8 @@ import (
 const (
 	codexTimeout  = 500 * time.Millisecond // per request
 	maxCodexFrame = 16 << 20
+	// Stored threads that this app server has not loaded, such as `codex exec` runs, also fill thread/list.
+	codexListSlack = 50
 )
 
 // codexCache keeps the last read of each loaded thread, between scans.
@@ -44,7 +47,8 @@ type codexThread struct {
 
 // busy is false for an active thread that waits on the user: it has stopped working.
 func (t codexThread) busy() bool {
-	return t.Status.Type == "active" && len(t.Status.ActiveFlags) == 0
+	f := t.Status.ActiveFlags
+	return t.Status.Type == "active" && !slices.Contains(f, "waitingOnApproval") && !slices.Contains(f, "waitingOnUserInput")
 }
 
 func codexHome() string {
@@ -59,13 +63,16 @@ func codexSocket(home string) string {
 	return filepath.Join(home, "app-server-control", "app-server-control.sock")
 }
 
-// readCodexThreads returns the threads loaded in the app server. No app server is not an error:
-// it means no Codex TUI runs. The connection closes before returning, because Codex attaches
-// every open connection to each new thread, and an attached connection keeps a thread loaded.
+// readCodexThreads returns the threads loaded in the app server; none when no Codex TUI runs. It
+// closes the connection, because Codex attaches each open connection to new threads and keeps them loaded.
 func readCodexThreads(socket string, cache codexCache) ([]codexThread, error) {
 	nc, err := net.DialTimeout("unix", socket, codexTimeout)
-	if err != nil {
+	// Checks the file, as Windows reports a missing socket as a dead network.
+	if err != nil && (!exists(socket) || errors.Is(err, errConnRefused)) {
 		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("cannot reach the Codex app server: %w", err)
 	}
 	defer nc.Close()
 	nc.SetDeadline(time.Now().Add(codexTimeout))
@@ -80,8 +87,8 @@ func readCodexThreads(socket string, cache codexCache) ([]codexThread, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Reading a thread before its first prompt costs the app server about 60 ms, a search on disk
-	// for a thread it has not stored yet. Such a thread is read again only once it is stored.
+	// A thread before its first prompt is slow to read, as Codex searches the disk for it. It is
+	// read again only once it is stored.
 	var read []string
 	waiting := map[string]bool{}
 	for _, id := range ids {
@@ -92,7 +99,7 @@ func readCodexThreads(socket string, cache codexCache) ([]codexThread, error) {
 		}
 	}
 	if len(waiting) > 0 {
-		stored, err := c.recentThreads(len(ids))
+		stored, err := c.recentThreads(len(ids) + codexListSlack)
 		if err != nil {
 			return nil, err
 		}
@@ -291,7 +298,7 @@ func (c *codexConn) read() ([]byte, error) {
 			}
 			n = binary.BigEndian.Uint64(b[:])
 		}
-		if n+uint64(len(msg)) > maxCodexFrame {
+		if n > maxCodexFrame-uint64(len(msg)) {
 			return nil, errors.New("Codex app server message too large")
 		}
 		var mask [4]byte

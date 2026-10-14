@@ -155,9 +155,8 @@ func takeRestartEnv() (token string, restarted bool) {
 	return token, restarted
 }
 
-// sessionMessage is one message on /api/events: the local agent rows, the status bar state, and
-// the remote machines. machines is left out when none is saved, so the message stays as before.
-// err shows in the Agents list in place of the rows; codexErr shows in the status bar.
+// sessionMessage is one message on /api/events. err replaces the rows in the Agents list; codexErr
+// goes to the status bar. machines is left out when none is saved, so the message stays as before.
 func sessionMessage(rows []Row, err, codexErr error, k kijkState, machines []machineView) []byte {
 	msg := struct {
 		Rows       []Row         `json:"rows"`

@@ -188,11 +188,14 @@ function rowItem(r, n) {
   }
   li.where.textContent = where;
   const labels = types.map(t => kind(t).label);
+  const perAgent = r.names.map((name, i) => [kind(agents[i]?.type).label, agents[i]?.busy && !r.stale ? 'Busy' : 'Idle', name]);
   const who = types.length > 1
-    ? [...r.names.map((name, i) => `${kind(agents[i]?.type).label} · ${agents[i]?.busy && !r.stale ? 'Busy' : 'Idle'} · ${name}`), `${state} · ${ago(r.lastActivity)}`]
+    ? [...perAgent.map(a => a.join(' · ')), `${state} · ${ago(r.lastActivity)}`]
     : [`${labels[0] || 'Agent'} · ${state} · ${ago(r.lastActivity)}`];
   li.dataset.tip = [r.names.join(', '), where, ...who, r.machine ? `${r.machine}:${r.root}` : r.root, key].filter(Boolean).join('\n');
-  li.setAttribute('aria-label', `${r.names.join(', ')}, ${labels.join(' and ')}, ${where}, ${state}`);
+  li.setAttribute('aria-label', types.length > 1
+    ? `${perAgent.map(a => a.join(', ')).join('; ')}; ${where}, ${state}`
+    : `${r.names.join(', ')}, ${labels.join(' and ')}, ${where}, ${state}`);
   return li;
 }
 
@@ -801,8 +804,9 @@ const events = new EventSource('/api/events');
 events.onmessage = e => {
   const msg = JSON.parse(e.data);
   showKijk(msg.kijk);
-  showCodexError(msg.codexError);
   machines = msg.machines || null;
+  showCodexError([msg.codexError, ...(machines || []).filter(m => m.codexError).map(m => `${m.name}: ${m.codexError}`)]
+    .filter(Boolean).join('\n'));
   const next = (msg.rows || []).map(r => ({ ...r, key: r.root, machine: '' }));
   for (const m of machines || []) {
     for (const r of m.rows) next.push({ ...r, key: folderKey(m.name, r.root), machine: m.name, stale: m.stale });

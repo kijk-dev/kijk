@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -24,21 +25,27 @@ type fakeCodex struct {
 	socket  string
 	mu      sync.Mutex
 	threads []map[string]any
+	stored  []map[string]any // stored threads this app server has not loaded, listed before its own
 	methods []string
 	params  []json.RawMessage
 	// reply, when set, answers instead of the normal handler. It may send nothing.
 	reply func(c *fakeConn, id int, method string)
 }
 
-func newFakeCodex(t *testing.T) *fakeCodex {
+// shortTempDir is for socket paths, which must stay under about 104 bytes; t.TempDir() is longer on macOS.
+func shortTempDir(t *testing.T) string {
 	t.Helper()
-	// A socket path must stay under about 104 bytes, and t.TempDir() is longer on macOS.
 	dir, err := os.MkdirTemp("", "kc")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.RemoveAll(dir) })
-	f := &fakeCodex{socket: filepath.Join(dir, "s.sock")}
+	return dir
+}
+
+func newFakeCodex(t *testing.T) *fakeCodex {
+	t.Helper()
+	f := &fakeCodex{socket: filepath.Join(shortTempDir(t), "s.sock")}
 	ln, err := net.Listen("unix", f.socket)
 	if err != nil {
 		t.Skipf("no Unix sockets here: %v", err)
@@ -121,7 +128,7 @@ func (f *fakeCodex) serve(nc net.Conn) {
 		f.mu.Lock()
 		f.methods = append(f.methods, m.Method)
 		f.params = append(f.params, m.Params)
-		reply, threads := f.reply, f.threads
+		reply, threads, stored := f.reply, f.threads, f.stored
 		f.mu.Unlock()
 		if reply != nil {
 			reply(c, m.ID, m.Method)
@@ -138,12 +145,17 @@ func (f *fakeCodex) serve(nc net.Conn) {
 			c.json(map[string]any{"id": m.ID, "result": map[string]any{"data": ids, "nextCursor": nil}})
 		case "thread/list":
 			// Codex stores a thread at its first prompt; only stored threads are listed.
-			data := []map[string]any{}
+			data := slices.Clone(stored)
 			for _, t := range threads {
 				if t["preview"] != "" {
 					data = append(data, t)
 				}
 			}
+			var p struct {
+				Limit int `json:"limit"`
+			}
+			json.Unmarshal(m.Params, &p)
+			data = data[:min(p.Limit, len(data))]
 			c.json(map[string]any{"id": m.ID, "result": map[string]any{"data": data, "nextCursor": nil}})
 		case "thread/read":
 			var p struct {
@@ -214,9 +226,32 @@ func TestReadCodexThreads(t *testing.T) {
 }
 
 func TestReadCodexThreadsNoServer(t *testing.T) {
-	threads, err := readCodexThreads(filepath.Join(t.TempDir(), "missing.sock"), codexCache{})
-	if threads != nil || err != nil {
-		t.Fatalf("got %v, %v; want no threads and no error", threads, err)
+	dir := shortTempDir(t)
+	stale := filepath.Join(dir, "stale.sock")
+	ln, err := net.Listen("unix", stale)
+	if err != nil {
+		t.Skipf("no Unix sockets here: %v", err)
+	}
+	ln.(*net.UnixListener).SetUnlinkOnClose(false)
+	ln.Close()
+	for _, socket := range []string{filepath.Join(dir, "missing.sock"), stale} {
+		threads, err := readCodexThreads(socket, codexCache{})
+		if threads != nil || err != nil {
+			t.Fatalf("%s: got %v, %v; want no threads and no error", socket, threads, err)
+		}
+	}
+}
+
+func TestReadCodexThreadsForbiddenSocket(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("file modes do not stop this user from connecting")
+	}
+	f := newFakeCodex(t)
+	if err := os.Chmod(f.socket, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readCodexThreads(f.socket, codexCache{}); err == nil {
+		t.Fatal("an app server kijk may not reach is an error, not the absence of Codex")
 	}
 }
 
@@ -225,7 +260,10 @@ func TestReadCodexThreadsBadServers(t *testing.T) {
 		"hangs":     func(*fakeConn, int, string) {},
 		"closes":    func(c *fakeConn, _ int, _ string) { c.send(0x8, nil) },
 		"too large": func(c *fakeConn, _ int, _ string) { c.send(0x1, make([]byte, maxCodexFrame+1)) },
-		"not json":  func(c *fakeConn, _ int, _ string) { c.send(0x1, []byte("{oops")) },
+		"huge length": func(c *fakeConn, _ int, _ string) {
+			c.nc.Write([]byte{0x01, 1, 'x', 0x80, 127, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff})
+		},
+		"not json": func(c *fakeConn, _ int, _ string) { c.send(0x1, []byte("{oops")) },
 		"error reply": func(c *fakeConn, id int, _ string) {
 			c.json(map[string]any{"id": id, "error": map[string]any{"code": 1, "message": "nope"}})
 		},
@@ -341,7 +379,7 @@ func TestScanBrokenCodexKeepsClaude(t *testing.T) {
 }
 
 func TestScanNoCodexAppServer(t *testing.T) {
-	s := newScanner(t.TempDir(), t.TempDir()) // a Codex home, but no app server listens
+	s := newScanner(t.TempDir(), shortTempDir(t)) // a Codex home, but no app server listens
 	rows, err, codexErr := s.scan()
 	if len(rows) != 0 || err != nil || codexErr != nil {
 		t.Fatalf("got %v, %v, %v; want nothing and no error", rows, err, codexErr)
@@ -443,5 +481,45 @@ func TestThreadsWithoutPromptAreReadOnce(t *testing.T) {
 	f.set(thread("prompted", "/a", "idle"))
 	if _, err := readCodexThreads(f.socket, cache); err != nil || len(cache) != 1 {
 		t.Fatalf("cache = %v after threads unloaded, err = %v", cache, err)
+	}
+}
+
+func TestThreadWithoutPromptIsReadAfterNewerStoredThreads(t *testing.T) {
+	f := newFakeCodex(t)
+	f.set(thread("new", "/a", "idle", "preview", ""))
+	for i := range 3 {
+		f.stored = append(f.stored, thread(fmt.Sprintf("exec%d", i), "/x", "notLoaded"))
+	}
+	cache := codexCache{}
+	if _, err := readCodexThreads(f.socket, cache); err != nil {
+		t.Fatal(err)
+	}
+	f.set(thread("new", "/a", "active", "preview", "first prompt"))
+	threads, err := readCodexThreads(f.socket, cache)
+	if err != nil || len(threads) != 1 || !threads[0].busy() {
+		t.Fatalf("threads = %+v, err = %v; want new read again after its first prompt", threads, err)
+	}
+}
+
+func TestCodexBusy(t *testing.T) {
+	cases := []struct {
+		status string
+		flags  []string
+		busy   bool
+	}{
+		{"active", nil, true},
+		{"active", []string{"aFutureFlag"}, true},
+		{"active", []string{"waitingOnApproval"}, false},
+		{"active", []string{"waitingOnUserInput"}, false},
+		{"idle", nil, false},
+		{"notLoaded", nil, false},
+		{"systemError", nil, false},
+	}
+	for _, c := range cases {
+		var th codexThread
+		th.Status.Type, th.Status.ActiveFlags = c.status, c.flags
+		if th.busy() != c.busy {
+			t.Errorf("%s %v: busy = %v, want %v", c.status, c.flags, th.busy(), c.busy)
+		}
 	}
 }

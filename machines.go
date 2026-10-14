@@ -18,12 +18,13 @@ import (
 
 // machineView is one remote machine on /api/events.
 type machineView struct {
-	Name    string `json:"name"`
-	State   string `json:"state"`
-	System  string `json:"system,omitempty"`
-	Message string `json:"message,omitempty"`
-	Stale   bool   `json:"stale"`
-	Rows    []Row  `json:"rows"`
+	Name       string `json:"name"`
+	State      string `json:"state"`
+	System     string `json:"system,omitempty"`
+	Message    string `json:"message,omitempty"`
+	CodexError string `json:"codexError,omitempty"`
+	Stale      bool   `json:"stale"`
+	Rows       []Row  `json:"rows"`
 }
 
 // machineManager keeps one goroutine per enabled saved machine and follows machines.json.
@@ -160,14 +161,15 @@ type remoteMachine struct {
 	mm   *machineManager
 	ssh  *sshClient
 
-	mu      sync.Mutex
-	state   string
-	message string
-	system  string
-	rows    []Row
-	proxy   http.Handler // set while connected
-	stop    context.CancelFunc
-	done    chan struct{}
+	mu         sync.Mutex
+	state      string
+	message    string
+	codexError string
+	system     string
+	rows       []Row
+	proxy      http.Handler // set while connected
+	stop       context.CancelFunc
+	done       chan struct{}
 }
 
 func (r *remoteMachine) view() machineView {
@@ -177,8 +179,12 @@ func (r *remoteMachine) view() machineView {
 	if rows == nil {
 		rows = []Row{}
 	}
-	return machineView{Name: r.name, State: r.state, System: r.system, Message: r.message,
+	v := machineView{Name: r.name, State: r.state, System: r.system, Message: r.message,
 		Stale: r.state != stateConnected && len(r.rows) > 0, Rows: rows}
+	if r.state == stateConnected {
+		v.CodexError = r.codexError
+	}
+	return v
 }
 
 // setEnabled starts or stops the machine's goroutine. Stopping drops its rows and closes the login.
@@ -397,13 +403,14 @@ func (r *remoteMachine) follow(ctx context.Context) error {
 			continue
 		}
 		var msg struct {
-			Rows  []Row  `json:"rows"`
-			Error string `json:"error"`
+			Rows       []Row  `json:"rows"`
+			Error      string `json:"error"`
+			CodexError string `json:"codexError"`
 		}
 		if json.Unmarshal([]byte(data), &msg) != nil {
 			continue
 		}
-		r.set(ctx, func() { r.rows, r.message = msg.Rows, msg.Error })
+		r.set(ctx, func() { r.rows, r.message, r.codexError = msg.Rows, msg.Error, msg.CodexError })
 	}
 }
 
