@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // isolatedGit hides the user's git config (signing, hooks) from the test repos.
@@ -347,11 +348,16 @@ func TestMainLineAndGraph(t *testing.T) {
 	isolatedGit(t)
 	repo := repoWithOrigin(t)
 	fork, _ := git(repo, "rev-parse", "HEAD")
+	// The graph orders commits by time, and commits made in the same second have no fixed order.
+	base := time.Now().Unix() + 60
+	commitAt := func(sec int64) { t.Setenv("GIT_COMMITTER_DATE", fmt.Sprintf("@%d +0000", base+sec)) }
 	run(t, repo, "checkout", "-qb", "feature")
 	write(t, filepath.Join(repo, "a.go"), "feature\n")
+	commitAt(2)
 	run(t, repo, "commit", "-qam", "on feature")
 	run(t, repo, "checkout", "-q", "main")
 	write(t, filepath.Join(repo, "a.go"), "main\n")
+	commitAt(1)
 	run(t, repo, "commit", "-qam", "on main")
 	run(t, repo, "push", "-q")
 	if st := status(repo); st.Main != "" || st.Behind != 0 {
@@ -382,6 +388,7 @@ func TestMainLineAndGraph(t *testing.T) {
 
 	// A pull request into release: compare with it, and give each branch its own lane colour.
 	run(t, repo, "checkout", "-qb", "release", fork)
+	commitAt(3)
 	run(t, repo, "commit", "-q", "--allow-empty", "-m", "on release")
 	run(t, repo, "push", "-q", "origin", "release")
 	run(t, repo, "checkout", "-q", "feature")
