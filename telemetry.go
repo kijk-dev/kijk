@@ -77,14 +77,19 @@ func (t *telemetry) send(name string, extra map[string]any) {
 }
 
 // scanned sends "kijk active" after the first scan and again when the local date changes.
-// agents counts local agents only; remote ones are in remoteAgents.
-func (t *telemetry) scanned(agents, machines, remoteAgents int, now time.Time) {
+// byType counts local agents per agent type; remote ones are in remoteAgents.
+func (t *telemetry) scanned(byType map[string]int, machines, remoteAgents int, now time.Time) {
 	if t == nil {
 		return
 	}
 	if day := now.Format(time.DateOnly); day != t.lastActive {
 		t.lastActive = day
-		t.send("kijk active", map[string]any{"agents": agents, "machines": machines, "remote_agents": remoteAgents})
+		agents := 0
+		for _, n := range byType {
+			agents += n
+		}
+		t.send("kijk active", map[string]any{"agents": agents, "claude_agents": byType["claude"], "codex_agents": byType["codex"],
+			"machines": machines, "remote_agents": remoteAgents})
 	}
 }
 
@@ -95,6 +100,16 @@ func agentCount(rows []Row) int {
 		n += len(r.Names)
 	}
 	return n
+}
+
+func agentTypeCounts(rows []Row) map[string]int {
+	byType := map[string]int{}
+	for _, r := range rows {
+		for _, a := range r.Agents {
+			byType[a.Type]++
+		}
+	}
+	return byType
 }
 
 func (t *telemetry) run() {

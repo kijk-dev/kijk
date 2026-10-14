@@ -76,11 +76,11 @@ func TestParseBoot(t *testing.T) {
 
 func TestSessionMessageWithoutMachines(t *testing.T) {
 	var mm *machineManager
-	b := sessionMessage([]Row{}, nil, kijkState{Version: "0.9.0"}, mm.views())
+	b := sessionMessage([]Row{}, nil, nil, kijkState{Version: "0.9.0"}, mm.views())
 	if string(b) != `{"rows":[],"kijk":{"version":"0.9.0","canRestart":false}}` {
 		t.Fatalf("local-only message changed: %s", b)
 	}
-	b = sessionMessage(nil, nil, kijkState{}, []machineView{{Name: "azvm", State: stateDisabled, Rows: []Row{}}})
+	b = sessionMessage(nil, nil, nil, kijkState{}, []machineView{{Name: "azvm", State: stateDisabled, Rows: []Row{}}})
 	if !strings.Contains(string(b), `"machines":[{"name":"azvm","state":"disabled","stale":false,"rows":[]}]`) {
 		t.Fatalf("machines: %s", b)
 	}

@@ -222,12 +222,12 @@ func fakeForward(addr, ctl string, refused bool) int {
 	}
 }
 
-// remoteEnv keeps the remote command away from this user's kijk and Claude folders.
+// remoteEnv keeps the remote command away from this user's kijk, Claude and Codex folders.
 func remoteEnv(home string) []string {
 	env := []string{"HOME=" + home}
 	for _, kv := range os.Environ() {
 		k, _, _ := strings.Cut(kv, "=")
-		if k == "HOME" || k == "CLAUDE_CONFIG_DIR" || strings.HasPrefix(k, "XDG_") || strings.HasPrefix(k, "KIJK_") {
+		if k == "HOME" || k == "CLAUDE_CONFIG_DIR" || k == "CODEX_HOME" || strings.HasPrefix(k, "XDG_") || strings.HasPrefix(k, "KIJK_") {
 			continue
 		}
 		env = append(env, kv)
@@ -238,11 +238,6 @@ func remoteEnv(home string) []string {
 func sshFail(format string, a ...any) int {
 	fmt.Fprintf(os.Stderr, format+"\n", a...)
 	return 255
-}
-
-func exists(p string) bool {
-	_, err := os.Stat(p)
-	return err == nil
 }
 
 // fakeServe is a release published by fakeMachines.release, started by the bootstrap.

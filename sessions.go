@@ -1,7 +1,9 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -9,14 +11,20 @@ import (
 )
 
 type Row struct {
-	Root         string   `json:"root"`
-	Repo         string   `json:"repo"`
-	Branch       string   `json:"branch"`
-	Cwd          string   `json:"cwd"`   // newest session's working folder, relative to Root with slashes
-	Agent        string   `json:"agent"` // which agent runs here: "claude" (later also others, such as "codex")
-	Names        []string `json:"names"`
-	Busy         bool     `json:"busy"`
-	LastActivity int64    `json:"lastActivity"` // unix ms
+	Root         string     `json:"root"`
+	Repo         string     `json:"repo"`
+	Branch       string     `json:"branch"`
+	Cwd          string     `json:"cwd"` // newest session's working folder, relative to Root with slashes
+	Names        []string   `json:"names"`
+	Agents       []RowAgent `json:"agents"`       // one per name, in the same order
+	Busy         bool       `json:"busy"`         // any agent is Busy
+	LastActivity int64      `json:"lastActivity"` // unix ms
+}
+
+// RowAgent is the agent type of one name in a row, "claude" or "codex", and whether it is Busy.
+type RowAgent struct {
+	Type string `json:"type"`
+	Busy bool   `json:"busy"`
 }
 
 type session struct {
@@ -37,20 +45,44 @@ type gitEntry struct {
 	at           time.Time
 }
 
+type codexSeen struct {
+	status string
+	at     time.Time
+}
+
 // scanner is used from one goroutine only.
 type scanner struct {
-	dir         string
+	dir         string // Claude Code's config folder
+	codexHome   string
+	codexSock   string
+	codexCache  codexCache
 	transcripts map[string]transcript
 	git         map[string]gitEntry
+	codexSeen   map[string]codexSeen
 }
 
-func newScanner(dir string) *scanner {
-	return &scanner{dir: dir, transcripts: map[string]transcript{}, git: map[string]gitEntry{}}
+func newScanner(dir, codexHome string) *scanner {
+	return &scanner{dir: dir, codexHome: codexHome, codexSock: codexSocket(codexHome), codexCache: codexCache{},
+		transcripts: map[string]transcript{}, git: map[string]gitEntry{}, codexSeen: map[string]codexSeen{}}
 }
 
-func (s *scanner) scan() ([]Row, error) {
+// scan returns the rows of both agent types. err is about Claude Code and replaces the rows in the
+// Agents list; codexErr is about Codex and only hides the Codex agents.
+func (s *scanner) scan() (rows []Row, err, codexErr error) {
+	claude, err := s.claudeSessions()
+	codex, codexErr := s.codexSessions()
+	if err != nil {
+		return nil, err, codexErr
+	}
+	return groupRows(append(claude, codex...)), nil, codexErr
+}
+
+func (s *scanner) claudeSessions() ([]session, error) {
 	sessDir := filepath.Join(s.dir, "sessions")
 	des, err := os.ReadDir(sessDir)
+	if errors.Is(err, fs.ErrNotExist) && exists(s.codexHome) {
+		return nil, nil // a Codex-only user
+	}
 	if err != nil {
 		return nil, fmt.Errorf("cannot read Claude sessions folder %s: %w", sessDir, err)
 	}
@@ -78,7 +110,55 @@ func (s *scanner) scan() ([]Row, error) {
 	if parsed == 0 && firstErr != nil {
 		return nil, firstErr
 	}
-	return groupRows(sessions), nil
+	return sessions, nil
+}
+
+func (s *scanner) codexSessions() ([]session, error) {
+	threads, err := readCodexThreads(s.codexSock, s.codexCache)
+	if err != nil {
+		return nil, err
+	}
+	var sessions []session
+	loaded := map[string]bool{}
+	for _, t := range threads {
+		loaded[t.ID] = true
+		if t.Ephemeral || t.ParentThreadID != nil {
+			continue // hidden helpers and sub-agents
+		}
+		sessions = append(sessions, s.codexSession(t))
+	}
+	for id := range s.codexSeen {
+		if !loaded[id] {
+			delete(s.codexSeen, id)
+		}
+	}
+	return sessions, nil
+}
+
+// The app server gives no time for a status change, so kijk notes when it sees one.
+func (s *scanner) codexSession(t codexThread) session {
+	status := t.Status.Type + fmt.Sprint(t.Status.ActiveFlags)
+	seen, ok := s.codexSeen[t.ID]
+	switch {
+	case !ok:
+		seen = codexSeen{status, time.Unix(t.UpdatedAt, 0)}
+	case seen.status != status:
+		seen = codexSeen{status, time.Now()}
+	}
+	s.codexSeen[t.ID] = seen
+	last := seen.at
+	if t.busy() {
+		last = time.Now()
+	}
+	name := t.Preview
+	if t.Name != nil && *t.Name != "" {
+		name = *t.Name
+	}
+	if name == "" {
+		name = t.ID[:min(8, len(t.ID))]
+	}
+	root, branch := s.gitInfo(t.Cwd)
+	return session{Agent: "codex", Name: name, Root: root, Branch: branch, Cwd: t.Cwd, Busy: t.busy(), Last: last}
 }
 
 func (s *scanner) session(file string, sf sessionFile) session {
@@ -163,12 +243,18 @@ func groupRows(sessions []session) []Row {
 		if !ok {
 			i = len(rows)
 			index[s.Root] = i
-			rows = append(rows, Row{Agent: s.Agent, Root: s.Root, Repo: filepath.Base(s.Root), Branch: s.Branch, Cwd: relCwd(s.Root, s.Cwd), LastActivity: s.Last.UnixMilli()})
+			rows = append(rows, Row{Root: s.Root, Repo: filepath.Base(s.Root), Branch: s.Branch, Cwd: relCwd(s.Root, s.Cwd), LastActivity: s.Last.UnixMilli()})
 		}
 		rows[i].Names = append(rows[i].Names, s.Name)
+		rows[i].Agents = append(rows[i].Agents, RowAgent{s.Agent, s.Busy})
 		rows[i].Busy = rows[i].Busy || s.Busy
 	}
 	return rows
+}
+
+func exists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 func modTime(path string) time.Time {
