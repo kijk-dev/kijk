@@ -1,6 +1,7 @@
 import { el, post } from './api.js';
 
-// The status bar: the kijk version, or in its place the news about a newer one.
+// The status bar: the kijk version, or in its place the news about a newer one. An agent error sits
+// on the left, so it never hides an update that may fix it.
 const bar = document.getElementById('statusbar');
 const announcer = document.getElementById('announce');
 const CLOSE = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>';
@@ -9,6 +10,7 @@ let loaded = null; // the version this page came from
 let last = null;
 let shown = '';
 let restartSince = 0;
+let codexError = '';
 
 // Each notice remembers what it was closed for (a version, or the error text): closing "is out"
 // still lets "is installed" show.
@@ -28,6 +30,13 @@ function newer(a, b) {
 // A new kijk that has not answered after 15 seconds failed to start, so the window says so.
 export function restarting() {
   return last?.busy === 'restarting' && Date.now() - restartSince < 15000;
+}
+
+// showCodexError draws the codexError fields of an /api/events message, local and remote.
+export function showCodexError(err) {
+  if ((err || '') === codexError) return;
+  codexError = err || '';
+  if (last) draw();
 }
 
 // showKijk draws the bar from the kijk field of an /api/events message.
@@ -74,6 +83,11 @@ function draw() {
     version.append(icon, `kijk ${k.version}`);
     parts.push(version);
   }
+  if (codexError) {
+    parts.unshift(news('error', ['Cannot read Codex agents ', then('· they are hidden')], 'Codex agents hidden',
+      `Cannot read Codex agents\n${codexError}\nCodex agents are hidden until kijk can read them again. Other agents still show.`));
+    parts[0].classList.add('agent-error');
+  }
 
   const key = parts.map(p => p.outerHTML).join('');
   if (key === shown) return;
@@ -81,7 +95,7 @@ function draw() {
   const hadFocus = bar.contains(document.activeElement);
   bar.replaceChildren(...parts);
   if (hadFocus) (bar.querySelector('button') || bar).focus();
-  const text = parts[0].querySelector('.long')?.textContent;
+  const text = parts.map(p => p.querySelector('.long')?.textContent).filter(Boolean).join('. ');
   if (text && announcer.textContent !== text) announcer.textContent = text;
 }
 

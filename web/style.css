@@ -116,7 +116,7 @@ body.rail-collapsed { --rail-w: 32px; }
 .rail-collapsed #rows li { position: relative; padding: 8px 0; }
 .rail-collapsed .line { justify-content: center; }
 .badge { display: none; }
-.rail-collapsed .agent { display: none; }
+.rail-collapsed .agents { display: none; }
 .rail-collapsed .badge {
   display: flex; position: relative; align-items: center; justify-content: center; width: 22px; height: 22px;
   border-radius: 6px; background: hsl(var(--hue) 45% 85%); color: hsl(var(--hue) 40% 28%);
@@ -154,15 +154,17 @@ ul { list-style: none; margin: 0; padding: 0; }
 .line { display: flex; align-items: center; gap: 6px; }
 .names { flex: 1; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .when, .repo { color: var(--muted); font-size: 12px; }
-.repo { padding-left: 20px; }
+.repo { padding-left: calc(17px * var(--icons, 1) + 3px); } /* under the names, after the agent icons */
 .where { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agent { display: flex; width: 14px; height: 14px; flex: none; }
 .agent svg { width: 14px; height: 14px; fill: currentColor; stroke: none; }
+.agents { display: flex; gap: 3px; flex: none; }
 .agent.claude { color: #d97757; } /* Claude's brand orange */
-li.busy .agent svg { animation: zoom 1.2s ease-in-out infinite; }
+.agent.codex { color: var(--text); }
+li.busy .agent.on svg { animation: zoom 1.2s ease-in-out infinite; }
 @keyframes zoom { 50% { transform: scale(.55); } }
 @keyframes fade { 50% { opacity: .35; } }
-@media (prefers-reduced-motion: reduce) { .rail-collapsed li.busy .badge, .chip .dot { animation: none; } li.busy .agent svg { animation-name: fade; } .caret svg, .chev { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .rail-collapsed li.busy .badge, .chip .dot { animation: none; } li.busy .agent.on svg { animation-name: fade; } .caret svg, .chev { transition: none; } }
 .status { margin: 8px 12px; color: var(--muted); }
 .status.error { color: var(--error); }
 .empty { color: var(--muted); text-align: center; margin-top: 40vh; }
@@ -453,6 +455,7 @@ button.pill:hover { background: color-mix(in srgb, var(--modified) 22%, var(--se
 }
 #statusbar .kijk { display: flex; align-items: center; gap: 6px; min-width: 0; }
 #statusbar .kijk.news { color: var(--text); animation: notice-in .15s ease-out; }
+#statusbar .agent-error { margin-right: auto; }
 #statusbar .icon { flex: none; width: 14px; height: 14px; }
 #statusbar .dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--modified); }
 #statusbar .dot.busy { background: var(--busy); animation: fade 1.2s ease-in-out infinite; }

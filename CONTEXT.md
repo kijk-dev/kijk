@@ -10,7 +10,11 @@ _Avoid_: agent-aware, agentic
 
 **Agent**:
 A running coding agent, the folder it works in, and the machine it runs on. The UI shows one row per folder on each machine.
-_Avoid_: Session
+_Avoid_: Session, thread
+
+**Agent type**:
+The program an agent is, such as Claude Code or Codex. One folder can have agents of more than one type.
+_Avoid_: tool, harness, product
 
 **Machine**:
 A computer where agents run and kijk can see them. Either the local machine or a remote machine.
@@ -45,7 +49,7 @@ The line counts of everything a branch adds to its PR target or main line: its c
 _Avoid_: PR size, branch diff
 
 **Telemetry**:
-The anonymous usage events kijk sends about itself: that it started, that it ran on a day, its version, operating system, how many agents run on the local machine, and how many remote machines and agents on them it sees. Never folder paths, names, code, or an IP address. On by default, and the user can turn it off.
+The anonymous usage events kijk sends about itself: that it started, that it ran on a day, its version, operating system, how many agents of each agent type run on the local machine, and how many remote machines and agents on them it sees. Never folder paths, names, code, or an IP address. On by default, and the user can turn it off.
 _Avoid_: analytics, tracking, usage stats
 
 **Install ID**:

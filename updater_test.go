@@ -133,7 +133,7 @@ func TestSessionMessageCarriesTheStatusBar(t *testing.T) {
 	u := newUpdater("0.2.0", "", &bytes.Buffer{})
 	u.foundLatest("0.3.0")
 	h := newHub()
-	h.publish(sessionMessage([]Row{}, nil, u.state(), nil))
+	h.publish(sessionMessage([]Row{}, nil, nil, u.state(), nil))
 	srv := httptest.NewServer(http.HandlerFunc(h.serveEvents))
 	defer srv.Close()
 	resp, err := http.Get(srv.URL)

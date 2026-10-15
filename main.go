@@ -130,7 +130,7 @@ func main() {
 		mm = newMachineManager(kijkVersion)
 		go mm.run(context.Background())
 	}
-	go watchSessions(newScanner(claudeDir()), h, rts, u, tel, mm)
+	go watchSessions(newScanner(claudeDir(), codexHome()), h, rts, u, tel, mm)
 
 	web, _ := fs.Sub(webFiles, "web")
 	url := uiURL(*port, token)
@@ -155,17 +155,21 @@ func takeRestartEnv() (token string, restarted bool) {
 	return token, restarted
 }
 
-// sessionMessage is one message on /api/events: the local agent rows, the status bar state, and
-// the remote machines. machines is left out when none is saved, so the message stays as before.
-func sessionMessage(rows []Row, err error, k kijkState, machines []machineView) []byte {
+// sessionMessage is one message on /api/events. err replaces the rows in the Agents list; codexErr
+// goes to the status bar. machines is left out when none is saved, so the message stays as before.
+func sessionMessage(rows []Row, err, codexErr error, k kijkState, machines []machineView) []byte {
 	msg := struct {
-		Rows     []Row         `json:"rows"`
-		Error    string        `json:"error,omitempty"`
-		Kijk     kijkState     `json:"kijk"`
-		Machines []machineView `json:"machines,omitempty"`
+		Rows       []Row         `json:"rows"`
+		Error      string        `json:"error,omitempty"`
+		CodexError string        `json:"codexError,omitempty"`
+		Kijk       kijkState     `json:"kijk"`
+		Machines   []machineView `json:"machines,omitempty"`
 	}{Rows: rows, Kijk: k, Machines: machines}
 	if err != nil {
 		msg.Error = err.Error()
+	}
+	if codexErr != nil {
+		msg.CodexError = codexErr.Error()
 	}
 	b, _ := json.Marshal(msg)
 	return b
@@ -175,7 +179,7 @@ func sessionMessage(rows []Row, err error, k kijkState, machines []machineView) 
 // kijk serve has no updater and no machines.
 func watchSessions(s *scanner, h *hub, rts *roots, u *updater, tel *telemetry, mm *machineManager) {
 	var rows []Row
-	var err error
+	var err, codexErr error
 	var updated, machinesChanged <-chan struct{}
 	k := kijkState{Version: kijkVersion}
 	if u != nil {
@@ -188,19 +192,19 @@ func watchSessions(s *scanner, h *hub, rts *roots, u *updater, tel *telemetry, m
 	next := start
 	for {
 		if !time.Now().Before(next) {
-			rows, err = s.scan()
+			rows, err, codexErr = s.scan()
 			rts.set(rows)
 			// Wait for remote machines to connect, so the first event counts their agents too.
 			if mm.settled() || time.Since(start) > 30*time.Second {
 				machines, remote := mm.counts()
-				tel.scanned(agentCount(rows), machines, remote, time.Now())
+				tel.scanned(agentTypeCounts(rows), machines, remote, time.Now())
 			}
 			next = time.Now().Add(time.Second)
 		}
 		if u != nil {
 			k = u.state()
 		}
-		h.publish(sessionMessage(rows, err, k, mm.views()))
+		h.publish(sessionMessage(rows, err, codexErr, k, mm.views()))
 		select {
 		case <-time.After(time.Until(next)):
 		case <-updated:

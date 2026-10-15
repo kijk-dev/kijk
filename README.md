@@ -18,16 +18,29 @@ The name is Dutch for "look".
 | Agent | Status |
 |---|---|
 | Claude Code | Supported |
-| Codex | Planned |
+| Codex | Supported, version 0.157 or newer, started as `codex` in a terminal |
 | Pi | Planned |
+
+### Codex
+
+kijk asks the Codex app server, which `codex` 0.157 and newer start by themselves. kijk only reads
+from it. It never starts Codex or the app server, and never answers an approval.
+
+- A Codex agent stays in the list for 60 seconds after you quit it. That is when the app server
+  lets it go. When you set `thread_unload_delay_secs` in your Codex config, it is that long.
+- A Codex agent that waits for your approval shows as finished.
+- When kijk cannot read the Codex agents, for example after a Codex update, the status bar says
+  so. The Claude Code agents still show.
+- kijk does not see `codex exec`, Codex before 0.157, or a `codex` that could not reach its app
+  server and runs its own. It probably does not see the Codex desktop app or the IDE extensions.
 
 ## Features
 
 ### Agents
 
 - The left rail lists every supported agent that runs on your machine. You do not open projects by hand.
-- Each row shows the agent's name, Busy or Idle, the time of its last activity, the repository and the branch.
-- Agents that work in the same folder share one row. An agent in a git worktree gets the row of that worktree.
+- Each row shows the agent's name, the icon of its agent type, Busy or Idle, the time of its last activity, the repository and the branch.
+- Agents that work in the same folder share one row, also a Claude Code and a Codex agent. Only the icon of the agent type that works pulses. An agent in a git worktree gets the row of that worktree.
 - The newest activity is on top. Rows appear, change and go away as agents start, work and stop.
 
 ### Files
@@ -93,7 +106,7 @@ A normal browser tab keeps some of these keys for itself. For those actions, kij
 
 ## Requirements
 
-- A [supported agent](#supported-agents). kijk finds Claude Code agents through the files in `~/.claude`, or in `CLAUDE_CONFIG_DIR` when you set it.
+- A [supported agent](#supported-agents). kijk finds Claude Code agents through the files in `~/.claude`, or in `CLAUDE_CONFIG_DIR` when you set it. It finds Codex agents through the app server socket in `~/.codex`, or in `CODEX_HOME` when you set it.
 - `git`. Without it, kijk shows the files but no Git tab.
 - Optional: a Chromium-based browser (Chrome, Edge, Brave, Chromium or Vivaldi), for the app window.
 - Optional: `gh` or `glab`, for the pull request line.
@@ -143,6 +156,9 @@ Requirements:
 - OpenSSH on both machines, and `AllowTcpForwarding` on in the remote SSH server. It is on by
   default.
 - On the remote machine: `git`, and optionally `gh` or `glab` for the pull request line.
+- kijk looks for Codex agents in `~/.codex` on the remote machine. When Codex uses another folder
+  there, set `CODEX_HOME` where a non-interactive SSH login reads it: `~/.zshenv` for zsh,
+  `~/.bashrc` for bash.
 
 ## Limits
 
@@ -249,8 +265,8 @@ You can also start kijk with `-no-update-check`. `kijk update` and the **Update*
 
 kijk sends anonymous usage data, so we know how many people use it and on which systems.
 It never sends your code, your folder or file names, or anything about you.
-It sends the number of agents on your machine, and how many remote machines you saved and how
-many agents run on them. It never sends their names or addresses. kijk on a remote machine sends
+It sends the number of agents on your machine, in total and per agent type (Claude Code or
+Codex), and how many remote machines you saved and how many agents run on them. It never sends their names or addresses. kijk on a remote machine sends
 nothing.
 
 To turn it off, set `KIJK_NO_TELEMETRY=1` or `DO_NOT_TRACK=1`, or start kijk with `-no-telemetry`.

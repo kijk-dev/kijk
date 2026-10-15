@@ -73,7 +73,7 @@ func runServe(name string) error {
 	token := newToken()
 	h := newHub()
 	rts := &roots{}
-	go watchSessions(newScanner(claudeDir()), h, rts, nil, nil, nil)
+	go watchSessions(newScanner(claudeDir(), codexHome()), h, rts, nil, nil, nil)
 	srv := &http.Server{Handler: newServer(token, port, nil, h, rts, nil, nil)}
 
 	state := filepath.Join(dir, "serve-"+name+".json")

@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -23,6 +24,11 @@ func write(t *testing.T, path, content string) {
 func sessionJSON(pid int, id, cwd, name, status string, startedAt int64) string {
 	return fmt.Sprintf(`{"pid":%d,"sessionId":%q,"cwd":%q,"name":%q,"status":%q,"startedAt":%d,"futureField":{"x":1}}`,
 		pid, id, cwd, name, status, startedAt)
+}
+
+// noCodex is a Codex home that does not exist, so no Codex agent shows.
+func noCodex(t *testing.T) string {
+	return filepath.Join(t.TempDir(), "codex")
 }
 
 func deadPID(t *testing.T) int {
@@ -107,14 +113,15 @@ var startTime = time.Now()
 func TestGroupRows(t *testing.T) {
 	now := time.Now()
 	rows := groupRows([]session{
-		{Name: "old", Root: "/a", Last: now.Add(-time.Hour)},
-		{Name: "docs", Root: "/b", Last: now.Add(-time.Minute)},
-		{Name: "auth-fix", Root: "/b", Busy: true, Last: now.Add(-2 * time.Minute)},
+		{Agent: "claude", Name: "old", Root: "/a", Last: now.Add(-time.Hour)},
+		{Agent: "claude", Name: "docs", Root: "/b", Last: now.Add(-time.Minute)},
+		{Agent: "codex", Name: "auth-fix", Root: "/b", Busy: true, Last: now.Add(-2 * time.Minute)},
 	})
 	if len(rows) != 2 {
 		t.Fatalf("got %d rows", len(rows))
 	}
-	if rows[0].Root != "/b" || !rows[0].Busy || strings.Join(rows[0].Names, ",") != "docs,auth-fix" {
+	if rows[0].Root != "/b" || !rows[0].Busy || strings.Join(rows[0].Names, ",") != "docs,auth-fix" ||
+		!slices.Equal(rows[0].Agents, []RowAgent{{"claude", false}, {"codex", true}}) {
 		t.Fatalf("first row = %+v", rows[0])
 	}
 	if rows[1].Root != "/a" || rows[1].Busy {
@@ -148,7 +155,7 @@ func TestScan(t *testing.T) {
 	write(t, filepath.Join(dir, "sessions", "2.json"), sessionJSON(deadPID(t), "s2", repo, "stale", "idle", now))
 	write(t, filepath.Join(dir, "sessions", "3.json"), "not json")
 
-	rows, err := newScanner(dir).scan()
+	rows, err, _ := newScanner(dir, noCodex(t)).scan()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,16 +170,16 @@ func TestScan(t *testing.T) {
 
 func TestScanErrors(t *testing.T) {
 	dir := t.TempDir()
-	if _, err := newScanner(dir).scan(); err == nil {
+	if _, err, _ := newScanner(dir, noCodex(t)).scan(); err == nil {
 		t.Fatal("want error for a missing sessions folder")
 	}
 	write(t, filepath.Join(dir, "sessions", "9.json"), "{broken")
-	_, err := newScanner(dir).scan()
+	_, err, _ := newScanner(dir, noCodex(t)).scan()
 	if err == nil || !strings.Contains(err.Error(), "9.json") {
 		t.Fatalf("want error naming the file, got %v", err)
 	}
 	os.WriteFile(filepath.Join(dir, "sessions", "9.json"), []byte(sessionJSON(deadPID(t), "x", "/", "", "", 1)), 0o644)
-	if rows, err := newScanner(dir).scan(); err != nil || len(rows) != 0 {
+	if rows, err, _ := newScanner(dir, noCodex(t)).scan(); err != nil || len(rows) != 0 {
 		t.Fatalf("got %v, %v", rows, err)
 	}
 }
@@ -196,7 +203,7 @@ func TestScanIdleAge(t *testing.T) {
 	write(t, old, sessionJSON(os.Getpid(), "s2", t.TempDir(), "b", "idle", now.UnixMilli()))
 	os.Chtimes(old, now.Add(-3*time.Hour), now.Add(-3*time.Hour))
 
-	rows, err := newScanner(dir).scan()
+	rows, err, _ := newScanner(dir, noCodex(t)).scan()
 	if err != nil || len(rows) != 2 {
 		t.Fatalf("rows = %+v, err = %v", rows, err)
 	}
