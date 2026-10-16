@@ -86,7 +86,7 @@ func updateSettings(path string, change func(raw map[string]json.RawMessage) err
 	if err := change(raw); err != nil {
 		return err
 	}
-	return writeSettings(path, raw)
+	return writeJSON(path, raw)
 }
 
 // linkedFile gives the file a symlink at path points to, so a save keeps the link that a dotfile
@@ -112,20 +112,20 @@ func linkedFile(path string) (string, error) {
 	return real, nil
 }
 
-// writeSettings writes the keys atomically, readable only by the user.
-func writeSettings(path string, raw map[string]json.RawMessage) error {
+// writeJSON writes v atomically, readable only by the user.
+func writeJSON(path string, v any) error {
 	path, err := linkedFile(path)
 	if err != nil {
 		return err
 	}
-	b, err := json.MarshalIndent(raw, "", "  ")
+	b, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
 		return err
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	f, err := os.CreateTemp(filepath.Dir(path), ".settings-*.json")
+	f, err := os.CreateTemp(filepath.Dir(path), ".kijk-*.json")
 	if err != nil {
 		return err
 	}
@@ -253,7 +253,7 @@ func changeMachines(change func([]savedMachine) ([]savedMachine, error)) error {
 		return err
 	}
 	setMachines(raw, list)
-	return writeSettings(path, raw)
+	return writeJSON(path, raw)
 }
 
 func savedMachines() ([]savedMachine, error) {

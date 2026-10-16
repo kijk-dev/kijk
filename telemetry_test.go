@@ -98,7 +98,7 @@ func TestEventsCarryOnlyTheAgreedProperties(t *testing.T) {
 	f := startFakePostHog(t)
 	tel := newTelemetry("phc_test", "0.3.0")
 	tel.send("kijk started", nil)
-	tel.scanned(map[string]int{"claude": 3, "codex": 2}, 1, 3, time.Now())
+	tel.active(time.Now(), 2, true, &agentCounts{map[string]int{"claude": 3, "codex": 2}, 1, 3})
 	ev := f.wait(t, 2)
 
 	id, _ := os.ReadFile(filepath.Join(dir, "kijk", "install-id"))
@@ -114,10 +114,10 @@ func TestEventsCarryOnlyTheAgreedProperties(t *testing.T) {
 		}
 	}
 	slices.SortFunc(ev, func(a, b capturedEvent) int { return strings.Compare(a.Event, b.Event) })
-	if ev[0].Event != "kijk active" || !slices.Equal(keys(ev[0].Properties), []string{"$os", "agents", "arch", "claude_agents", "codex_agents", "machines", "remote_agents", "version"}) {
+	if ev[0].Event != "kijk active" || !slices.Equal(keys(ev[0].Properties), []string{"$os", "agents", "arch", "claude_agents", "codex_agents", "folders", "machines", "remote_agents", "version"}) {
 		t.Fatalf("kijk active: %v", ev[0].Properties)
 	}
-	if p := ev[0].Properties; p["agents"] != float64(5) || p["claude_agents"] != float64(3) || p["codex_agents"] != float64(2) || p["machines"] != float64(1) || p["remote_agents"] != float64(3) {
+	if p := ev[0].Properties; p["agents"] != float64(5) || p["claude_agents"] != float64(3) || p["codex_agents"] != float64(2) || p["machines"] != float64(1) || p["remote_agents"] != float64(3) || p["folders"] != float64(2) {
 		t.Fatalf("counts = %v", p)
 	}
 	if ev[1].Event != "kijk started" || !slices.Equal(keys(ev[1].Properties), []string{"$os", "arch", "version"}) {
@@ -129,10 +129,37 @@ func TestActiveOncePerLocalDay(t *testing.T) {
 	tel := &telemetry{version: "0.3.0", events: make(chan telemetryEvent, 16)}
 	mon := time.Date(2026, 10, 12, 9, 0, 0, 0, time.Local)
 	for _, at := range []time.Time{mon, mon.Add(time.Hour), mon.Add(15 * time.Hour), mon.Add(24 * time.Hour), mon.Add(48 * time.Hour)} {
-		tel.scanned(map[string]int{"claude": 3}, 0, 0, at)
+		tel.active(at, 0, true, &agentCounts{byType: map[string]int{"claude": 3}})
 	}
 	if n := len(tel.events); n != 3 {
 		t.Fatalf("%d kijk active events over three days", n)
+	}
+}
+
+// With no agents window, kijk active waits one minute after the start or the new day, and leaves
+// out the agent counts.
+func TestActiveWithoutAgentScan(t *testing.T) {
+	start := time.Date(2026, 10, 12, 23, 59, 30, 0, time.Local)
+	tel := &telemetry{version: "0.3.0", events: make(chan telemetryEvent, 16), started: start}
+	for _, s := range []int{0, 59} {
+		tel.active(start.Add(time.Duration(s)*time.Second), 2, false, nil)
+	}
+	if n := len(tel.events); n != 0 {
+		t.Fatalf("%d events within the first minute", n)
+	}
+	tel.active(start.Add(60*time.Second), 2, false, nil) // 00:00:30, a new day, 30 s into it
+	tel.active(start.Add(80*time.Second), 2, true, nil)  // looking for agents: waits for counts
+	if n := len(tel.events); n != 0 {
+		t.Fatalf("%d events too early on the new day", n)
+	}
+	tel.active(start.Add(90*time.Second), 2, true, &agentCounts{byType: map[string]int{}})
+	tel.active(start.Add(25*time.Hour), 2, false, nil)
+	e1, e2 := <-tel.events, <-tel.events
+	if _, ok := e1.props["agents"]; !ok || e1.props["folders"] != 2 {
+		t.Fatalf("day with a scan: %v", e1.props)
+	}
+	if _, ok := e2.props["agents"]; ok || e2.props["folders"] != 2 || len(tel.events) != 0 {
+		t.Fatalf("day without a scan: %v", e2.props)
 	}
 }
 
@@ -207,7 +234,7 @@ func TestSendNeverBlocks(t *testing.T) {
 	}
 	var off *telemetry
 	off.send("kijk started", nil)
-	off.scanned(map[string]int{"claude": 1}, 0, 0, time.Now())
+	off.active(time.Now(), 0, false, nil)
 }
 
 func TestInstallID(t *testing.T) {

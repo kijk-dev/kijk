@@ -16,6 +16,22 @@ _Avoid_: Session, thread
 The program an agent is, such as Claude Code or Codex. One folder can have agents of more than one type.
 _Avoid_: tool, harness, product
 
+**Agents window**:
+The kijk window that lists the running agents. `kijk` with no folder opens it.
+_Avoid_: main window, dashboard
+
+**Folders window**:
+The kijk window that lists only the folders the user chose, with no agents. There is one, and `kijk <folder>` adds to it.
+_Avoid_: workspace, project view
+
+**Folder**:
+In the folders window, one folder the user added, shown as one row. It stays until the user removes it. A folder inside a git repo shows as the whole repo, as an agent's folder does. Agents also work in folders, but a folder here does not need an agent.
+_Avoid_: project, workspace, pinned folder
+
+**Missing folder**:
+A folder in the folders window that is no longer on disk, for example a deleted worktree or a drive that is not mounted. kijk keeps it in the list until the user removes it.
+_Avoid_: broken, stale (stale is for an agent row whose data is old)
+
 **Machine**:
 A computer where agents run and kijk can see them. Either the local machine or a remote machine.
 _Avoid_: host, remote, device
@@ -49,7 +65,7 @@ The line counts of everything a branch adds to its PR target or main line: its c
 _Avoid_: PR size, branch diff
 
 **Telemetry**:
-The anonymous usage events kijk sends about itself: that it started, that it ran on a day, its version, operating system, how many agents of each agent type run on the local machine, and how many remote machines and agents on them it sees. Never folder paths, names, code, or an IP address. On by default, and the user can turn it off.
+The anonymous usage events kijk sends about itself: that it started, that it ran on a day, its version, operating system, how many folders are in the folders window, and, on a day kijk looked for agents, how many agents of each agent type run on the local machine and how many remote machines and agents on them it sees. Never folder paths, names, code, or an IP address. On by default, and the user can turn it off.
 _Avoid_: analytics, tracking, usage stats
 
 **Install ID**:
