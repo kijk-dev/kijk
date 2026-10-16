@@ -10,17 +10,19 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"sync"
+	"time"
 )
 
 // cookieName carries the port: browsers share cookies across the ports of one host, so two
 // viewers on different ports would otherwise log each other out.
 func cookieName(port int) string { return fmt.Sprintf("kijk-%d", port) }
 
-// newServer builds the routes. kijk serve passes no web files, updater or machines: it has no
-// window, does not update itself, and does not reach other machines.
-func newServer(token string, port int, web fs.FS, h *hub, rts *roots, u *updater, mm *machineManager) http.Handler {
+// newServer builds the routes. kijk serve passes no web files, updater, machines or folders: it
+// has no window, does not update itself, and does not reach other machines.
+func newServer(token string, port int, web fs.FS, h *hub, rts *roots, u *updater, mm *machineManager, fl *folderList) http.Handler {
 	a := &api{roots: rts, index: newIndexCache(), hl: newHlCache()}
 	mux := http.NewServeMux()
 	if web != nil {
@@ -49,6 +51,15 @@ func newServer(token string, port int, web fs.FS, h *hub, rts *roots, u *updater
 	mux.HandleFunc("POST /api/fetch", a.gitAction(func(req actionRequest) (string, error) { return fetch(req.Root) }))
 	mux.HandleFunc("POST /api/push", a.gitAction(func(req actionRequest) (string, error) { return push(req.Root) }))
 	mux.HandleFunc("POST /api/commit", a.gitAction(func(req actionRequest) (string, error) { return commit(req.Root, req.Message) }))
+	if fl != nil {
+		mux.HandleFunc("GET /api/folders", func(w http.ResponseWriter, r *http.Request) {
+			reply(w, foldersReply{Window: h.count(windowFolders) > 0})
+		})
+		mux.HandleFunc("POST /api/folders/add", addFolders(fl, h))
+		mux.HandleFunc("POST /api/folders/remove", changeFolder(fl.remove))
+		mux.HandleFunc("POST /api/folders/restore", changeFolder(fl.restore))
+		mux.HandleFunc("POST /api/folders/refresh", changeFolder(fl.refresh))
+	}
 	if u == nil {
 		return guard(token, port, secure(mux))
 	}
@@ -93,7 +104,7 @@ type api struct {
 func (a *api) target(w http.ResponseWriter, r *http.Request) (root, path string, ok bool) {
 	root = r.URL.Query().Get("root")
 	if !a.roots.has(root) {
-		http.Error(w, "This folder has no running agent", http.StatusForbidden)
+		http.Error(w, "This folder is not open in kijk", http.StatusForbidden)
 		return "", "", false
 	}
 	path, err := resolve(root, r.URL.Query().Get("path"))
@@ -276,7 +287,7 @@ func (a *api) commitFiles(w http.ResponseWriter, r *http.Request) {
 func (a *api) diff(w http.ResponseWriter, r *http.Request) {
 	root := r.URL.Query().Get("root")
 	if !a.roots.has(root) {
-		http.Error(w, "This folder has no running agent", http.StatusForbidden)
+		http.Error(w, "This folder is not open in kijk", http.StatusForbidden)
 		return
 	}
 	q := r.URL.Query()
@@ -308,7 +319,7 @@ func (a *api) gitAction(run func(req actionRequest) (string, error)) http.Handle
 			return
 		}
 		if !a.roots.has(req.Root) {
-			http.Error(w, "This folder has no running agent", http.StatusForbidden)
+			http.Error(w, "This folder is not open in kijk", http.StatusForbidden)
 			return
 		}
 		out, err := run(req)
@@ -320,6 +331,63 @@ func (a *api) gitAction(run func(req actionRequest) (string, error)) http.Handle
 			return
 		}
 		reply(w, map[string]string{"output": out})
+	}
+}
+
+// foldersReply tells kijk <folder> and kijk folders what happened, and whether a folders window
+// is open.
+type foldersReply struct {
+	Added  []bool `json:"added"`
+	Window bool   `json:"window"`
+	Error  string `json:"error,omitempty"`
+}
+
+// addFolders checks the folders again: the list decides what the server may read.
+func addFolders(fl *folderList, h *hub) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Folders []string `json:"folders"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil || len(req.Folders) == 0 {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		list := make([]savedFolder, 0, len(req.Folders))
+		for _, p := range req.Folders {
+			if !filepath.IsAbs(p) {
+				http.Error(w, p+" is not an absolute path", http.StatusBadRequest)
+				return
+			}
+			f, err := checkFolder(p, "")
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+				return
+			}
+			list = append(list, f)
+		}
+		res := foldersReply{Window: h.count(windowFolders) > 0}
+		var err error
+		if res.Added, err = fl.add(list); err != nil {
+			res.Error = err.Error()
+		}
+		reply(w, res)
+	}
+}
+
+func changeFolder(change func(root string) bool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Root string `json:"root"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		if !change(req.Root) {
+			http.Error(w, "This folder is not in the list", http.StatusConflict)
+			return
+		}
+		reply(w, struct{}{})
 	}
 }
 
@@ -338,7 +406,13 @@ func guard(token string, port int, next http.Handler) http.Handler {
 				return
 			}
 			http.SetCookie(w, &http.Cookie{Name: cookieName(port), Value: token, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode})
-			http.Redirect(w, r, r.URL.Path, http.StatusSeeOther)
+			q := r.URL.Query()
+			q.Del("token")
+			to := r.URL.Path
+			if len(q) > 0 {
+				to += "?" + q.Encode()
+			}
+			http.Redirect(w, r, to, http.StatusSeeOther)
 			return
 		}
 		if o := r.Header.Get("Origin"); r.Method != http.MethodGet && o != "" && o != "http://"+r.Host {
@@ -354,23 +428,38 @@ func guard(token string, port int, next http.Handler) http.Handler {
 	})
 }
 
-// hub keeps the latest session list and pushes it to every open UI.
+// Window kinds. An /api/events stream without a kind is an agents window, as a local kijk that
+// follows a remote one is.
+const (
+	windowAgents  = "agents"
+	windowFolders = "folders"
+)
+
+// hub keeps the latest message per window kind and pushes it to every open window of that kind.
 type hub struct {
-	mu   sync.Mutex
-	last []byte
-	subs map[chan []byte]struct{}
+	mu    sync.Mutex
+	last  map[string][]byte
+	subs  map[chan []byte]string
+	left  map[string]time.Time // when the last window of a kind closed
+	wakes map[string]chan struct{}
 }
 
-func newHub() *hub { return &hub{subs: map[chan []byte]struct{}{}} }
+func newHub() *hub {
+	return &hub{last: map[string][]byte{}, subs: map[chan []byte]string{}, left: map[string]time.Time{},
+		wakes: map[string]chan struct{}{windowAgents: make(chan struct{}, 1), windowFolders: make(chan struct{}, 1)}}
+}
 
-func (h *hub) publish(b []byte) {
+func (h *hub) publish(kind string, b []byte) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if bytes.Equal(b, h.last) {
+	if bytes.Equal(b, h.last[kind]) {
 		return
 	}
-	h.last = b
-	for c := range h.subs {
+	h.last[kind] = b
+	for c, k := range h.subs {
+		if k != kind {
+			continue
+		}
 		select { // keep only the newest message for a slow client
 		case <-c:
 		default:
@@ -379,22 +468,65 @@ func (h *hub) publish(b []byte) {
 	}
 }
 
+// forget drops the latest message, so a window that opens later waits for a fresh one.
+func (h *hub) forget(kind string) {
+	h.mu.Lock()
+	delete(h.last, kind)
+	h.mu.Unlock()
+}
+
+func (h *hub) count(kind string) int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	n := 0
+	for _, k := range h.subs {
+		if k == kind {
+			n++
+		}
+	}
+	return n
+}
+
+// wanted reports whether a window of kind is open, or closed less than grace ago, so a reload
+// does not stop and start the work behind it.
+func (h *hub) wanted(kind string, now time.Time, grace time.Duration) bool {
+	if h.count(kind) > 0 {
+		return true
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	left, ok := h.left[kind]
+	return ok && now.Sub(left) < grace
+}
+
+// wake fires when a window of kind opens.
+func (h *hub) wake(kind string) <-chan struct{} { return h.wakes[kind] }
+
 func (h *hub) serveEvents(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "streaming not supported", http.StatusInternalServerError)
 		return
 	}
+	kind := windowAgents
+	if r.URL.Query().Get("window") == windowFolders {
+		kind = windowFolders
+	}
 	c := make(chan []byte, 1)
 	h.mu.Lock()
-	h.subs[c] = struct{}{}
-	if h.last != nil {
-		c <- h.last
+	h.subs[c] = kind
+	if h.last[kind] != nil {
+		c <- h.last[kind]
 	}
 	h.mu.Unlock()
+	select {
+	case h.wakes[kind] <- struct{}{}:
+	default:
+	}
 	defer func() {
 		h.mu.Lock()
 		delete(h.subs, c)
+		h.left[kind] = time.Now()
 		h.mu.Unlock()
 	}()
 

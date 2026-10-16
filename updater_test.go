@@ -133,7 +133,7 @@ func TestSessionMessageCarriesTheStatusBar(t *testing.T) {
 	u := newUpdater("0.2.0", "", &bytes.Buffer{})
 	u.foundLatest("0.3.0")
 	h := newHub()
-	h.publish(sessionMessage([]Row{}, nil, nil, u.state(), nil))
+	h.publish(windowAgents, sessionMessage([]Row{}, nil, nil, u.state(), nil))
 	srv := httptest.NewServer(http.HandlerFunc(h.serveEvents))
 	defer srv.Close()
 	resp, err := http.Get(srv.URL)
@@ -183,7 +183,7 @@ func TestUpdateFromTheWindow(t *testing.T) {
 	t.Setenv("KIJK_TEST_VERSION", "0.3.0")
 	exe := oldKijk(t)
 	u := newUpdater("0.2.0", exe, &bytes.Buffer{})
-	srv := newServer("secret", 7717, fstest.MapFS{}, newHub(), &roots{}, u, nil)
+	srv := newServer("secret", 7717, fstest.MapFS{}, newHub(), &roots{}, u, nil, nil)
 
 	if c := post(srv, "/api/update", ""); c != http.StatusForbidden || f.lookups.Load() != 0 {
 		t.Fatalf("without the token: code %d, %d lookups", c, f.lookups.Load())
@@ -211,7 +211,7 @@ func TestUpdateFromTheWindowFails(t *testing.T) {
 	os.Chmod(dir, 0o555)
 	t.Cleanup(func() { os.Chmod(dir, 0o755) })
 	u := newUpdater("0.2.0", exe, &bytes.Buffer{})
-	srv := newServer("secret", 7717, fstest.MapFS{}, newHub(), &roots{}, u, nil)
+	srv := newServer("secret", 7717, fstest.MapFS{}, newHub(), &roots{}, u, nil, nil)
 	post(srv, "/api/update", "secret")
 	if st := waitIdle(t, u); st.Error != "no write access to "+dir || st.Installed != "" {
 		t.Fatalf("state: %+v", st)
@@ -221,7 +221,7 @@ func TestUpdateFromTheWindowFails(t *testing.T) {
 
 func TestUpdateFromTheWindowRefusesDevBuild(t *testing.T) {
 	u := newUpdater("dev (7715b0f)", "", &bytes.Buffer{})
-	srv := newServer("secret", 7717, fstest.MapFS{}, newHub(), &roots{}, u, nil)
+	srv := newServer("secret", 7717, fstest.MapFS{}, newHub(), &roots{}, u, nil, nil)
 	if c := post(srv, "/api/update", "secret"); c != http.StatusConflict {
 		t.Fatalf("code %d", c)
 	}
@@ -231,7 +231,7 @@ func TestRestartAction(t *testing.T) {
 	u := newUpdater("0.2.0", "", &bytes.Buffer{})
 	restarted := make(chan bool, 1)
 	u.restart = func() error { restarted <- true; return os.ErrPermission }
-	srv := newServer("secret", 7717, fstest.MapFS{}, newHub(), &roots{}, u, nil)
+	srv := newServer("secret", 7717, fstest.MapFS{}, newHub(), &roots{}, u, nil, nil)
 
 	if !canRestart {
 		if c := post(srv, "/api/restart", "secret"); c != http.StatusNotFound || u.state().CanRestart {

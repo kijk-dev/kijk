@@ -6,8 +6,18 @@ import { refreshTip } from './tip.js';
 import { showPR } from './pr.js';
 import { marks, showChanges, showGraph, revealHead, reviewKey, ago, lineCount } from './git.js';
 import { openFind, findAgain, openGotoLine, openGotoFile, openRecent } from './find.js';
-import { onKey, keyLabel, keyNames } from './keys.js';
-import { showKijk, showCodexError, restarting } from './status.js';
+import { onKey, keyLabel, keyNames, mac } from './keys.js';
+import { showKijk, showCodexError, showUndo, restarting } from './status.js';
+
+// The page is the agents window, or at /?window=folders the folders window: same views, other rows.
+const params = new URLSearchParams(location.search);
+const foldersMode = params.get('window') === 'folders';
+const TITLE = foldersMode ? 'kijk · Folders' : 'kijk';
+const PANE = foldersMode ? 'folders' : 'agents';
+let arriving = params.get('open'); // a folder kijk <folder> just added, to open and flash
+if (arriving) history.replaceState(null, '', '/?window=folders');
+let openSeq = null; // the last open request seen; null until the first message of a connection
+let listError = '';
 
 const rowsEl = document.getElementById('rows');
 const statusEl = document.getElementById('status');
@@ -67,10 +77,10 @@ let folderEvents = null;
 const finished = new Set(); // folders whose agent went idle since the user last opened them
 const collapsed = new Set(); // machine groups folded by the user; '' is Local
 try { for (const g of JSON.parse(localStorage.getItem('kijk.collapsed')) || []) collapsed.add(g); } catch { /* storage blocked */ }
-const mac = /Mac/.test(navigator.platform);
 let sidebar = 'files'; // the sidebar tab chosen for the open folder
+const lastKey = foldersMode ? 'kijk.lastFolder' : 'kijk.last';
 let reopen = null; // the folder open before a reload, opened again once its row shows up
-try { reopen = localStorage.getItem('kijk.last'); } catch { /* storage blocked */ }
+try { reopen = localStorage.getItem(lastKey); } catch { /* storage blocked */ }
 
 // Per-folder state: file tabs, expanded tree folders and sidebar tab. It survives reloads and restarts.
 function loadState(key) {
@@ -81,7 +91,7 @@ function saveState() {
   if (!openKey) return;
   try {
     localStorage.setItem(`kijk.folder:${storeKey(openKey)}`, JSON.stringify({ ...tabState(), open: openFolders(), sidebar }));
-    localStorage.setItem('kijk.last', openKey);
+    localStorage.setItem(lastKey, openKey);
   } catch { /* storage blocked */ }
 }
 
@@ -165,7 +175,7 @@ function rowItem(r, n) {
   const gone = machines?.find(m => m.name === r.machine)?.state === 'reconnecting' ? 'is reconnecting' : 'is unreachable';
   const state = r.stale ? `${r.machine} ${gone}` : r.busy ? 'Busy' : finished.has(r.key) ? 'Finished since you last looked' : 'Idle';
   const where = r.branch ? `${r.repo} · ${r.branch}` : r.repo;
-  const key = n ? `${mac ? '⌃⌥' : 'Ctrl+Alt+'}${n} to open` : '';
+  const key = openHint(n);
   li.initials.textContent = initials(r.repo);
   li.badge.style.setProperty('--hue', hue(r.machine + r.root));
   li.key.textContent = n || '';
@@ -196,6 +206,82 @@ function rowItem(r, n) {
   li.setAttribute('aria-label', types.length > 1
     ? `${perAgent.map(a => a.join(', ')).join('; ')}; ${where}, ${state}`
     : `${r.names.join(', ')}, ${labels.join(' and ')}, ${where}, ${state}`);
+  return li;
+}
+
+const FOLDER = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>';
+const REMOVE = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>';
+
+function folderEl(key) {
+  let li = rowEls.get(key);
+  if (li) return li;
+  li = el('li', 'folder');
+  li.tabIndex = 0;
+  li.setAttribute('role', 'button');
+  li.setAttribute('aria-keyshortcuts', 'Delete');
+  li.onclick = () => open(li.row);
+  li.onkeydown = e => {
+    if (e.target !== li) return;
+    if (e.key === 'Delete' || e.key === 'Backspace') {
+      e.preventDefault();
+      removeFolder(li.row);
+    } else if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      open(li.row);
+    }
+  };
+  const top = el('div', 'line');
+  const icon = el('span', 'ficon');
+  icon.innerHTML = FOLDER;
+  li.badge = el('span', 'badge');
+  li.initials = el('span');
+  li.key = el('span', 'key');
+  li.badge.append(li.initials, li.key);
+  li.names = el('span', 'names');
+  li.lc = el('span', 'lc');
+  // The row's Delete key is the keyboard way, so the button stays out of the tab order.
+  li.rm = el('button', 'icon-btn rm');
+  li.rm.type = 'button';
+  li.rm.tabIndex = -1;
+  li.rm.innerHTML = REMOVE;
+  li.rm.dataset.tip = 'Remove from the list';
+  li.rm.onclick = e => {
+    e.stopPropagation();
+    removeFolder(li.row);
+  };
+  li.where = el('span', 'where');
+  const repo = el('div', 'repo');
+  repo.append(li.where);
+  top.append(icon, li.badge, li.names, li.lc, li.rm);
+  li.append(top, repo);
+  rowEls.set(key, li);
+  return li;
+}
+
+function folderItem(r, n) {
+  const li = folderEl(r.key);
+  li.row = r;
+  li.classList.toggle('selected', r.key === openKey);
+  li.classList.toggle('missing', !!r.missing);
+  li.toggleAttribute('aria-disabled', !!r.missing);
+  li.initials.textContent = initials(r.repo);
+  li.badge.style.setProperty('--hue', hue(r.root));
+  li.key.textContent = n || '';
+  li.names.textContent = r.repo;
+  const lc = (!r.missing && lineCount(r.add, r.del)) || el('span', 'lc');
+  li.lc.replaceWith(lc);
+  li.lc = lc;
+  if (r.missing) li.where.replaceChildren(el('span', 'gone', 'missing'), ` · ${r.parent}`);
+  else li.where.textContent = r.branch ? `${r.branch} · ${r.parent}` : r.parent;
+  const changed = r.add || r.del ? `+${r.add} −${r.del} not committed` : r.branch ? 'Nothing to commit' : '';
+  const key = openHint(n);
+  li.dataset.tip = r.missing
+    ? [r.repo, r.root, 'Missing: this folder is not on disk.', 'It comes back when the folder does.'].join('\n')
+    : [r.repo, r.branch ? `${r.repo} · ${r.branch}` : 'Not a git repository', changed, r.cwd ? `${r.root} · opens at ${r.cwd}/` : r.root, key]
+      .filter(Boolean).join('\n');
+  li.setAttribute('aria-label', r.missing ? `${r.repo}, missing, ${r.parent}`
+    : [r.repo, r.branch || 'not a git repository', r.parent, changed].filter(Boolean).join(', '));
+  li.rm.setAttribute('aria-label', `Remove ${r.repo} from the list`);
   return li;
 }
 
@@ -337,11 +423,13 @@ function sync(list, items) {
 function render() {
   numbered = [];
   const number = r => {
-    if (r.stale || numbered.length >= 9) return 0;
+    if (r.stale || r.missing || numbered.length >= 9) return 0;
     numbered.push(r);
     return numbered.length;
   };
-  if (!machines) {
+  if (foldersMode) {
+    sync(rowsEl, rows.map(r => folderItem(r, number(r))));
+  } else if (!machines) {
     sync(rowsEl, rows.map(r => rowItem(r, number(r))));
     groupEls.clear();
   } else {
@@ -357,8 +445,9 @@ function render() {
   refreshTip();
 }
 
-function open(r) {
-  if (r.key === openKey || r.stale) return;
+// open shows a row's folder. again opens it anew when it is open already, for kijk <folder>.
+function open(r, again) {
+  if ((r.key === openKey && !again) || r.stale || r.missing) return;
   if (openKey) drafts.set(openKey, messageEl.value);
   saveState();
   openKey = r.key;
@@ -373,7 +462,7 @@ function open(r) {
   showOutput('');
   updateCommit();
   showTree(filesEl, r.key, {
-    open: state.open,
+    open: again && r.cwd ? undefined : state.open, // undefined opens the tree down to r.cwd
     reveal: r.cwd,
     onFile: (path, pin) => { if (!offline) openTab({ kind: 'file', path }, pin); },
     onToggle: saveState,
@@ -382,7 +471,7 @@ function open(r) {
   tabsEl.hidden = true;
   sidebarHead.hidden = false;
   showFolderName(r);
-  document.title = `${r.repo} — kijk`;
+  document.title = foldersMode ? TITLE : `${r.repo} — kijk`;
   gitNote.hidden = true;
   pr = cachedPR(r.key);
   upHash = null;
@@ -415,10 +504,22 @@ function followFolder() {
   folderEvents.onmessage = e => {
     if (offline) return;
     const change = JSON.parse(e.data);
+    if (foldersMode) refreshRow();
     refreshGit();
     refreshTree(change);
     refreshView(change);
   };
+}
+
+// refreshRow asks for the open folder's row now, so its line counts follow live updates. Once a
+// second at most: a build can change many files at once.
+let rowTimer = 0;
+function refreshRow() {
+  if (rowTimer) return;
+  rowTimer = setTimeout(() => {
+    rowTimer = 0;
+    if (openKey) post('folders/refresh', { root: openKey }).catch(() => {});
+  }, 1000);
 }
 
 // closeFolder empties the viewer, as when kijk starts: for a folder whose machine was disabled.
@@ -440,7 +541,7 @@ function closeFolder() {
   tabsEl.hidden = true;
   gitNote.hidden = true;
   selectTab('files');
-  document.title = 'kijk';
+  document.title = TITLE;
 }
 
 // followMachine keeps the open remote folder in step with its machine: frozen while the machine
@@ -727,7 +828,7 @@ document.addEventListener('keydown', e => {
 
 function collapseRail(on) {
   document.body.classList.toggle('rail-collapsed', on);
-  railBtn.dataset.tip = on ? 'Show agents' : 'Hide agents';
+  railBtn.dataset.tip = `${on ? 'Show' : 'Hide'} ${PANE}`;
   railBtn.setAttribute('aria-label', railBtn.dataset.tip);
   refreshTip();
 }
@@ -800,10 +901,12 @@ for (const handle of document.querySelectorAll('.split')) {
   };
 }
 
-const events = new EventSource('/api/events');
+const events = new EventSource(foldersMode ? '/api/events?window=folders' : '/api/events');
+events.onopen = () => { openSeq = null; };
 events.onmessage = e => {
   const msg = JSON.parse(e.data);
   showKijk(msg.kijk);
+  if (foldersMode) return showFolders(msg);
   machines = msg.machines || null;
   showCodexError([msg.codexError, ...(machines || []).filter(m => m.codexError).map(m => `${m.name}: ${m.codexError}`)]
     .filter(Boolean).join('\n'));
@@ -817,8 +920,7 @@ events.onmessage = e => {
     else if (r.key !== openKey && rows.find(x => x.key === r.key)?.busy) finished.add(r.key);
   }
   rows = next;
-  start.lastElementChild.textContent = rows.some(r => !r.stale)
-    ? 'Select an agent' : 'Start a coding agent to see its work here';
+  showStart();
   // With machines, an empty group says so under its own header.
   if (msg.error) showStatus(msg.error, true);
   else showStatus(rows.length || machines ? '' : 'No running agents');
@@ -827,6 +929,132 @@ events.onmessage = e => {
   if (last) open(last);
   else render();
 };
+function openHint(n) {
+  return n ? `${mac ? '⌃⌥' : 'Ctrl+Alt+'}${n} to open` : '';
+}
+
+function showFolders(msg) {
+  rows = (msg.folders || []).map(r => ({ ...r, key: r.root, machine: '', names: [r.repo] }));
+  const req = msg.open || { seq: 0 };
+  if (openSeq !== null && req.seq > openSeq && req.root) arriving = req.root;
+  openSeq = req.seq;
+  listError = msg.error || '';
+  const current = openKey && rows.find(r => r.key === openKey);
+  if (openKey && (!current || current.missing)) closeFolder(); // removed in another window, or gone from disk
+  showList();
+  if (arriving) {
+    arrive(arriving);
+    arriving = null;
+    return;
+  }
+  const last = !openKey && rows.find(r => r.key === reopen && !r.missing);
+  if (last) open(last);
+  else render();
+}
+
+// arrive opens a folder that kijk <folder> added, and flashes its row once.
+function arrive(root) {
+  const r = rows.find(x => x.key === root && !x.missing);
+  if (!r) return render();
+  open(r, true);
+  const li = rowEls.get(r.key);
+  li.classList.remove('arrived');
+  void li.offsetWidth; // restarts the flash when the row flashed a moment ago
+  li.classList.add('arrived');
+  li.onanimationend = () => li.classList.remove('arrived');
+  li.scrollIntoView({ block: 'nearest' });
+  announce(`Added ${r.repo}`);
+}
+
+function showList() {
+  if (listError) showStatus(listError, true);
+  else showStatus(rows.length ? '' : 'No folders yet');
+  showStart();
+}
+
+const startText = start.querySelector('p');
+const startHelp = el('div', 'help');
+if (foldersMode) {
+  startHelp.append(command('kijk ~/code/my-project'), el('p', 'hint', 'Run it in a terminal to add a folder.'));
+  start.append(startHelp);
+}
+
+function showStart() {
+  if (foldersMode) {
+    startText.textContent = rows.length ? 'Select a folder' : 'No folders yet';
+    startHelp.hidden = !!rows.length;
+  } else {
+    startText.textContent = rows.some(r => !r.stale) ? 'Select an agent' : 'Start a coding agent to see its work here';
+  }
+}
+
+let undo = null; // the last removal while its notice shows: { row, at, wasOpen, timer }
+
+// removeFolder takes a row off the list at once, with an Undo notice instead of a question.
+async function removeFolder(r) {
+  if (!r) return;
+  const at = rows.findIndex(x => x.key === r.key);
+  try {
+    await post('folders/remove', { root: r.root });
+  } catch (err) {
+    announce(err.message);
+    return;
+  }
+  const wasOpen = r.key === openKey;
+  const hadFocus = rowEls.get(r.key)?.contains(document.activeElement);
+  rows = rows.filter(x => x.key !== r.key);
+  if (wasOpen) {
+    closeFolder();
+    try { localStorage.removeItem(lastKey); } catch { /* storage blocked */ }
+  }
+  render();
+  showList();
+  if (hadFocus) rowsEl.children[Math.min(at, rowsEl.children.length - 1)]?.focus();
+  clearTimeout(undo?.timer);
+  undo = { row: r, at, wasOpen, timer: setTimeout(endUndo, 10000) };
+  showUndo({ name: r.repo, root: r.root, onUndo: undoRemove });
+  announce(`Removed ${r.repo}. Press ${mac ? 'Command' : 'Control'} Z to undo.`);
+}
+
+function endUndo() {
+  clearTimeout(undo?.timer);
+  undo = null;
+  showUndo(null);
+}
+
+async function undoRemove() {
+  const u = undo;
+  if (!u) return;
+  endUndo();
+  try {
+    await post('folders/restore', { root: u.row.root });
+  } catch (err) {
+    announce(err.message);
+    return;
+  }
+  if (!rows.some(x => x.key === u.row.key)) rows.splice(Math.min(u.at, rows.length), 0, u.row);
+  showList();
+  if (u.wasOpen) open(u.row);
+  else render();
+  announce(`${u.row.repo} is back in the list`);
+}
+
+// Cmd+Z or Ctrl+Z undoes a removal while its notice shows; a text field keeps its own undo.
+document.addEventListener('keydown', e => {
+  if (!undo || e.code !== 'KeyZ' || e.shiftKey || e.altKey || e.metaKey !== mac || e.ctrlKey === mac) return;
+  if (e.target.closest?.('textarea, input')) return;
+  e.preventDefault();
+  undoRemove();
+});
+
+if (foldersMode) {
+  document.title = TITLE;
+  document.getElementById('rail').setAttribute('aria-label', 'Folders');
+  document.querySelector('#rail header span').textContent = 'Folders';
+  document.querySelector('.split[data-var="--rail"]').setAttribute('aria-label', 'Resize folders pane');
+  showStart();
+}
+
 events.onerror = () => {
   if (!restarting()) showStatus('Lost connection to kijk. Retrying…', true);
 };

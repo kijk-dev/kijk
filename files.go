@@ -22,10 +22,11 @@ const (
 
 var errOutside = errors.New("path is outside this folder")
 
-// roots holds the row folders of running sessions; only these may be read.
+// roots are the folders the server may read: row folders of running agents and saved folders.
 type roots struct {
-	mu sync.RWMutex
-	m  map[string]bool
+	mu      sync.RWMutex
+	m       map[string]bool
+	folders map[string]bool
 }
 
 func (r *roots) set(rows []Row) {
@@ -38,10 +39,20 @@ func (r *roots) set(rows []Row) {
 	r.mu.Unlock()
 }
 
+func (r *roots) setFolders(list []savedFolder) {
+	m := map[string]bool{}
+	for _, f := range list {
+		m[f.Path] = true
+	}
+	r.mu.Lock()
+	r.folders = m
+	r.mu.Unlock()
+}
+
 func (r *roots) has(root string) bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	return r.m[root]
+	return r.m[root] || r.folders[root]
 }
 
 // resolve turns a slash-separated path relative to root into a real path inside root.

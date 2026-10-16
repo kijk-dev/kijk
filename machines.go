@@ -61,9 +61,26 @@ func (m *machineManager) run(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			m.apply(nil)
+			m.settings = settingsFile{path: m.settings.path} // the next run reads the file again
 			return
 		case <-time.After(time.Second):
 		}
+	}
+}
+
+// start connects to the saved machines until stop is called, which waits for run to end. The
+// first read is done before it returns, so settled waits for those machines.
+func (m *machineManager) start() (stop func()) {
+	m.reload()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		m.run(ctx)
+	}()
+	return func() {
+		cancel()
+		<-done
 	}
 }
 

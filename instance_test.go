@@ -29,7 +29,7 @@ func serveKijk(t *testing.T, token string) int {
 		t.Fatal(err)
 	}
 	port := ln.Addr().(*net.TCPAddr).Port
-	srv := &http.Server{Handler: newServer(token, port, fstest.MapFS{}, newHub(), &roots{}, newUpdater("0.2.0", "", io.Discard), nil)}
+	srv := &http.Server{Handler: newServer(token, port, fstest.MapFS{}, newHub(), &roots{}, newUpdater("0.2.0", "", io.Discard), nil, nil)}
 	go srv.Serve(ln)
 	t.Cleanup(func() { srv.Close() })
 	return port

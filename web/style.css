@@ -560,3 +560,25 @@ body { --mh: color-mix(in srgb, var(--border) 65%, var(--panel)); }
 .offline #git .item input[type=checkbox], .offline #filetabs { pointer-events: none; }
 .offline #git .item input[type=checkbox] { opacity: .5; }
 @media (prefers-reduced-motion: reduce) { .mdot.connecting, .mact i.busy, #stalebar { animation: none; } }
+/* Folders window: a folder icon where an agent row has its agent icons, and line 2 under the name. */
+#rows li.folder .repo { padding-left: 20px; }
+.ficon { display: flex; flex: none; color: var(--muted); }
+.ficon svg { width: 14px; height: 14px; }
+/* The remove button takes the place of the line counts while the row is hovered or focused. */
+.rm { display: none; margin: -2px -4px -2px auto; }
+.rm svg { width: 12px; height: 12px; }
+#rows li.folder:hover .rm, #rows li.folder:focus-within .rm, #rows li.missing .rm { display: flex; }
+#rows li.folder:hover .lc, #rows li.folder:focus-within .lc { display: none; }
+.rail-collapsed .rm, .rail-collapsed .folder .lc, .rail-collapsed .ficon { display: none !important; }
+#rows li.missing { cursor: default; }
+#rows li.missing .names { color: var(--muted); font-weight: 400; }
+#rows li.missing .gone { font-style: italic; }
+.rail-collapsed li.missing .badge { background: none; color: var(--muted); outline: 1px dashed var(--edge); outline-offset: -1px; }
+#rows li.arrived { animation: arrive 1.6s cubic-bezier(.16, 1, .3, 1); }
+@keyframes arrive { from { background: color-mix(in srgb, var(--modified) 28%, var(--select)); } }
+@media (prefers-reduced-motion: reduce) { #rows li.arrived { animation: none; } }
+#start .cmd { display: inline-flex; width: auto; margin-top: 12px; color: var(--text); }
+#start .cmd span { padding-right: 6px; }
+#start .cmd svg { width: 12px; height: 12px; margin: 0; }
+#start .hint { margin: 10px 0 0; font-size: 12px; }
+#statusbar .undo { margin-right: auto; }

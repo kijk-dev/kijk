@@ -43,6 +43,22 @@ from it. It never starts Codex or the app server, and never answers an approval.
 - Agents that work in the same folder share one row, also a Claude Code and a Codex agent. Only the icon of the agent type that works pulses. An agent in a git worktree gets the row of that worktree.
 - The newest activity is on top. Rows appear, change and go away as agents start, work and stop.
 
+### Folders without agents
+
+You can also use kijk as a light viewer for folders you pick, without agents.
+
+```sh
+kijk ~/code/api ~/notes
+```
+
+- This opens a second window, "kijk · Folders". It lists only your folders, with the same files, code and Git views.
+- When the folders window is open, `kijk <folder>` adds the folder to it and opens it there. `kijk folders` opens the window with the saved list.
+- kijk keeps the list across restarts and updates. To remove a folder, click the ✕ on its row or press Delete. Undo puts it back.
+- A folder inside a git repository shows as the whole repository, opened at that folder.
+- A folder that is no longer on disk stays in the list, marked missing.
+- kijk refuses your home folder, `/`, and a folder in a git repository that starts at one of them. Folders are on the local machine only.
+- While no agents window is open, kijk does not look for agents or connect to remote machines.
+
 ### Files
 
 - The Files tab shows the whole folder as a tree, not only the changed files.
@@ -88,7 +104,7 @@ kijk uses the IntelliJ default keys.
 
 | Action | macOS | Windows and Linux |
 |---|---|---|
-| Open the folder of agent 1 to 9 | ⌃⌥1 … ⌃⌥9 | Ctrl+Alt+1 … Ctrl+Alt+9 |
+| Open row 1 to 9 in the list | ⌃⌥1 … ⌃⌥9 | Ctrl+Alt+1 … Ctrl+Alt+9 |
 | Go to file | ⇧⌘O | Ctrl+Shift+N |
 | Recent files | ⌘E | Ctrl+E |
 | Find in file | ⌘F | Ctrl+F |
@@ -101,6 +117,8 @@ kijk uses the IntelliJ default keys.
 | Commit | ⌘K | Ctrl+K |
 | Push | ⇧⌘K | Ctrl+Shift+K |
 | Close tab | ⌘W | Ctrl+F4 |
+| Remove the focused folder (folders window) | Delete or Backspace | Delete or Backspace |
+| Undo the removal | ⌘Z | Ctrl+Z |
 
 A normal browser tab keeps some of these keys for itself. For those actions, kijk also has a second key. The tooltip of the action shows the key that works in your window.
 
@@ -228,8 +246,13 @@ If kijk already runs, the command only opens a new window.
 | `-port 7800` | Uses another port. |
 | `-no-open` | Does not open a window. |
 | `-no-update-check` | Does not look for a new version. |
+| `kijk <folder>…` | Adds the folders to the folders window and opens it. |
+| `kijk folders` | Opens the folders window. |
 | `kijk version` | Shows the version. |
 | `kijk update` | Installs the newest version. |
+
+`folders`, `update`, `version`, `machine` and `serve` are commands. To add a folder with one of
+these names, give it as a path, such as `kijk ./update`.
 
 ## Update
 
@@ -265,9 +288,10 @@ You can also start kijk with `-no-update-check`. `kijk update` and the **Update*
 
 kijk sends anonymous usage data, so we know how many people use it and on which systems.
 It never sends your code, your folder or file names, or anything about you.
-It sends the number of agents on your machine, in total and per agent type (Claude Code or
-Codex), and how many remote machines you saved and how many agents run on them. It never sends their names or addresses. kijk on a remote machine sends
-nothing.
+It sends the number of folders in the folders window. On a day when kijk looked for agents, it
+also sends the number of agents on your machine, in total and per agent type (Claude Code or
+Codex), and how many remote machines you saved and how many agents run on them. It never sends
+their names or addresses. kijk on a remote machine sends nothing.
 
 To turn it off, set `KIJK_NO_TELEMETRY=1` or `DO_NOT_TRACK=1`, or start kijk with `-no-telemetry`.
 

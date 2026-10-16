@@ -410,7 +410,7 @@ func useCacheDir(t *testing.T) {
 // proxiedPing checks that the local server reaches the remote kijk through /m/<machine>/api/.
 func proxiedPing(t *testing.T, mm *machineManager, target string) {
 	t.Helper()
-	srv := newServer("secret", 7717, nil, newHub(), &roots{}, nil, mm)
+	srv := newServer("secret", 7717, nil, newHub(), &roots{}, nil, mm, nil)
 	r := httptest.NewRequest("GET", "/m/"+target+"/api/ping", nil)
 	r.Host = "127.0.0.1:7717"
 	r.AddCookie(&http.Cookie{Name: cookieName(7717), Value: "secret"})

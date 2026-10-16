@@ -45,6 +45,7 @@ type telemetry struct {
 	key, version, id, url string
 	client                *http.Client
 	events                chan telemetryEvent
+	started               time.Time
 	lastActive            string // only touched by watchSessions
 }
 
@@ -56,6 +57,7 @@ func newTelemetry(key, version string) *telemetry {
 		url:     telemetryURL(),
 		client:  &http.Client{Timeout: 5 * time.Second},
 		events:  make(chan telemetryEvent, 16),
+		started: time.Now(),
 	}
 	go t.run()
 	return t
@@ -76,21 +78,49 @@ func (t *telemetry) send(name string, extra map[string]any) {
 	}
 }
 
-// scanned sends "kijk active" after the first scan and again when the local date changes.
-// byType counts local agents per agent type; remote ones are in remoteAgents.
-func (t *telemetry) scanned(byType map[string]int, machines, remoteAgents int, now time.Time) {
+// agentCounts are the agent numbers on "kijk active". byType counts local agents per agent type.
+type agentCounts struct {
+	byType           map[string]int
+	machines, remote int
+}
+
+// active sends "kijk active" once a local day. While kijk looks for agents it waits for their
+// counts; otherwise it sends one minute after kijk starts or the date changes, without them.
+func (t *telemetry) active(now time.Time, folders int, looking bool, agents *agentCounts) {
 	if t == nil {
 		return
 	}
-	if day := now.Format(time.DateOnly); day != t.lastActive {
-		t.lastActive = day
-		agents := 0
-		for _, n := range byType {
-			agents += n
-		}
-		t.send("kijk active", map[string]any{"agents": agents, "claude_agents": byType["claude"], "codex_agents": byType["codex"],
-			"machines": machines, "remote_agents": remoteAgents})
+	day := now.Format(time.DateOnly)
+	if day == t.lastActive {
+		return
 	}
+	if agents == nil {
+		y, m, d := now.Date()
+		if looking || now.Sub(later(t.started, time.Date(y, m, d, 0, 0, 0, 0, now.Location()))) < time.Minute {
+			return
+		}
+	}
+	t.lastActive = day
+	props := map[string]any{"folders": folders}
+	if agents != nil {
+		n := 0
+		for _, c := range agents.byType {
+			n += c
+		}
+		props["agents"] = n
+		props["claude_agents"] = agents.byType["claude"]
+		props["codex_agents"] = agents.byType["codex"]
+		props["machines"] = agents.machines
+		props["remote_agents"] = agents.remote
+	}
+	t.send("kijk active", props)
+}
+
+func later(a, b time.Time) time.Time {
+	if a.After(b) {
+		return a
+	}
+	return b
 }
 
 // agentCount counts sessions, not rows: one row holds every agent in the same repo.

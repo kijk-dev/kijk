@@ -1,4 +1,5 @@
 import { el, post } from './api.js';
+import { mac } from './keys.js';
 
 // The status bar: the kijk version, or in its place the news about a newer one. An agent error sits
 // on the left, so it never hides an update that may fix it.
@@ -11,6 +12,7 @@ let last = null;
 let shown = '';
 let restartSince = 0;
 let codexError = '';
+let undo = null;
 
 // Each notice remembers what it was closed for (a version, or the error text): closing "is out"
 // still lets "is installed" show.
@@ -36,6 +38,12 @@ export function restarting() {
 export function showCodexError(err) {
   if ((err || '') === codexError) return;
   codexError = err || '';
+  if (last) draw();
+}
+
+// showUndo shows "Removed <name>" with an Undo button on the left of the bar; null takes it away.
+export function showUndo(u) {
+  undo = u;
   if (last) draw();
 }
 
@@ -89,6 +97,13 @@ function draw() {
     parts[0].classList.add('agent-error');
   }
 
+  if (undo) {
+    const keys = mac ? '⌘Z' : 'Ctrl+Z';
+    const n = news('', `Removed ${undo.name}`, `Removed ${undo.name}`,
+      `Removed ${undo.root} from the list\nNothing changed on disk.\n${keys} to undo`, button('Undo', keys, undo.onUndo));
+    n.classList.add('undo');
+    parts.unshift(n);
+  }
   const key = parts.map(p => p.outerHTML).join('');
   if (key === shown) return;
   shown = key;
