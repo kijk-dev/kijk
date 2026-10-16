@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -40,7 +41,7 @@ func TestBrokenFoldersFileMovesAway(t *testing.T) {
 	os.MkdirAll(filepath.Dir(p), 0o700)
 	os.WriteFile(p, []byte(`{"folders": [`), 0o600)
 	l, err := readFolders(p)
-	if err == nil || l != nil {
+	if !errors.Is(err, errMovedAway) || l != nil {
 		t.Fatalf("got %v %v", l, err)
 	}
 	if b, _ := os.ReadFile(p + ".bad"); string(b) != `{"folders": [` {
@@ -48,6 +49,45 @@ func TestBrokenFoldersFileMovesAway(t *testing.T) {
 	}
 	if exists(p) {
 		t.Error("broken file still in place")
+	}
+}
+
+func TestFolderListKeepsBrokenFileErrorAfterSave(t *testing.T) {
+	useConfigDir(t)
+	p, _ := foldersPath()
+	os.MkdirAll(filepath.Dir(p), 0o700)
+	os.WriteFile(p, []byte(`{"folders": [`), 0o600)
+	l := newFolderList(p, &roots{})
+	if _, err := l.add([]savedFolder{{Path: "/api"}}); err != nil {
+		t.Fatal(err)
+	}
+	if saved, _ := readFolders(p); !slices.Equal(saved, []savedFolder{{Path: "/api"}}) {
+		t.Errorf("saved %v", saved)
+	}
+	if _, _, _, err := l.snapshot(); err == nil || !strings.Contains(err.Error(), "folders.json.bad") {
+		t.Errorf("pane error %v", err)
+	}
+}
+
+func TestFolderListDoesNotOverwriteUnreadableFile(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Getuid() == 0 {
+		t.Skip("needs file modes that keep the owner out")
+	}
+	useConfigDir(t)
+	p, _ := foldersPath()
+	writeFolders(p, []savedFolder{{Path: "/keep"}})
+	os.Chmod(p, 0)
+	t.Cleanup(func() { os.Chmod(p, 0o600) })
+	l := newFolderList(p, &roots{})
+	if _, err := l.add([]savedFolder{{Path: "/api"}}); err == nil {
+		t.Error("add saved over a file it could not read")
+	}
+	os.Chmod(p, 0o600)
+	if saved, _ := readFolders(p); !slices.Equal(saved, []savedFolder{{Path: "/keep"}}) {
+		t.Errorf("file now %v", saved)
+	}
+	if _, _, _, err := l.snapshot(); err == nil || !strings.Contains(err.Error(), "permission denied") {
+		t.Errorf("pane error %v", err)
 	}
 }
 
@@ -131,7 +171,7 @@ func TestFolderListUndo(t *testing.T) {
 	if !l.restore("/notes") || l.restore("/notes") {
 		t.Error("restore the last removal once")
 	}
-	list, _, open, _ := l.snapshot()
+	list, open, _, _ := l.snapshot()
 	if !slices.Equal(list, []savedFolder{{Path: "/api"}, {Path: "/notes"}}) || open.Root != "/notes" || !rts.has("/notes") {
 		t.Fatalf("list %v open %v", list, open)
 	}

@@ -32,6 +32,9 @@ func foldersPath() (string, error) {
 	return filepath.Join(dir, "kijk", "folders.json"), nil
 }
 
+// errMovedAway marks a broken folders.json that is now folders.json.bad, so a save loses nothing.
+var errMovedAway = errors.New("moved it to folders.json.bad")
+
 // readFolders reads folders.json. A missing file is an empty list. A broken file moves to
 // folders.json.bad, so the next save cannot lose what was in it.
 func readFolders(path string) ([]savedFolder, error) {
@@ -47,7 +50,7 @@ func readFolders(path string) ([]savedFolder, error) {
 		if rerr := os.Rename(path, path+".bad"); rerr != nil {
 			return nil, fmt.Errorf("%s is not valid JSON, and kijk cannot move it away: %w", path, rerr)
 		}
-		return nil, fmt.Errorf("%s was not valid JSON. kijk moved it to folders.json.bad and starts with an empty list", path)
+		return nil, fmt.Errorf("%s was not valid JSON, so kijk %w and starts with an empty list", path, errMovedAway)
 	}
 	var list []savedFolder
 	for _, sf := range f.Folders {
@@ -68,11 +71,15 @@ func writeFolders(path string, list []savedFolder) error {
 // addFolder puts f at the end of the list. When its row is listed already, the row keeps its
 // place and opens where f says. added is false then.
 func addFolder(list []savedFolder, f savedFolder) (out []savedFolder, added bool) {
-	if i := slices.IndexFunc(list, func(s savedFolder) bool { return s.Path == f.Path }); i >= 0 {
+	if i := indexOf(list, f.Path); i >= 0 {
 		list[i].Open = f.Open
 		return list, false
 	}
 	return append(list, f), true
+}
+
+func indexOf(list []savedFolder, path string) int {
+	return slices.IndexFunc(list, func(f savedFolder) bool { return f.Path == path })
 }
 
 // tilde shortens a path in the home folder for the user to read.
@@ -167,7 +174,8 @@ type folderList struct {
 
 	mu      sync.Mutex
 	list    []savedFolder
-	err     error // why folders.json could not be read or saved, for the Folders pane
+	readErr error // kept for the Folders pane; unless the file moved away, changes are not saved
+	saveErr error
 	removed *removedFolder
 	open    openRequest
 	asked   map[string]bool // rows to refresh now: the open folder changed
@@ -187,7 +195,7 @@ type openRequest struct {
 
 func newFolderList(path string, rts *roots) *folderList {
 	l := &folderList{path: path, roots: rts, changed: make(chan struct{}, 1)}
-	l.list, l.err = readFolders(path)
+	l.list, l.readErr = readFolders(path)
 	rts.setFolders(l.list)
 	return l
 }
@@ -195,10 +203,16 @@ func newFolderList(path string, rts *roots) *folderList {
 // changedLocked saves the list and tells the server and the windows. l.mu is held.
 func (l *folderList) changedLocked() {
 	l.roots.setFolders(l.list)
-	l.err = nil
-	if err := writeFolders(l.path, l.list); err != nil {
-		l.err = fmt.Errorf("cannot save the folders list: %w", err)
+	l.saveErr = nil
+	if l.readErr != nil && !errors.Is(l.readErr, errMovedAway) {
+		l.saveErr = errors.New("changes to the folders list are not saved, so kijk does not overwrite a file it could not read")
+	} else if err := writeFolders(l.path, l.list); err != nil {
+		l.saveErr = fmt.Errorf("cannot save the folders list: %w", err)
 	}
+	l.wakeLocked()
+}
+
+func (l *folderList) wakeLocked() {
 	select {
 	case l.changed <- struct{}{}:
 	default:
@@ -218,13 +232,13 @@ func (l *folderList) add(fs []savedFolder) (added []bool, err error) {
 		l.open = openRequest{l.open.Seq + 1, fs[len(fs)-1].Path}
 	}
 	l.changedLocked()
-	return added, l.err
+	return added, l.saveErr
 }
 
 func (l *folderList) remove(root string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	i := slices.IndexFunc(l.list, func(f savedFolder) bool { return f.Path == root })
+	i := indexOf(l.list, root)
 	if i < 0 {
 		return false
 	}
@@ -239,7 +253,7 @@ func (l *folderList) restore(root string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	r := l.removed
-	if r == nil || r.f.Path != root || slices.ContainsFunc(l.list, func(f savedFolder) bool { return f.Path == root }) {
+	if r == nil || r.f.Path != root || indexOf(l.list, root) >= 0 {
 		return false
 	}
 	l.removed = nil
@@ -261,27 +275,24 @@ func (l *folderList) count() int {
 func (l *folderList) refresh(root string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if !slices.ContainsFunc(l.list, func(f savedFolder) bool { return f.Path == root }) {
+	if indexOf(l.list, root) < 0 {
 		return false
 	}
 	if l.asked == nil {
 		l.asked = map[string]bool{}
 	}
 	l.asked[root] = true
-	select {
-	case l.changed <- struct{}{}:
-	default:
-	}
+	l.wakeLocked()
 	return true
 }
 
 // snapshot gives the list, and takes the rows asked for since the last call.
-func (l *folderList) snapshot() ([]savedFolder, error, openRequest, map[string]bool) {
+func (l *folderList) snapshot() ([]savedFolder, openRequest, map[string]bool, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	asked := l.asked
 	l.asked = nil
-	return slices.Clone(l.list), l.err, l.open, asked
+	return slices.Clone(l.list), l.open, asked, errors.Join(l.readErr, l.saveErr)
 }
 
 // folderRow is one row of the folders window.
@@ -366,7 +377,7 @@ func (l *folderList) watch(h *hub, u *updater) {
 			clear(made)
 			clear(from)
 		} else {
-			list, err, open, asked := l.snapshot()
+			list, open, asked, err := l.snapshot()
 			var stale []savedFolder
 			for _, f := range list {
 				if old, ok := from[f.Path]; !ok || old != f || asked[f.Path] {
@@ -381,7 +392,7 @@ func (l *folderList) watch(h *hub, u *updater) {
 			}
 			makeRows(stale, made, from)
 			for p := range from {
-				if !slices.ContainsFunc(list, func(f savedFolder) bool { return f.Path == p }) {
+				if indexOf(list, p) < 0 {
 					delete(made, p)
 					delete(from, p)
 				}

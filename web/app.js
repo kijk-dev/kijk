@@ -6,7 +6,7 @@ import { refreshTip } from './tip.js';
 import { showPR } from './pr.js';
 import { marks, showChanges, showGraph, revealHead, reviewKey, ago, lineCount } from './git.js';
 import { openFind, findAgain, openGotoLine, openGotoFile, openRecent } from './find.js';
-import { onKey, keyLabel, keyNames } from './keys.js';
+import { onKey, keyLabel, keyNames, mac } from './keys.js';
 import { showKijk, showCodexError, showUndo, restarting } from './status.js';
 
 // The page is the agents window, or at /?window=folders the folders window: same views, other rows.
@@ -77,7 +77,6 @@ let folderEvents = null;
 const finished = new Set(); // folders whose agent went idle since the user last opened them
 const collapsed = new Set(); // machine groups folded by the user; '' is Local
 try { for (const g of JSON.parse(localStorage.getItem('kijk.collapsed')) || []) collapsed.add(g); } catch { /* storage blocked */ }
-const mac = /Mac/.test(navigator.platform);
 let sidebar = 'files'; // the sidebar tab chosen for the open folder
 const lastKey = foldersMode ? 'kijk.lastFolder' : 'kijk.last';
 let reopen = null; // the folder open before a reload, opened again once its row shows up
@@ -176,7 +175,7 @@ function rowItem(r, n) {
   const gone = machines?.find(m => m.name === r.machine)?.state === 'reconnecting' ? 'is reconnecting' : 'is unreachable';
   const state = r.stale ? `${r.machine} ${gone}` : r.busy ? 'Busy' : finished.has(r.key) ? 'Finished since you last looked' : 'Idle';
   const where = r.branch ? `${r.repo} · ${r.branch}` : r.repo;
-  const key = n ? `${mac ? '⌃⌥' : 'Ctrl+Alt+'}${n} to open` : '';
+  const key = openHint(n);
   li.initials.textContent = initials(r.repo);
   li.badge.style.setProperty('--hue', hue(r.machine + r.root));
   li.key.textContent = n || '';
@@ -275,7 +274,7 @@ function folderItem(r, n) {
   if (r.missing) li.where.replaceChildren(el('span', 'gone', 'missing'), ` · ${r.parent}`);
   else li.where.textContent = r.branch ? `${r.branch} · ${r.parent}` : r.parent;
   const changed = r.add || r.del ? `+${r.add} −${r.del} not committed` : r.branch ? 'Nothing to commit' : '';
-  const key = n ? `${mac ? '⌃⌥' : 'Ctrl+Alt+'}${n} to open` : '';
+  const key = openHint(n);
   li.dataset.tip = r.missing
     ? [r.repo, r.root, 'Missing: this folder is not on disk.', 'It comes back when the folder does.'].join('\n')
     : [r.repo, r.branch ? `${r.repo} · ${r.branch}` : 'Not a git repository', changed, r.cwd ? `${r.root} · opens at ${r.cwd}/` : r.root, key]
@@ -930,13 +929,18 @@ events.onmessage = e => {
   if (last) open(last);
   else render();
 };
+function openHint(n) {
+  return n ? `${mac ? '⌃⌥' : 'Ctrl+Alt+'}${n} to open` : '';
+}
+
 function showFolders(msg) {
   rows = (msg.folders || []).map(r => ({ ...r, key: r.root, machine: '', names: [r.repo] }));
   const req = msg.open || { seq: 0 };
   if (openSeq !== null && req.seq > openSeq && req.root) arriving = req.root;
   openSeq = req.seq;
   listError = msg.error || '';
-  if (openKey && rows.find(r => r.key === openKey)?.missing) closeFolder();
+  const current = openKey && rows.find(r => r.key === openKey);
+  if (openKey && (!current || current.missing)) closeFolder(); // removed in another window, or gone from disk
   showList();
   if (arriving) {
     arrive(arriving);

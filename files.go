@@ -22,7 +22,6 @@ const (
 
 var errOutside = errors.New("path is outside this folder")
 
-// roots holds the row folders of running sessions; only these may be read.
 // roots are the folders the server may read: row folders of running agents and saved folders.
 type roots struct {
 	mu      sync.RWMutex

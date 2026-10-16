@@ -102,26 +102,10 @@ func main() {
 		}
 		return
 	}
-	fp, err := foldersPath()
-	if err != nil && a.foldersWindow {
-		fmt.Fprintln(os.Stderr, "kijk: cannot find the folders list:", err)
+	fp, fpErr := foldersPath()
+	if fpErr != nil && a.foldersWindow {
+		fmt.Fprintln(os.Stderr, "kijk: cannot find the folders list:", fpErr)
 		os.Exit(1)
-	}
-	addedNote := ""
-	if len(adds) > 0 {
-		list, err := readFolders(fp)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "kijk:", err)
-		}
-		added := make([]bool, len(adds))
-		for i, f := range adds {
-			list, added[i] = addFolder(list, f)
-		}
-		if err := writeFolders(fp, list); err != nil {
-			fmt.Fprintln(os.Stderr, "kijk: cannot save the folders list:", err)
-			os.Exit(1)
-		}
-		addedNote = addedText(adds, added, false)
 	}
 	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", a.port))
 	if err != nil {
@@ -171,6 +155,22 @@ func main() {
 		mm = newMachineManager(kijkVersion)
 	}
 	fl := newFolderList(fp, rts)
+	if fpErr != nil {
+		fl.readErr = fmt.Errorf("cannot find the folders list: %w", fpErr)
+	}
+	if fl.readErr != nil {
+		fmt.Fprintln(os.Stderr, "kijk:", fl.readErr)
+	}
+	addedNote := ""
+	if len(adds) > 0 {
+		added, err := fl.add(adds)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "kijk:", err)
+			remove()
+			os.Exit(1)
+		}
+		addedNote = addedText(adds, added, false)
+	}
 	go fl.watch(h, u)
 	go watchSessions(newScanner(claudeDir(), codexHome()), h, rts, u, tel, mm, fl)
 
@@ -376,8 +376,7 @@ func sessionMessage(rows []Row, err, codexErr error, k kijkState, machines []mac
 }
 
 // watchSessions looks for agents only while an agents window is open, and for a minute after the
-// last one closes. An update or machine state change publishes at once, with the rows from the
-// last poll. kijk serve has no updater, machines or folders.
+// last one closes. An update or machine state change publishes at once, with the last poll's rows.
 func watchSessions(s *scanner, h *hub, rts *roots, u *updater, tel *telemetry, mm *machineManager, fl *folderList) {
 	var rows []Row
 	var err, codexErr error
