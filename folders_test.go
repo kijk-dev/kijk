@@ -14,13 +14,18 @@ import (
 	"time"
 )
 
+// abs makes a slash path absolute on this system: Windows needs a drive letter.
+func abs(p string) string {
+	return filepath.VolumeName(os.TempDir()) + filepath.FromSlash(p)
+}
+
 func TestFoldersFileRoundTrip(t *testing.T) {
 	useConfigDir(t)
 	p, _ := foldersPath()
 	if l, err := readFolders(p); err != nil || l != nil {
 		t.Fatalf("missing file: %v %v", l, err)
 	}
-	want := []savedFolder{{Path: "/code/api"}, {Path: "/code/kijk", Open: "/code/kijk/web"}}
+	want := []savedFolder{{Path: abs("/code/api")}, {Path: abs("/code/kijk"), Open: abs("/code/kijk/web")}}
 	if err := writeFolders(p, want); err != nil {
 		t.Fatal(err)
 	}
@@ -58,10 +63,10 @@ func TestFolderListKeepsBrokenFileErrorAfterSave(t *testing.T) {
 	os.MkdirAll(filepath.Dir(p), 0o700)
 	os.WriteFile(p, []byte(`{"folders": [`), 0o600)
 	l := newFolderList(p, &roots{})
-	if _, err := l.add([]savedFolder{{Path: "/api"}}); err != nil {
+	if _, err := l.add([]savedFolder{{Path: abs("/api")}}); err != nil {
 		t.Fatal(err)
 	}
-	if saved, _ := readFolders(p); !slices.Equal(saved, []savedFolder{{Path: "/api"}}) {
+	if saved, _ := readFolders(p); !slices.Equal(saved, []savedFolder{{Path: abs("/api")}}) {
 		t.Errorf("saved %v", saved)
 	}
 	if _, _, _, err := l.snapshot(); err == nil || !strings.Contains(err.Error(), "folders.json.bad") {
@@ -161,18 +166,18 @@ func TestFolderListUndo(t *testing.T) {
 	p, _ := foldersPath()
 	rts := &roots{}
 	l := newFolderList(p, rts)
-	l.add([]savedFolder{{Path: "/api"}, {Path: "/k", Open: "/k/web"}, {Path: "/notes"}})
-	if !l.remove("/k") || !l.remove("/notes") || rts.has("/k") {
+	l.add([]savedFolder{{Path: abs("/api")}, {Path: abs("/k"), Open: abs("/k/web")}, {Path: abs("/notes")}})
+	if !l.remove(abs("/k")) || !l.remove(abs("/notes")) || rts.has(abs("/k")) {
 		t.Fatal("remove")
 	}
-	if l.restore("/k") {
+	if l.restore(abs("/k")) {
 		t.Error("restored a removal that was not the last")
 	}
-	if !l.restore("/notes") || l.restore("/notes") {
+	if !l.restore(abs("/notes")) || l.restore(abs("/notes")) {
 		t.Error("restore the last removal once")
 	}
 	list, open, _, _ := l.snapshot()
-	if !slices.Equal(list, []savedFolder{{Path: "/api"}, {Path: "/notes"}}) || open.Root != "/notes" || !rts.has("/notes") {
+	if !slices.Equal(list, []savedFolder{{Path: abs("/api")}, {Path: abs("/notes")}}) || open.Root != abs("/notes") || !rts.has(abs("/notes")) {
 		t.Fatalf("list %v open %v", list, open)
 	}
 	if saved, _ := readFolders(p); !slices.Equal(saved, list) {
