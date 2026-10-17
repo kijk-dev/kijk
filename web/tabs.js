@@ -2,7 +2,7 @@ import { el } from './api.js';
 import { openFile, openDiff, showMessage, viewScroll, setViewScroll, LINE_HEIGHT } from './view.js';
 import { keyLabel, keyNames } from './keys.js';
 
-// A tab is {kind: 'file', path, source} or {kind: 'diff', mode, path, orig, hash}, plus preview and scrollTop.
+// A tab is {kind: 'file', path, source} or {kind: 'diff', mode, path, orig, hash, source}, plus preview and scrollTop.
 // At most one tab is a preview; a single click replaces it, a double click keeps it.
 const bar = document.getElementById('filetabs');
 const viewer = document.getElementById('viewer');
@@ -135,12 +135,13 @@ function show(i) {
   const keep = t?.scrollTop != null ? { scrollTop: t.scrollTop } : undefined;
   if (!t) showMessage(viewer, 'Select a file');
   else if (t.kind === 'file') openFile(viewer, root, t.path, keep, viewOptions(t));
-  else openDiff(viewer, root, t, t.mode, 3, keep);
+  else openDiff(viewer, root, t, t.mode, 3, keep, viewOptions(t));
   record(); // after the open, so the place takes the tab's position, not the old view's
   changed();
 }
 
-// viewOptions lets a markdown tab switch between rendered and source, and open the files it links to.
+// viewOptions lets a markdown or SVG tab, and an SVG diff, switch between rendered and source, and
+// markdown open the files it links to.
 function viewOptions(t) {
   return {
     source: !!t.source,
@@ -148,7 +149,8 @@ function viewOptions(t) {
       t.source = source || undefined;
       t.scrollTop = undefined;
       changed();
-      openFile(viewer, root, t.path, { line }, viewOptions(t));
+      if (t.kind === 'file') openFile(viewer, root, t.path, { line }, viewOptions(t));
+      else openDiff(viewer, root, t, t.mode, 3, undefined, viewOptions(t));
     },
     open: path => openTab({ kind: 'file', path }),
   };

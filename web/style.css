@@ -187,7 +187,7 @@ svg { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; 
 .muted { color: var(--muted); }
 
 main { display: flex; flex-direction: column; min-width: 0; }
-#viewer { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
+#viewer { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; container-type: inline-size; }
 #filetabs { flex: none; display: flex; height: var(--bar); overflow-x: auto; scrollbar-width: thin; background: var(--panel); border-bottom: 1px solid var(--border); }
 .filetab { display: flex; align-items: center; gap: 6px; padding: 4px 4px 4px 12px; border-right: 1px solid var(--border); border-bottom: 2px solid transparent; cursor: pointer; white-space: nowrap; font-size: 12px; color: var(--muted); }
 .filetab:hover { color: var(--text); }
@@ -266,6 +266,44 @@ dialog.goto::backdrop { background: none; }
 .mode button:active { background: var(--border); }
 .mode button[aria-pressed="true"] { background: var(--select); color: var(--modified); }
 .mode button:focus-visible { outline: 2px solid var(--busy); outline-offset: -2px; }
+.diffbar .mode:not([hidden]) + .mode, .diffbar .tool + .mode { margin-left: 0; }
+
+/* Images. The checkerboard stays light in both themes: dark ink in a logo vanishes on a dark one. */
+.checker { background: repeating-conic-gradient(#e3e6ea 0 25%, #ffffff 0 50%) 0 0 / 16px 16px; }
+.facts { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.facts .sep { padding: 0 4px; }
+.diffbar.imgbar { min-height: 30px; }
+.imgview { flex: 1; min-height: 0; overflow: auto; display: flex; padding: 24px; }
+.imgview .pic { margin: 0 auto; align-self: flex-start; }
+.pic { display: block; max-width: 100%; height: auto; outline: 1px solid var(--border); }
+.pic.zoomable { cursor: zoom-in; }
+.pic.sizeless { width: 100%; }
+/* At 100% the picture sits top left, so both scrollbars reach all of it. */
+.imgview.actual .pic { margin: 0; max-width: none; cursor: zoom-out; }
+
+/* Image diff: before and after side by side, stacked when the viewer is narrow. */
+.imgdiff { flex: 1; min-height: 0; overflow: auto; display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: minmax(100%, auto); }
+.side { min-width: 0; }
+.side + .side { border-left: 1px solid var(--border); }
+.side-head {
+  position: sticky; top: 0; z-index: 1; display: flex; align-items: center; gap: 6px; height: 22px; padding: 0 12px;
+  background: var(--bg); border-bottom: 1px solid var(--border); font-size: 12px; white-space: nowrap;
+}
+.side-head .tag { font-weight: 600; }
+.side.before .tag { color: var(--removed); }
+.side.after .tag { color: var(--added); }
+.side-head .ver { color: var(--muted); overflow: hidden; text-overflow: ellipsis; }
+.side-head .facts { margin-left: auto; padding-left: 8px; }
+.side-body { display: flex; justify-content: center; padding: 24px; }
+.side-body .pic { align-self: flex-start; }
+.side-none {
+  display: grid; place-items: center; width: 100%; max-width: var(--w, 320px); aspect-ratio: var(--ratio, 2);
+  border: 1px dashed var(--border); border-radius: 4px; color: var(--muted); font-size: 12px; text-align: center;
+}
+@container (max-width: 560px) {
+  .imgdiff { grid-template-columns: 1fr; grid-template-rows: none; align-content: start; }
+  .side + .side { border-left: 0; border-top: 1px solid var(--border); }
+}
 
 .md { position: relative; max-width: 900px; padding: 16px 32px 48px; font: 14px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; overflow-wrap: break-word; }
 .md > :first-child { margin-top: 0; }
