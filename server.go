@@ -37,6 +37,7 @@ func newServer(token string, port int, web fs.FS, h *hub, rts *roots, u *updater
 	mux.HandleFunc("GET /api/tree", a.tree)
 	mux.HandleFunc("GET /api/file", a.file)
 	mux.HandleFunc("GET /api/lines", a.lines)
+	mux.HandleFunc("GET /api/image", a.image)
 	mux.HandleFunc("GET /api/markdown", a.markdown)
 	mux.HandleFunc("GET /api/find", a.find)
 	mux.HandleFunc("GET /api/goto", a.gotoFile)
@@ -121,6 +122,8 @@ func fail(w http.ResponseWriter, err error) {
 		http.Error(w, "Path is outside this folder", http.StatusForbidden)
 	case errors.Is(err, fs.ErrNotExist):
 		http.Error(w, "Not found", http.StatusNotFound)
+	case errors.Is(err, errBadHash), errors.Is(err, errBadMode):
+		http.Error(w, err.Error(), http.StatusBadRequest)
 	default:
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
@@ -161,14 +164,20 @@ func (a *api) file(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
-	changes, err := lineChanges(root, r.URL.Query().Get("path"))
+	rel := r.URL.Query().Get("path")
+	changes, err := lineChanges(root, rel)
 	if err != nil {
 		changes = []lineChange{} // no marks outside git or before the first commit
 	}
+	var lfs int64
+	if imageType(rel) != "" {
+		lfs = fileLFS(path, idx.Size)
+	}
 	reply(w, struct {
 		fileInfo
+		LFS     int64        `json:"lfs,omitempty"`
 		Changes []lineChange `json:"changes"`
-	}{idx.fileInfo, changes})
+	}{idx.fileInfo, lfs, changes})
 }
 
 func (a *api) find(w http.ResponseWriter, r *http.Request) {
@@ -301,6 +310,9 @@ func (a *api) diff(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	highlightDiff(q.Get("path"), &res)
+	if imageType(q.Get("path")) != "" {
+		res.Image = diffImage(root, q.Get("path"), q.Get("orig"), q.Get("mode"), q.Get("hash"))
+	}
 	reply(w, res)
 }
 

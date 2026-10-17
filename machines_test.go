@@ -245,6 +245,12 @@ func TestMachineProxyPassesOnlySafeResponses(t *testing.T) {
 			w.Header().Set("Content-Type", "application/json")
 		case "/api/events":
 			w.Header().Set("Content-Type", "text/event-stream")
+		case "/api/png":
+			w.Header().Set("Content-Type", "image/png")
+		case "/api/svg":
+			w.Header().Set("Content-Type", "image/svg+xml")
+		case "/api/html":
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		default:
 			w.Header().Set("Content-Type", "text/javascript")
 		}
@@ -260,11 +266,14 @@ func TestMachineProxyPassesOnlySafeResponses(t *testing.T) {
 		"/api/json":   "application/json",
 		"/api/events": "text/event-stream",
 		"/api/x.js":   "text/plain; charset=utf-8",
+		"/api/png":    "image/png",
+		"/api/svg":    "image/svg+xml",
+		"/api/html":   "text/plain; charset=utf-8",
 	} {
 		w := httptest.NewRecorder()
 		p.ServeHTTP(w, httptest.NewRequest("GET", "/m/azvm"+path, nil))
 		h := w.Header()
-		if h.Get("Content-Type") != want || h.Get("X-Content-Type-Options") != "nosniff" || h.Get("Cache-Control") != "no-cache" {
+		if h.Get("Content-Type") != want || !sandboxed(h) || h.Get("Cache-Control") != "no-cache" {
 			t.Errorf("%s: %v", path, h)
 		}
 		for _, k := range []string{"Clear-Site-Data", "Refresh", "Location"} {
