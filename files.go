@@ -225,6 +225,11 @@ func (c *indexCache) get(path string) (*fileIndex, error) {
 	return idx, nil
 }
 
+// isBinary is git's own test: a NUL byte in the first 8000 bytes.
+func isBinary(head []byte) bool {
+	return bytes.IndexByte(head[:min(len(head), 8000)], 0) >= 0
+}
+
 func buildIndex(path string, st os.FileInfo) (*fileIndex, error) {
 	idx := &fileIndex{fileInfo: fileInfo{Size: st.Size(), Mtime: st.ModTime().UnixNano()}}
 	if st.Size() > maxFileSize {
@@ -239,7 +244,7 @@ func buildIndex(path string, st os.FileInfo) (*fileIndex, error) {
 
 	head := make([]byte, 8000)
 	n, _ := io.ReadFull(f, head)
-	if bytes.IndexByte(head[:n], 0) >= 0 { // git's own binary test
+	if isBinary(head[:n]) {
 		idx.Binary = true
 		return idx, nil
 	}

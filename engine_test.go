@@ -43,6 +43,7 @@ func fakeEngine(t *testing.T, body, pinned string, gate chan struct{}) (string, 
 func TestEngineDownload(t *testing.T) {
 	dir, n := fakeEngine(t, "draw()", "draw()", nil)
 	write(t, filepath.Join(dir, "test-1.0.0.js"), "old")
+	write(t, filepath.Join(dir, "test-themes-2.0.0.js"), "another engine")
 	c := newEngineCache()
 	p, err := c.path(engines["test"])
 	if err != nil {
@@ -53,6 +54,9 @@ func TestEngineDownload(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, "test-1.0.0.js")); !os.IsNotExist(err) {
 		t.Errorf("old version kept: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "test-themes-2.0.0.js")); err != nil {
+		t.Errorf("an engine whose name starts the same was deleted: %v", err)
 	}
 	if left, _ := filepath.Glob(filepath.Join(dir, ".download-*")); len(left) > 0 {
 		t.Errorf("temp files left: %v", left)
@@ -158,6 +162,11 @@ func TestDiagramFrame(t *testing.T) {
 	}
 	if csp := w.Header().Values("Content-Security-Policy"); len(csp) != 1 || csp[0] != frameCSP {
 		t.Errorf("frame CSP = %q", csp)
+	}
+	for _, want := range []string{"script-src 'self' 'wasm-unsafe-eval';", "connect-src 'self';", "default-src 'none';"} {
+		if !strings.Contains(frameCSP, want) {
+			t.Errorf("frame CSP lacks %s", want)
+		}
 	}
 	if csp := get("/").Header().Get("Content-Security-Policy"); !strings.Contains(csp, "frame-ancestors 'none'") {
 		t.Errorf("page CSP = %q", csp)

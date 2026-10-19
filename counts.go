@@ -108,7 +108,7 @@ func lineTotal(path string) int {
 	n, last, first := 0, byte('\n'), true
 	for {
 		k, err := f.Read(buf)
-		if first && bytes.IndexByte(buf[:min(k, 8000)], 0) >= 0 { // git's own binary test
+		if first && isBinary(buf[:k]) {
 			return 0
 		}
 		first = false

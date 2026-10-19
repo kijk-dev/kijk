@@ -1,12 +1,12 @@
-import { get, url, el } from './api.js';
+import { get, url, el, splitKey, base } from './api.js';
 
 export const LINE_HEIGHT = 18;
 // The same types as imageTypes in image.go.
 const IMAGE = /\.(png|jpe?g|gif|webp|svg|ico|bmp|avif)$/i;
 const SVG = /\.svg$/i;
 // The same types as diagramKinds in diagram.go.
-const DIAGRAM = /\.(mmd|mermaid)$/i;
-const RENDERED = /\.(md|markdown|svg|mmd|mermaid)$/i;
+const DIAGRAM = /\.(mmd|mermaid|puml|plantuml|pu|wsd)$/i;
+const RENDERED = /\.(md|markdown|svg|mmd|mermaid|puml|plantuml|pu|wsd)$/i;
 const CHUNK = 500;
 const FULL = 1000000; // diff context that returns the whole file
 let current = null; // the open file or diff; a newer open makes older fetches stale
@@ -386,7 +386,9 @@ function diagramZoom(file, doc, scroll, bar, keep) {
   bar.prepend(zoom);
   const update = () => {
     const img = doc.querySelector('.diagram img');
-    zoom.hidden = !img || (!actual && img.naturalWidth <= img.clientWidth);
+    // The box's width, not the picture's: at 100% the picture is never shrunk. Padding is PlantUML's card.
+    const room = img && img.parentElement.clientWidth - 2 * parseFloat(getComputedStyle(img).paddingLeft);
+    zoom.hidden = !img || (!actual && img.naturalWidth <= room);
     doc.classList.toggle('actual', actual);
     img?.classList.toggle('zoomable', !zoom.hidden);
     for (const [i, b] of [...zoom.children].entries()) b.setAttribute('aria-pressed', (i === 1) === actual);
@@ -463,7 +465,7 @@ function prepare(frag, file, md, doc) {
     pre.removeAttribute('class');
     pre.replaceWith(box);
     box.append(pre);
-    file.diagrams.push({ box, pre, kind, text: pre.textContent });
+    file.diagrams.push({ box, pre, kind, text: pre.textContent, root: file.root, path: file.path, openedAt: file.versions.at });
   }
   for (const img of frag.querySelectorAll('img')) {
     const src = img.getAttribute('src') || '';
@@ -558,16 +560,15 @@ async function load(file, c) {
 }
 
 // openDiff shows one file's change; mode is "staged", "unstaged", "untracked" or "commit".
-// keep is set when the diff reloads: {scrollTop, res}, res being fetched already. md holds the
-// view of an SVG or diagram diff: {source, toggle}.
+// keep is set when the diff reloads: {scrollTop, res, openedAt}. md is {source, toggle}.
 export async function openDiff(viewer, root, change, mode, context = 3, keep, md) {
-  const d = { kind: 'diff', starts: [], path: change.path, mode, hash: change.hash || '' };
+  const d = { kind: 'diff', starts: [], path: change.path, mode, hash: change.hash || '', openedAt: keep?.openedAt ?? Date.now() };
   const params = { root, path: change.path, orig: change.orig || '', mode, hash: change.hash || '', context };
   const again = (ctx, k) => openDiff(viewer, root, change, mode, ctx, k, md);
   d.reload = async () => {
     const res = await get('diff', params).catch(() => null);
     if (current !== d || (res && JSON.stringify(res) === d.json)) return;
-    again(context, { scrollTop: d.scroll?.scrollTop ?? 0, res });
+    again(context, { scrollTop: d.scroll?.scrollTop ?? 0, res, openedAt: d.openedAt });
   };
   current = d;
   let res;
@@ -586,7 +587,7 @@ export async function openDiff(viewer, root, change, mode, context = 3, keep, md
   if ((res.image || res.diagram) && !(modes && md.source)) {
     const bar = change.orig || modes ? el('div', 'diffbar', change.orig ? `Renamed from ${change.orig}` : '') : null;
     if (modes) bar.append(modes);
-    if (res.diagram) return diagramDiff(viewer, d, res.diagram, change, mode, bar);
+    if (res.diagram) return diagramDiff(viewer, d, res.diagram, root, change, mode, bar);
     return imageDiff(viewer, d, res.image, root, change, mode, bar);
   }
   const say = text => {
@@ -703,7 +704,7 @@ function sideHead(i, versions) {
 }
 
 // diagramDiff draws the before and after diagrams side by side, in the image diff layout.
-async function diagramDiff(viewer, d, diagram, change, mode, bar) {
+async function diagramDiff(viewer, d, diagram, root, change, mode, bar) {
   const versions = sideNames(mode, diagram.parent, change);
   const grid = el('div', 'imgdiff');
   d.diagrams = [];
@@ -719,7 +720,7 @@ async function diagramDiff(viewer, d, diagram, change, mode, bar) {
       const box = el('div', 'diagram');
       box.append(pre);
       body.append(box);
-      d.diagrams.push({ box, pre, kind: diagram.kind, text: s.text });
+      d.diagrams.push({ box, pre, kind: diagram.kind, text: s.text, root, path: i === 0 && change.orig ? change.orig : change.path, openedAt: d.openedAt });
     }
     side.append(sideHead(i, versions), body);
     grid.append(side);
@@ -732,9 +733,9 @@ async function diagramDiff(viewer, d, diagram, change, mode, bar) {
 
 // Diagrams are drawn in one hidden frame per window, with its own CSP, and come back as SVG.
 // The frame always comes from the local kijk, also for a remote folder.
-const ENGINES = { mermaid: 'Mermaid' };
+const ENGINES = { mermaid: 'Mermaid', plantuml: 'PlantUML' };
 const DRAWN_MAX = 100;
-const drawn = new Map(); // kind, theme and text -> {promise, result}, oldest first
+const drawn = new Map(); // key from drawDiagram -> {key, promise, result}, oldest first
 const waiting = new Map();
 let frame = null;
 let frameReady = null;
@@ -773,22 +774,24 @@ function themeVars() {
   };
 }
 
-// drawDiagram gives {svg, width, height} or {error}. An unchanged diagram reuses its SVG, so a
-// reload does not flicker; a failed download is not kept, so the next open tries again.
-function drawDiagram(kind, text) {
-  const key = `${kind}\n${darkTheme.matches}\n${text}`;
+// drawDiagram gives {svg, width, height, includes} or {error}. A failed download is not kept, so
+// the next open tries again. PlantUML's key has the view's open time: its includes may change unseen.
+function drawDiagram({ kind, text, root, path, openedAt }) {
+  const plantuml = kind === 'plantuml';
+  const key = `${kind}\n${plantuml ? `${root}\n${path}\n${openedAt}` : darkTheme.matches}\n${text}`;
   let entry = drawn.get(key);
   if (entry) {
     drawn.delete(key);
     drawn.set(key, entry);
     return entry;
   }
-  const vars = themeVars();
-  entry = {};
+  const place = plantuml && splitKey(root);
+  const msg = plantuml ? { kind, text, base: base(place.machine), root: place.root, path } : { kind, text, vars: themeVars() };
+  entry = { key };
   entry.promise = diagramFrame().then(() => new Promise(resolve => {
     const id = ++drawId;
     waiting.set(id, resolve);
-    frame.contentWindow.postMessage({ id, kind, text, vars }, location.origin);
+    frame.contentWindow.postMessage({ id, ...msg }, location.origin);
   })).then(r => {
     entry.result = r;
     if (r.error?.startsWith('Could not download') && drawn.get(key) === entry) drawn.delete(key);
@@ -803,12 +806,12 @@ function drawDiagram(kind, text) {
 // be, its block shows the text.
 function drawDiagrams(view) {
   return Promise.all((view.diagrams || []).map(async x => {
-    const entry = drawDiagram(x.kind, x.text);
+    const entry = x.entry = drawDiagram(x);
     const r = entry.result ?? await entry.promise;
     if (r.error) {
       x.box.replaceChildren(el('p', 'diagram-note', r.error), x.pre);
     } else {
-      const img = el('img', 'diagram-pic');
+      const img = el('img', `diagram-pic ${x.kind}`);
       img.alt = `${ENGINES[x.kind]} diagram`;
       if (r.width) [img.width, img.height] = [r.width, r.height];
       img.src = `data:image/svg+xml,${encodeURIComponent(r.svg)}`;
@@ -835,10 +838,13 @@ export function setViewScroll(top) {
 }
 
 // refreshView reloads the open file when it or git changed (its change marks), and the open diff on any change.
-// In rendered markdown, an image that changed reloads on its own, so the page does not move.
+// A changed image, or a diagram's changed include, redraws on its own, so the page does not move.
 export function refreshView(change) {
   if (!current?.reload) return;
   for (const pic of current.pics || []) if (change.all || change.paths.includes(pic.path)) pic.reload();
+  const stale = (current.diagrams || []).filter(x => x.entry?.result?.includes?.some(p => change.all || change.paths.includes(p)));
+  for (const x of stale) if (drawn.get(x.entry.key) === x.entry) drawn.delete(x.entry.key);
+  if (stale.length) drawDiagrams(current);
   if (current.kind === 'file' && !change.all && !change.git && !change.paths.includes(current.path)) return;
   current.reload();
 }

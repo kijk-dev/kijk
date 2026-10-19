@@ -25,8 +25,28 @@ func TestMermaidBlock(t *testing.T) {
 	}
 }
 
+func TestPlantUMLBlock(t *testing.T) {
+	src := "```puml\nAlice -> Bob\n```\n\n```plantuml\n@startuml\nA -> B\n@enduml\n```\n\n```graphviz\ndigraph { a -> b }\n```\n"
+	out, err := renderMarkdown([]byte(src))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`<pre class="diagram plantuml" data-lines="1-4"><code>Alice -&gt; Bob</code></pre>`,
+		`<pre class="diagram plantuml" data-lines="5-10"><code>@startuml`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing\n%s\nin\n%s", want, out)
+		}
+	}
+	if strings.Count(out, "diagram") != 2 || !strings.Contains(out, "<pre data-lines=\"11-13\"><code>") {
+		t.Errorf("a graphviz block is not colored code:\n%s", out)
+	}
+}
+
 func TestDiagramKind(t *testing.T) {
-	for p, want := range map[string]string{"a/flow.mmd": "mermaid", "FLOW.MMD": "mermaid", "x.Mermaid": "mermaid", "x.md": "", "mmd": ""} {
+	for p, want := range map[string]string{"a/flow.mmd": "mermaid", "FLOW.MMD": "mermaid", "x.Mermaid": "mermaid", "x.md": "", "mmd": "",
+		"docs/Login.PUML": "plantuml", "a.plantuml": "plantuml", "a.pu": "plantuml", "a.wsd": "plantuml", "common.iuml": ""} {
 		if got := diagramKind(p); got != want {
 			t.Errorf("%s: %q", p, got)
 		}
@@ -93,6 +113,36 @@ func TestDiagramDiff(t *testing.T) {
 		}
 		if got := side(res.Diagram.Before) + " | " + side(res.Diagram.After); got != c.want || res.Diagram.Kind != "mermaid" || len(res.Hunks) == 0 {
 			t.Errorf("%s %s: %s, %d hunks, want %s", c.path, c.mode, got, len(res.Hunks), c.want)
+		}
+	}
+}
+
+func TestFileText(t *testing.T) {
+	dir := t.TempDir()
+	outside := t.TempDir()
+	write(t, filepath.Join(dir, "docs", "styles.puml"), "skinparam x y\n")
+	write(t, filepath.Join(dir, "logo.png"), "PNG\x00\x01")
+	write(t, filepath.Join(dir, "big.puml"), strings.Repeat("x", textMaxBytes+1))
+	write(t, filepath.Join(outside, "secret"), "key")
+	get := imageServer(t, dir)
+	w := get("/api/text", url.Values{"path": {"docs/styles.puml"}})
+	var res struct{ Text string }
+	if json.Unmarshal(w.Body.Bytes(), &res); w.Code != http.StatusOK || res.Text != "skinparam x y\n" {
+		t.Errorf("text file: %d %q", w.Code, w.Body.String())
+	}
+	rel, _ := filepath.Rel(dir, filepath.Join(outside, "secret"))
+	for _, c := range []struct {
+		path string
+		code int
+	}{
+		{filepath.ToSlash(rel), http.StatusForbidden},
+		{"logo.png", http.StatusUnsupportedMediaType},
+		{"big.puml", http.StatusRequestEntityTooLarge},
+		{"docs", http.StatusNotFound},
+		{"nope.puml", http.StatusNotFound},
+	} {
+		if w := get("/api/text", url.Values{"path": {c.path}}); w.Code != c.code || strings.Contains(w.Body.String(), "key") {
+			t.Errorf("%s: %d %q, want %d", c.path, w.Code, w.Body.String(), c.code)
 		}
 	}
 }
