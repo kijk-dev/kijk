@@ -74,7 +74,8 @@ func markLines(parent ast.Node, end int, top bool, lineOf func(int) int) {
 	}
 }
 
-// codeRenderer colors code blocks with chroma, in the same classes as the file view.
+// codeRenderer colors code blocks with chroma, in the same classes as the file view, and marks
+// diagram blocks for the page to draw.
 type codeRenderer struct{}
 
 func (codeRenderer) RegisterFuncs(r renderer.NodeRendererFuncRegisterer) {
@@ -86,18 +87,22 @@ func renderCode(w util.BufWriter, src []byte, n ast.Node, entering bool) (ast.Wa
 	if !entering {
 		return ast.WalkContinue, nil
 	}
-	var lexer chroma.Lexer
-	if f, ok := n.(*ast.FencedCodeBlock); ok {
-		if lang := f.Language(src); lang != nil {
-			if l := lexers.Get(string(lang)); l != nil {
-				lexer = chroma.Coalesce(l)
-			}
-		}
-	}
 	lines := make([]string, n.Lines().Len())
 	for i := range lines {
 		seg := n.Lines().At(i)
 		lines[i] = strings.Repeat(" ", seg.Padding) + strings.TrimRight(string(seg.Value(src)), "\r\n")
+	}
+	var lexer chroma.Lexer
+	if f, ok := n.(*ast.FencedCodeBlock); ok {
+		if lang := f.Language(src); lang != nil {
+			if _, ok := engines[string(lang)]; ok {
+				writeDiagram(w, string(lang), func() { html.RenderAttributes(w, n, nil) }, []byte(strings.Join(lines, "\n")))
+				return ast.WalkSkipChildren, nil
+			}
+			if l := lexers.Get(string(lang)); l != nil {
+				lexer = chroma.Coalesce(l)
+			}
+		}
 	}
 	w.WriteString("<pre")
 	html.RenderAttributes(w, n, nil)

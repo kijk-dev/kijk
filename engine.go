@@ -1,0 +1,156 @@
+package main
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"io"
+	"log"
+	"net/http"
+	"os"
+	"path/filepath"
+	"sync"
+	"time"
+)
+
+// engine is a diagram engine. It is downloaded on first use rather than embedded, so kijk does
+// not grow by its size; the SHA-256 makes the source irrelevant.
+type engine struct {
+	name, label, version, url, sum string
+}
+
+var engines = map[string]engine{
+	"mermaid": {
+		name:    "mermaid",
+		label:   "Mermaid",
+		version: "12.2.0",
+		url:     "https://cdn.jsdelivr.net/npm/mermaid@12.2.0/dist/mermaid.min.js",
+		sum:     "a8a6a6f805b074a8261a2825c86f99c8054acb3b35f50bb7e24a4f9f2c3c3b9f",
+	},
+}
+
+const (
+	engineMaxBytes = 16 << 20
+	engineTimeout  = 60 * time.Second
+	engineRetry    = time.Minute // a page with ten diagrams makes one try, not ten
+)
+
+// src is the URL the frame loads the engine from; a new version gets a new URL, so the
+// browser's copy never goes stale.
+func (e engine) src() string { return "/api/engine/" + e.name + "?v=" + e.version }
+
+type engineSlot struct {
+	mu     sync.Mutex // one download at a time
+	failed time.Time
+}
+
+// engineCache keeps the engines in the user cache folder.
+type engineCache struct {
+	slots map[string]*engineSlot
+	now   func() time.Time
+}
+
+func newEngineCache() *engineCache {
+	c := &engineCache{slots: map[string]*engineSlot{}, now: time.Now}
+	for name := range engines {
+		c.slots[name] = &engineSlot{}
+	}
+	return c
+}
+
+// path gives the engine's file, downloaded and checked first when it is not in the cache.
+func (c *engineCache) path(e engine) (string, error) {
+	dir, err := cacheDir()
+	if err != nil {
+		return "", err
+	}
+	dir = filepath.Join(dir, "kijk", "engines")
+	p := filepath.Join(dir, e.name+"-"+e.version+".js")
+	s := c.slots[e.name]
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if st, err := os.Stat(p); err == nil && st.Size() > 0 {
+		return p, nil
+	}
+	if c.now().Sub(s.failed) < engineRetry {
+		return "", errors.New("the last download failed less than a minute ago")
+	}
+	if err := downloadEngine(e, dir, p); err != nil {
+		log.Printf("could not download %s: %v", e.label, err)
+		s.failed = c.now()
+		return "", err
+	}
+	old, _ := filepath.Glob(filepath.Join(dir, e.name+"-*.js"))
+	for _, o := range old {
+		if o != p {
+			os.Remove(o)
+		}
+	}
+	return p, nil
+}
+
+func downloadEngine(e engine, dir, p string) error {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	f, err := os.CreateTemp(dir, ".download-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	defer f.Close()
+	req, err := http.NewRequest("GET", e.url, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("User-Agent", "kijk/"+kijkVersion)
+	resp, err := (&http.Client{Timeout: engineTimeout}).Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("HTTP %d from %s", resp.StatusCode, e.url)
+	}
+	h := sha256.New()
+	n, err := io.Copy(io.MultiWriter(f, h), io.LimitReader(resp.Body, engineMaxBytes+1))
+	if err != nil {
+		return err
+	}
+	if n > engineMaxBytes {
+		return fmt.Errorf("%s is larger than %d bytes", e.url, engineMaxBytes)
+	}
+	if got := hex.EncodeToString(h.Sum(nil)); got != e.sum {
+		return fmt.Errorf("%s has SHA-256 %s, want %s", e.url, got, e.sum)
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(f.Name(), p)
+}
+
+// serve answers GET /api/engine/{name}. Only the local kijk has this route: a remote kijk never
+// downloads an engine.
+func (c *engineCache) serve(w http.ResponseWriter, r *http.Request) {
+	e, ok := engines[r.PathValue("name")]
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	p, err := c.path(e)
+	if err != nil {
+		http.Error(w, "Could not download "+e.label, http.StatusBadGateway)
+		return
+	}
+	f, err := os.Open(p)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	defer f.Close()
+	w.Header().Set("Content-Type", "text/javascript")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Cache-Control", "private, max-age=31536000, immutable")
+	http.ServeContent(w, r, "", time.Time{}, f)
+}
