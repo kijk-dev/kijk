@@ -23,9 +23,8 @@ func isAsciiDoc(p string) bool {
 	return false
 }
 
-// renderAsciiDoc renders the common parts of AsciiDoc in the shape of renderMarkdown: each
-// top-level block, list item and description list part carries data-lines="first-last".
-// Every piece of the file's text is escaped, so the file cannot add HTML.
+// renderAsciiDoc renders the common parts of AsciiDoc in the shape of renderMarkdown. Every piece
+// of the file's text is escaped, so the file cannot add HTML.
 func renderAsciiDoc(src []byte) string {
 	raw := strings.Split(string(src), "\n")
 	if len(raw) > 1 && raw[len(raw)-1] == "" {
@@ -147,36 +146,34 @@ func (r *adocReader) next() (adocLine, bool) {
 	return l, ok
 }
 
-// adocMarks are the built-in attributes for characters that mark up text. Until the text is
-// escaped they stand in as private-use runes, so {asterisk} never starts bold.
-var adocMarks = [][2]string{
+// adocSyntaxChars are the built-in attributes for characters that mark up text. Until the text is
+// escaped they stand in as Unicode noncharacters, so {asterisk} never starts bold.
+var adocSyntaxChars = [][2]string{
 	{"plus", "+"}, {"startsb", "["}, {"endsb", "]"}, {"vbar", "|"}, {"caret", "^"}, {"asterisk", "*"},
 	{"tilde", "~"}, {"apostrophe", "'"}, {"backslash", `\`}, {"backtick", "`"}, {"lt", "<"}, {"gt", ">"},
 	{"amp", "&"}, {"quot", `"`}, {"pp", "++"}, {"cpp", "C++"},
 }
 
-const adocMark0 = '\uE000'
+const adocSyntax0 = '\uFDD0'
 
 func adocDefaults() map[string]string {
 	a := map[string]string{"nbsp": "\u00a0", "sp": " ", "empty": "", "blank": "", "zwsp": "\u200b"}
-	for i, m := range adocMarks {
-		a[m[0]] = string(rune(adocMark0 + i))
+	for i, m := range adocSyntaxChars {
+		a[m[0]] = string(rune(adocSyntax0 + i))
 	}
 	return a
 }
 
-// adocEsc escapes text for HTML, with the characters of adocMarks put back.
-func adocEsc(s string) string { return html.EscapeString(adocUnmark(s)) }
+func adocEsc(s string) string { return html.EscapeString(adocUnhideSyntax(s)) }
 
-// adocUnmark puts back the characters of adocMarks.
-func adocUnmark(s string) string {
-	if !strings.ContainsFunc(s, adocIsMark) {
+func adocUnhideSyntax(s string) string {
+	if !strings.ContainsFunc(s, adocIsHiddenSyntax) {
 		return s
 	}
 	var b strings.Builder
 	for _, r := range s {
-		if adocIsMark(r) {
-			b.WriteString(adocMarks[r-adocMark0][1])
+		if adocIsHiddenSyntax(r) {
+			b.WriteString(adocSyntaxChars[r-adocSyntax0][1])
 		} else {
 			b.WriteRune(r)
 		}
@@ -184,7 +181,9 @@ func adocUnmark(s string) string {
 	return b.String()
 }
 
-func adocIsMark(r rune) bool { return r >= adocMark0 && int(r-adocMark0) < len(adocMarks) }
+func adocIsHiddenSyntax(r rune) bool {
+	return r >= adocSyntax0 && int(r-adocSyntax0) < len(adocSyntaxChars)
+}
 
 // adocNode is a block of the output. Inline text is rendered last, when every section is known,
 // so cross references can point forward.
@@ -532,10 +531,10 @@ func (p *adocParser) body(m *adocMeta, l adocLine) []*adocNode {
 	}
 	if s[0] == ' ' || s[0] == '\t' { // an indented paragraph is literal
 		lines := p.until(true)
-		if m.style() == "source" || m.style() == "listing" || m.style() == "literal" || isDiagram(m.style()) {
+		if adocCodeStyle(m.style()) {
 			return p.titled(m, first, p.code(m, adocDedent(lines), ""), l.n)
 		}
-		return p.titled(m, first, &adocNode{tag: "pre", code: &adocCode{lines: adocDedent(lines)}}, l.n)
+		return p.titled(m, first, adocPre(adocDedent(lines)), l.n)
 	}
 	style := m.style()
 	label := ""
@@ -547,10 +546,10 @@ func (p *adocParser) body(m *adocMeta, l adocLine) []*adocNode {
 		lines[0] = strings.TrimLeft(lines[0][len(label)+1:], " \t")
 	}
 	switch {
-	case style == "source" || style == "listing" || style == "literal" || isDiagram(style):
+	case adocCodeStyle(style):
 		return p.titled(m, first, p.code(m, lines, ""), l.n)
 	case style == "pass" || style == "stem" || style == "latexmath" || style == "asciimath":
-		return p.titled(m, first, &adocNode{tag: "pre", code: &adocCode{lines: lines}}, l.n)
+		return p.titled(m, first, adocPre(lines), l.n)
 	}
 	ctx := p.ctx()
 	ctx.hard = ctx.hard || m.has("hardbreaks") || style == "verse"
@@ -570,6 +569,16 @@ func (p *adocParser) body(m *adocMeta, l adocLine) []*adocNode {
 func isDiagram(style string) bool {
 	_, ok := diagramFences[style]
 	return ok
+}
+
+func adocCodeStyle(style string) bool {
+	return style == "source" || style == "listing" || style == "literal" || isDiagram(style)
+}
+
+func adocPre(lines []string) *adocNode { return &adocNode{tag: "pre", code: &adocCode{lines: lines}} }
+
+func (p *adocParser) blockTitle(m *adocMeta, first int) *adocNode {
+	return &adocNode{tag: "p", class: "block-title", first: first, text: p.sub(m.title), ctx: p.ctx()}
 }
 
 // until reads the lines of a paragraph: up to a blank line, a block attribute line, a delimiter
@@ -599,7 +608,7 @@ func (p *adocParser) titled(m *adocMeta, first int, b *adocNode, own int) []*ado
 		return []*adocNode{b}
 	}
 	b.first = own
-	return []*adocNode{{tag: "p", class: "block-title", first: first, text: p.sub(m.title), ctx: p.ctx()}, b}
+	return []*adocNode{p.blockTitle(m, first), b}
 }
 
 // inner is the block title of a box block, such as an admonition, which shows inside it.
@@ -607,7 +616,7 @@ func (p *adocParser) inner(m *adocMeta) []*adocNode {
 	if m.title == "" {
 		return nil
 	}
-	return []*adocNode{{tag: "p", class: "block-title", text: p.sub(m.title), ctx: p.ctx()}}
+	return []*adocNode{p.blockTitle(m, 0)}
 }
 
 func (p *adocParser) admonition(m *adocMeta, first int, label string, kids []*adocNode) *adocNode {
@@ -637,7 +646,7 @@ func (p *adocParser) code(m *adocMeta, lines []string, fence string) *adocNode {
 	}
 	if strings.Contains(m.named["subs"], "attributes") {
 		for i, l := range lines {
-			lines[i] = adocUnmark(p.sub(l))
+			lines[i] = adocUnhideSyntax(p.sub(l))
 		}
 	}
 	style := m.style()
@@ -690,9 +699,9 @@ func (p *adocParser) delimited(m *adocMeta, l adocLine, d byte, first int) []*ad
 		if d == '-' || style == "source" || isDiagram(style) {
 			return p.titled(m, first, p.code(m, lines, ""), l.n)
 		}
-		return p.titled(m, first, &adocNode{tag: "pre", code: &adocCode{lines: lines}}, l.n)
+		return p.titled(m, first, adocPre(lines), l.n)
 	case '+': // passthrough shows as text
-		return p.titled(m, first, &adocNode{tag: "pre", code: &adocCode{lines: p.verbatim(close)}}, l.n)
+		return p.titled(m, first, adocPre(p.verbatim(close)), l.n)
 	case '|':
 		return p.titled(m, first, p.table(m, close), l.n)
 	}
@@ -702,7 +711,7 @@ func (p *adocParser) delimited(m *adocMeta, l adocLine, d byte, first int) []*ad
 		para := &adocNode{tag: "p", text: p.sub(strings.Join(p.verbatim(close), "\n")), ctx: ctx}
 		return []*adocNode{p.quote(m, first, []*adocNode{para})}
 	}
-	if d == 'o' && (style == "source" || style == "listing" || style == "literal" || isDiagram(style)) {
+	if d == 'o' && adocCodeStyle(style) {
 		return p.titled(m, first, p.code(m, p.verbatim(close), ""), l.n)
 	}
 	kids := p.blocks(close)
@@ -718,7 +727,7 @@ func (p *adocParser) delimited(m *adocMeta, l adocLine, d byte, first int) []*ad
 		return []*adocNode{{tag: "blockquote", class: "sidebar", first: first, kids: slices.Concat(p.inner(m), kids)}}
 	}
 	if m.title != "" { // an open block adds nothing but its title
-		kids = append([]*adocNode{{tag: "p", class: "block-title", first: first, text: p.sub(m.title), ctx: p.ctx()}}, kids...)
+		kids = append([]*adocNode{p.blockTitle(m, first)}, kids...)
 	}
 	return kids
 }
@@ -731,7 +740,7 @@ func (p *adocParser) section(m *adocMeta, level int, raw string, first int) []*a
 		}
 		raw = strings.TrimLeft(raw[len(a[0]):], " \t")
 	}
-	h := adocInline{imagesdir: p.r.attrs["imagesdir"]}.render(p.sub(raw))
+	h := adocInline{adocCtx: adocCtx{imagesdir: p.r.attrs["imagesdir"]}}.render(p.sub(raw))
 	plain := html.UnescapeString(adocTagRx.ReplaceAllString(h, ""))
 	if id == "" {
 		id = p.autoID(h)
@@ -1039,7 +1048,8 @@ func (p *adocParser) table(m *adocMeta, close string) *adocNode {
 var adocSpecRx = regexp.MustCompile(`^(\d+\*|\d*(\.\d+)?\+)?[<^>]?(\.[<^>])?[adehlmsv]?$`)
 
 // adocCells splits a table line at each | that starts a cell. pre is the text before the first.
-// Cell specs, such as 2+ or a, are dropped: they show their cell as plain text.
+// Cell specs, such as 2+ or a, are dropped: they show their cell as plain text. A spec starts the
+// line or follows a space, so the cell in |s|seconds keeps its s.
 func adocCells(s string) (pre string, cells []string) {
 	var b strings.Builder
 	cur := -1
@@ -1047,7 +1057,7 @@ func adocCells(s string) (pre string, cells []string) {
 		seg := b.String()
 		b.Reset()
 		cut := strings.LastIndexAny(seg, " \t") + 1
-		if spec := seg[cut:]; spec != "" && adocSpecRx.MatchString(spec) {
+		if spec := seg[cut:]; spec != "" && (cut > 0 || cur < 0) && adocSpecRx.MatchString(spec) {
 			seg = seg[:cut]
 		}
 		return seg
@@ -1137,7 +1147,7 @@ func (w adocWriter) node(n *adocNode) {
 	}
 	if c := n.code; c != nil {
 		if c.diagram {
-			writeCode(w.Writer, c.lang, c.lines, attrs)
+			writeDiagram(w.Writer, diagramFences[c.lang], attrs, []byte(strings.Join(c.lines, "\n")))
 		} else {
 			writeColored(w.Writer, c.lang, c.lines, attrs)
 		}
@@ -1152,7 +1162,7 @@ func (w adocWriter) node(n *adocNode) {
 	}
 	w.WriteString(n.html)
 	if n.text != "" {
-		w.WriteString(adocInline{p: w.p, imagesdir: n.ctx.imagesdir, hard: n.ctx.hard}.render(n.text))
+		w.WriteString(adocInline{adocCtx: n.ctx, p: w.p}.render(n.text))
 	}
 	if len(n.kids) > 0 && n.tag != "li" && n.tag != "dd" {
 		w.WriteString("\n")
@@ -1165,11 +1175,10 @@ func (w adocWriter) node(n *adocNode) {
 
 // adocInline renders inline text: marks, links, cross references, images and passthroughs.
 type adocInline struct {
-	p         *adocParser // for cross references; nil while parsing, when they show as text
-	imagesdir string
-	hard      bool
-	depth     int
-	inLink    bool
+	adocCtx
+	p      *adocParser // for cross references; nil while parsing, when they show as text
+	depth  int
+	inLink bool
 }
 
 const adocMaxDepth = 8
@@ -1544,7 +1553,7 @@ func (c adocInline) xref(target, text string) string {
 	return `<a href="#` + adocEsc(sec.slug) + `">` + label(sec.title) + `</a>`
 }
 
-// adocImage writes an image; a relative path goes below imagesdir.
+// adocImage returns an img tag; a relative path goes below imagesdir.
 func adocImage(target, attrs, dir string, inLink bool) string {
 	pos, named := adocAttrList(attrs)
 	alt := named["alt"]
@@ -1574,7 +1583,7 @@ var (
 	adocCtrlRx   = regexp.MustCompile(`[\x00-\x20]`)
 )
 
-// adocSafeURL lets through relative paths and web and mail links, as safeURL in view.js does.
+// adocSafeURL lets through relative paths and web and mail links: safeURL in view.js, without data:.
 func adocSafeURL(u string) bool {
 	u = strings.ToLower(adocCtrlRx.ReplaceAllString(u, ""))
 	return !adocSchemeRx.MatchString(u) || strings.HasPrefix(u, "http:") || strings.HasPrefix(u, "https:") || strings.HasPrefix(u, "mailto:")

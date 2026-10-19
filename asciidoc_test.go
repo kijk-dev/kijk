@@ -155,6 +155,7 @@ func TestAsciiDocAttributes(t *testing.T) {
 			"<code>{url-repo}</code>",
 		})
 	adocHas(t, ":v: 2.0\n\n[subs=attributes+]\n----\ngem 'x', '{v}' {lt}\n----\n", []string{"<code>gem 'x', '2.0' &lt;</code>"})
+	adocHas(t, "Icon  font.\n", []string{"Icon  font."})
 }
 
 func TestAsciiDocConditionals(t *testing.T) {
@@ -194,7 +195,7 @@ func TestAsciiDocSectionIDs(t *testing.T) {
 		`<a href="install.adoc">Linux install</a>, <a href="other.adoc">Other</a>, <a href="guide.adoc">guide.adoc</a>, <a href="#set-up">Here</a>`,
 		`<h3 data-lines="11-12">In Line</h3>`,
 	})
-	// The page's slug in view.js, run in node for each title.
+	// The want values are what slug in view.js gives.
 	for title, want := range map[string]string{"Getting Started!": "getting-started", "Über  die Größe": "über--die-größe",
 		"C++ & Go: 2 ways": "c--go-2-ways", "  Trim me  ": "trim-me", "日本語 タイトル": "日本語-タイトル", "İstanbul": "istanbul",
 		"snake_case-and-dash": "snake_case-and-dash", "Tab\there": "tab-here", "a b\ufeffc\u0085d": "a-b-cd"} {
@@ -222,6 +223,7 @@ func TestAsciiDocTables(t *testing.T) {
 		{"cell text on the next line and specs", "|===\n| a | b\nmore\n2+| wide a| *plain* \\| pipe\n|===\n",
 			[]string{"<td>b\nmore</td>", "<td>wide</td>", "<td><strong>plain</strong> | pipe</td>"}, []string{"2+", "a|"}},
 		{"text before the first cell", "|===\nloose\n|===\n", []string{"<td>loose</td>"}, nil},
+		{"one-letter cells", "|===\n|s|seconds\n|a|b\n|===\n", []string{"<td>s</td>\n<td>seconds</td>", "<td>a</td>\n<td>b</td>"}, nil},
 	} {
 		t.Run(c.name, func(t *testing.T) { adocHas(t, c.src, c.want, c.bad...) })
 	}
@@ -269,7 +271,7 @@ func TestAsciiDocRoute(t *testing.T) {
 	}
 }
 
-// A 2 MB file renders in well under a second; quadratic work would take minutes.
+// Quadratic work on a 2 MB file would take minutes.
 func TestAsciiDocSpeed(t *testing.T) {
 	if testing.Short() {
 		t.Skip("slow")
