@@ -36,7 +36,7 @@ func diagramKind(p string) string {
 	return diagramKinds[strings.ToLower(path.Ext(p))]
 }
 
-// diagramMaxChars is Mermaid's maxTextSize: a longer diagram cannot be drawn. PlantUML uses it too.
+// diagramMaxChars is Mermaid's maxTextSize; diagram.js holds it too, for PlantUML.
 const diagramMaxChars = 50000
 
 // writeDiagram writes a diagram block as uncolored, escaped text: the page draws it. Markdown
@@ -126,9 +126,8 @@ func diagramText(root string, b *blobRef) *diagramSide {
 	return &diagramSide{Text: string(src)}
 }
 
-// frameCSP lets Mermaid's inline styles in, which the page's CSP blocks, and runs only kijk's
-// own scripts. 'wasm-unsafe-eval' is for PlantUML's Graphviz and allows no eval of JavaScript;
-// connect-src 'self' is for PlantUML includes, read through kijk's API.
+// frameCSP lets in Mermaid's inline styles and PlantUML's WebAssembly, which the page's CSP
+// blocks. Its only network is kijk's own API, for PlantUML includes.
 const frameCSP = "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'unsafe-inline'; img-src data:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'"
 
 // serveFrame answers GET /diagram: the frame that draws diagrams, with the engine URLs filled in.

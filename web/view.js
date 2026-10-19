@@ -386,8 +386,9 @@ function diagramZoom(file, doc, scroll, bar, keep) {
   bar.prepend(zoom);
   const update = () => {
     const img = doc.querySelector('.diagram img');
-    const pad = img ? parseFloat(getComputedStyle(img).paddingLeft) * 2 : 0; // PlantUML's card
-    zoom.hidden = !img || (!actual && img.naturalWidth <= img.clientWidth - pad);
+    // The box's width, not the picture's: at 100% the picture is never shrunk. Padding is PlantUML's card.
+    const room = img && img.parentElement.clientWidth - 2 * parseFloat(getComputedStyle(img).paddingLeft);
+    zoom.hidden = !img || (!actual && img.naturalWidth <= room);
     doc.classList.toggle('actual', actual);
     img?.classList.toggle('zoomable', !zoom.hidden);
     for (const [i, b] of [...zoom.children].entries()) b.setAttribute('aria-pressed', (i === 1) === actual);
@@ -464,7 +465,7 @@ function prepare(frag, file, md, doc) {
     pre.removeAttribute('class');
     pre.replaceWith(box);
     box.append(pre);
-    file.diagrams.push({ box, pre, kind, text: pre.textContent, root: file.root, path: file.path, at: file.versions.at });
+    file.diagrams.push({ box, pre, kind, text: pre.textContent, root: file.root, path: file.path, openedAt: file.versions.at });
   }
   for (const img of frag.querySelectorAll('img')) {
     const src = img.getAttribute('src') || '';
@@ -559,16 +560,15 @@ async function load(file, c) {
 }
 
 // openDiff shows one file's change; mode is "staged", "unstaged", "untracked" or "commit".
-// keep is set when the diff reloads: {scrollTop, res, at}, res being fetched already and at the
-// time the diff opened. md holds the view of an SVG or diagram diff: {source, toggle}.
+// keep is set when the diff reloads: {scrollTop, res, openedAt}. md is {source, toggle}.
 export async function openDiff(viewer, root, change, mode, context = 3, keep, md) {
-  const d = { kind: 'diff', starts: [], path: change.path, mode, hash: change.hash || '', at: keep?.at ?? Date.now() };
+  const d = { kind: 'diff', starts: [], path: change.path, mode, hash: change.hash || '', openedAt: keep?.openedAt ?? Date.now() };
   const params = { root, path: change.path, orig: change.orig || '', mode, hash: change.hash || '', context };
   const again = (ctx, k) => openDiff(viewer, root, change, mode, ctx, k, md);
   d.reload = async () => {
     const res = await get('diff', params).catch(() => null);
     if (current !== d || (res && JSON.stringify(res) === d.json)) return;
-    again(context, { scrollTop: d.scroll?.scrollTop ?? 0, res, at: d.at });
+    again(context, { scrollTop: d.scroll?.scrollTop ?? 0, res, openedAt: d.openedAt });
   };
   current = d;
   let res;
@@ -720,7 +720,7 @@ async function diagramDiff(viewer, d, diagram, root, change, mode, bar) {
       const box = el('div', 'diagram');
       box.append(pre);
       body.append(box);
-      d.diagrams.push({ box, pre, kind: diagram.kind, text: s.text, root, path: i === 0 && change.orig ? change.orig : change.path, at: d.at });
+      d.diagrams.push({ box, pre, kind: diagram.kind, text: s.text, root, path: i === 0 && change.orig ? change.orig : change.path, openedAt: d.openedAt });
     }
     side.append(sideHead(i, versions), body);
     grid.append(side);
@@ -774,13 +774,11 @@ function themeVars() {
   };
 }
 
-// drawDiagram gives {svg, width, height} or {error}, and the paths a PlantUML diagram included.
-// An unchanged diagram reuses its SVG, so a reload does not flicker; a failed download is not
-// kept, so the next open tries again. PlantUML keeps its own colors, so its key has no theme, but
-// its includes may change unseen while another folder is open, so it has the view's open time.
-function drawDiagram({ kind, text, root, path, at }) {
+// drawDiagram gives {svg, width, height, includes} or {error}. A failed download is not kept, so
+// the next open tries again. PlantUML's key has the view's open time: its includes may change unseen.
+function drawDiagram({ kind, text, root, path, openedAt }) {
   const plantuml = kind === 'plantuml';
-  const key = `${kind}\n${plantuml ? `${root}\n${path}\n${at}` : darkTheme.matches}\n${text}`;
+  const key = `${kind}\n${plantuml ? `${root}\n${path}\n${openedAt}` : darkTheme.matches}\n${text}`;
   let entry = drawn.get(key);
   if (entry) {
     drawn.delete(key);
@@ -840,8 +838,7 @@ export function setViewScroll(top) {
 }
 
 // refreshView reloads the open file when it or git changed (its change marks), and the open diff on any change.
-// In rendered markdown, an image that changed reloads on its own, so the page does not move. So
-// does a diagram that includes a changed file, in a file or a diff.
+// A changed image, or a diagram's changed include, redraws on its own, so the page does not move.
 export function refreshView(change) {
   if (!current?.reload) return;
   for (const pic of current.pics || []) if (change.all || change.paths.includes(pic.path)) pic.reload();

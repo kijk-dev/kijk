@@ -43,6 +43,8 @@ function load(kind) {
   return loading[kind];
 }
 
+const MAX_CHARS = 50000; // diagramMaxChars in diagram.go
+
 // A %%{init}%% line in a diagram cannot change these.
 const SECURE = ['secure', 'securityLevel', 'startOnLoad', 'maxTextSize', 'suppressErrorRendering', 'maxEdges',
   'htmlLabels', 'dompurifyConfig', 'theme', 'themeVariables'];
@@ -56,7 +58,7 @@ async function mermaid({ text, vars }) {
     theme = JSON.stringify(vars);
     m.initialize({
       startOnLoad: false, securityLevel: 'strict', htmlLabels: false, suppressErrorRendering: true,
-      maxTextSize: 50000, secure: SECURE, theme: 'base', themeVariables: vars, fontFamily: vars.fontFamily,
+      maxTextSize: MAX_CHARS, secure: SECURE, theme: 'base', themeVariables: vars, fontFamily: vars.fontFamily,
     });
   }
   const id = `k${++n}`;
@@ -70,11 +72,12 @@ async function mermaid({ text, vars }) {
 }
 
 const LIBRARY = "This diagram uses a PlantUML library kijk can't load yet";
+const ICONS = "This diagram uses PlantUML emoji or icons kijk can't load yet";
 const MAX_INCLUDES = 50;
 let drawing = null; // the PlantUML diagram being drawn: {base, root, path, includes, calls}
 
 // Libraries, emoji and icons would load as scripts from kijk's own server, which has none.
-globalThis.PLANTUML_STDLIB_LOADER = (url, ok, err) => err(LIBRARY);
+globalThis.PLANTUML_STDLIB_LOADER = (url, ok, err) => err(/emoji|openiconic/.test(url) ? ICONS : LIBRARY);
 
 // Includes are read through the API of the folder's machine, relative to the including file.
 globalThis.PLANTUML_FILE_LOADER = (path, from, ok, err) => {
@@ -109,6 +112,7 @@ function inFolder(path, of) {
 
 // Markdown hosts such as GitHub add @startuml and @enduml to a block that has none.
 async function plantuml({ text, base, root, path }) {
+  if ([...text].length > MAX_CHARS) return { error: 'Diagram too large to draw', includes: [] };
   const pu = await load('plantuml');
   const lines = text.split(/\r?\n/);
   const wrapped = !lines.some(l => /^\s*@start/.test(l));
@@ -122,7 +126,7 @@ async function plantuml({ text, base, root, path }) {
 
 function thrownError(err) {
   const msg = String(err?.message ?? err).replace(/^[\w.$]+(Exception|Error): /, '').replace(/\s*\(max \d+;.*\)$/, '');
-  return msg.includes(LIBRARY) ? LIBRARY : `PlantUML: ${msg}`;
+  return [LIBRARY, ICONS].find(note => msg.includes(note)) ?? `PlantUML: ${msg}`;
 }
 
 // pictureError reads PlantUML's error picture, which comes back as a drawing rather than an error.

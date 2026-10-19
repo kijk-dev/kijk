@@ -293,7 +293,7 @@ func (a *api) text(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
-	if bytes.IndexByte(src[:min(len(src), 8000)], 0) >= 0 { // the binary test of buildIndex
+	if isBinary(src) {
 		http.Error(w, "Binary file", http.StatusUnsupportedMediaType)
 		return
 	}
