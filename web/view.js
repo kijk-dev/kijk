@@ -6,7 +6,7 @@ const IMAGE = /\.(png|jpe?g|gif|webp|svg|ico|bmp|avif)$/i;
 const SVG = /\.svg$/i;
 // The same types as diagramKinds in diagram.go.
 const DIAGRAM = /\.(mmd|mermaid|puml|plantuml|pu|wsd)$/i;
-const RENDERED = /\.(md|markdown|svg|mmd|mermaid|puml|plantuml|pu|wsd)$/i;
+const RENDERED = /\.(md|markdown|adoc|asciidoc|svg|mmd|mermaid|puml|plantuml|pu|wsd)$/i;
 const CHUNK = 500;
 const FULL = 1000000; // diff context that returns the whole file
 let current = null; // the open file or diff; a newer open makes older fetches stale
@@ -426,9 +426,9 @@ function changedBlocks(blocks, changes) {
 const external = url => /^([a-z][a-z0-9+.-]*:|\/\/)/i.test(url);
 const slug = s => s.trim().toLowerCase().replace(/[^\p{L}\p{N}\s_-]/gu, '').replace(/\s/g, '-');
 
-// What renderMarkdown makes. The HTML of a remote folder comes from that machine's kijk, so the
-// page keeps nothing else.
-const mdTags = new Set(['A', 'BLOCKQUOTE', 'BR', 'CODE', 'DEL', 'EM', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'HR',
+// What renderMarkdown and renderAsciiDoc make. The HTML of a remote folder comes from that
+// machine's kijk, so the page keeps nothing else.
+const mdTags = new Set(['A', 'BLOCKQUOTE', 'BR', 'CODE', 'DD', 'DEL', 'DL', 'DT', 'EM', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'HR',
   'IMG', 'INPUT', 'LI', 'OL', 'P', 'PRE', 'SPAN', 'STRONG', 'TABLE', 'TBODY', 'TD', 'TH', 'THEAD', 'TR', 'UL']);
 const mdAttrs = new Set(['href', 'src', 'alt', 'title', 'class', 'data-lines', 'align', 'type', 'checked', 'disabled', 'start']);
 // Browsers skip control characters in a URL, so java\tscript: is still a scheme.

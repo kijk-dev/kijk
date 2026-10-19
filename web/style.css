@@ -329,6 +329,24 @@ dialog.goto::backdrop { background: none; }
 .md pre { padding: 10px 12px; background: var(--panel); border-radius: 6px; overflow: auto; font: var(--code-size)/18px var(--code-font); tab-size: 4; }
 .md pre code { background: none; padding: 0; font: inherit; }
 .md blockquote { padding: 0 1em; color: var(--muted); border-left: 3px solid var(--border); }
+/* AsciiDoc: admonitions take the color of a state they are like; the rest stays grey. */
+.md .admonition { --kind: var(--modified); padding: 2px 1em; color: var(--text); border-left-color: var(--kind); }
+.md .admonition.tip { --kind: var(--added); }
+.md .admonition.important { --kind: var(--lane-main); }
+.md .admonition.warning { --kind: var(--busy); }
+.md .admonition.caution { --kind: var(--conflict); }
+.md .admonition-label { margin: 0 0 .2em; color: var(--kind); font-weight: 600; }
+.md .example, .md .sidebar { padding: 10px 1em; color: var(--text); border: 1px solid var(--border); border-radius: 6px; }
+.md .sidebar { background: var(--panel); border-color: var(--panel); }
+.md blockquote > :last-child { margin-bottom: 0; }
+.md .block-title { margin: 0 0 .3em; font-weight: 600; }
+.md .doc-header, .md .quote-by { color: var(--muted); }
+.md .include { width: fit-content; padding: 1px 8px; border: 1px dashed var(--border); border-radius: 4px; font-size: 12px; }
+.md .include::before { content: "Includes "; color: var(--muted); }
+.md dl { margin: 0 0 1em; }
+.md dt { font-weight: 600; }
+.md dd { margin: 0 0 .5em 1.5em; }
+.md dd > p:last-child, .md dd > :is(ul, ol, dl) { margin-bottom: 0; }
 .md-table { overflow-x: auto; }
 .md table { border-collapse: collapse; }
 .md th, .md td { border: 1px solid var(--border); padding: 4px 10px; }

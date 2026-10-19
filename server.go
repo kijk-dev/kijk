@@ -259,6 +259,10 @@ func (a *api) markdown(w http.ResponseWriter, r *http.Request) {
 		reply(w, map[string]string{"html": renderDiagramFile(src, kind)})
 		return
 	}
+	if isAsciiDoc(r.URL.Query().Get("path")) {
+		reply(w, map[string]string{"html": renderAsciiDoc(src)})
+		return
+	}
 	out, err := renderMarkdown(src)
 	if err != nil {
 		fail(w, err)

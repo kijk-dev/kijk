@@ -53,6 +53,8 @@ func classFor(t chroma.TokenType) string {
 		return "d"
 	case t.InCategory(chroma.Operator):
 		return "o"
+	case t == chroma.GenericHeading || t == chroma.GenericSubheading:
+		return "k"
 	}
 	return ""
 }

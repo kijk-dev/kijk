@@ -67,13 +67,14 @@ kijk ~/code/api ~/notes
 
 ### Code
 
-- Files open read-only, with line numbers and syntax colors.
+- Files open read-only, with line numbers and syntax colors, also for AsciiDoc, PlantUML and Mermaid.
 - Large files scroll smoothly, because kijk draws only the lines on the screen.
 - Markdown files show rendered, with a switch to the source. Changed blocks have a bar beside them. Images from the folder show too.
+- AsciiDoc files (`.adoc`, `.asciidoc`) show rendered the same way. kijk renders the common parts: sections, lists, tables, code, images, admonitions, cross references and attributes. Other syntax shows as plain text, and `include::` shows as a link to the file.
 - Images show as pictures: png, jpg, gif, webp, svg, ico, bmp and avif. A picture fits the pane and is never enlarged. Click it, or use the Fit / 100% switch, to see it at 100%.
 - SVG images show rendered, with a switch to the source.
-- Mermaid diagrams show as pictures: `mermaid` blocks in markdown, and `.mmd` and `.mermaid` files, with a switch to the source. They follow the light or dark theme. A diagram with an error shows its text and the error.
-- PlantUML diagrams show as pictures: `plantuml` and `puml` blocks in markdown, and `.puml`, `.plantuml`, `.pu` and `.wsd` files, with a switch to the source. They keep their own colors, on a light card. `!include` reads files from the same folder, and a diagram redraws when an included file changes.
+- Mermaid diagrams show as pictures: `mermaid` blocks in markdown, `[mermaid]` blocks in AsciiDoc, and `.mmd` and `.mermaid` files, with a switch to the source. They follow the light or dark theme. A diagram with an error shows its text and the error.
+- PlantUML diagrams show as pictures: `plantuml` and `puml` blocks in markdown and AsciiDoc, and `.puml`, `.plantuml`, `.pu` and `.wsd` files, with a switch to the source. They keep their own colors, on a light card. `!include` reads files from the same folder, and a diagram redraws when an included file changes.
 - A single click opens a preview tab. A double click opens a tab that stays.
 - The open file reloads when an agent changes it, and keeps your scroll position.
 - Find in file, go to line, go to file (fuzzy match) and recent files.
