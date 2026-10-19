@@ -95,8 +95,8 @@ func renderCode(w util.BufWriter, src []byte, n ast.Node, entering bool) (ast.Wa
 	var lexer chroma.Lexer
 	if f, ok := n.(*ast.FencedCodeBlock); ok {
 		if lang := f.Language(src); lang != nil {
-			if _, ok := engines[string(lang)]; ok {
-				writeDiagram(w, string(lang), func() { html.RenderAttributes(w, n, nil) }, []byte(strings.Join(lines, "\n")))
+			if kind, ok := diagramFences[string(lang)]; ok {
+				writeDiagram(w, kind, func() { html.RenderAttributes(w, n, nil) }, []byte(strings.Join(lines, "\n")))
 				return ast.WalkSkipChildren, nil
 			}
 			if l := lexers.Get(string(lang)); l != nil {

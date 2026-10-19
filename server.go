@@ -42,6 +42,7 @@ func newServer(token string, port int, web fs.FS, h *hub, rts *roots, u *updater
 	mux.HandleFunc("GET /api/lines", a.lines)
 	mux.HandleFunc("GET /api/image", a.image)
 	mux.HandleFunc("GET /api/markdown", a.markdown)
+	mux.HandleFunc("GET /api/text", a.text)
 	mux.HandleFunc("GET /api/find", a.find)
 	mux.HandleFunc("GET /api/goto", a.gotoFile)
 	mux.HandleFunc("GET /api/status", a.status)
@@ -264,6 +265,39 @@ func (a *api) markdown(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	reply(w, map[string]string{"html": out})
+}
+
+const textMaxBytes = 256 << 10
+
+// text answers a whole file's text, for the files a PlantUML diagram includes.
+func (a *api) text(w http.ResponseWriter, r *http.Request) {
+	_, path, ok := a.target(w, r)
+	if !ok {
+		return
+	}
+	st, err := os.Stat(path)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	if st.IsDir() {
+		fail(w, fs.ErrNotExist)
+		return
+	}
+	if st.Size() > textMaxBytes {
+		http.Error(w, "File too large", http.StatusRequestEntityTooLarge)
+		return
+	}
+	src, err := os.ReadFile(path)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	if bytes.IndexByte(src[:min(len(src), 8000)], 0) >= 0 { // the binary test of buildIndex
+		http.Error(w, "Binary file", http.StatusUnsupportedMediaType)
+		return
+	}
+	reply(w, map[string]string{"text": string(src)})
 }
 
 func (a *api) status(w http.ResponseWriter, r *http.Request) {

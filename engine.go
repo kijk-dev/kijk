@@ -28,6 +28,27 @@ var engines = map[string]engine{
 		url:     "https://cdn.jsdelivr.net/npm/mermaid@12.2.0/dist/mermaid.min.js",
 		sum:     "a8a6a6f805b074a8261a2825c86f99c8054acb3b35f50bb7e24a4f9f2c3c3b9f",
 	},
+	"plantuml": {
+		name:    "plantuml",
+		label:   "PlantUML",
+		version: "1.2026.9",
+		url:     "https://cdn.jsdelivr.net/npm/@plantuml/core@1.2026.9/plantuml.js",
+		sum:     "21c049ce47d087eff61ae0836f9c62a2b0c0d2528a5f16c2247057544228fae7",
+	},
+	"graphviz": { // PlantUML's layout engine
+		name:    "graphviz",
+		label:   "PlantUML",
+		version: "1.2026.9",
+		url:     "https://cdn.jsdelivr.net/npm/@plantuml/core@1.2026.9/viz-global.js",
+		sum:     "fc6ca2de83dd4e3fca967d5214122777890a5cd1ab101115a1f716fc84e6dc5e",
+	},
+	"plantuml-themes": {
+		name:    "plantuml-themes",
+		label:   "PlantUML",
+		version: "1.2026.9",
+		url:     "https://cdn.jsdelivr.net/npm/@plantuml/core@1.2026.9/themes.js",
+		sum:     "d6f508704b276b66631cfff05291de3013ab7807972b7cb2b77a14d4beab2c2d",
+	},
 }
 
 const (
@@ -81,7 +102,8 @@ func (c *engineCache) path(e engine) (string, error) {
 		s.failed = c.now()
 		return "", err
 	}
-	old, _ := filepath.Glob(filepath.Join(dir, e.name+"-*.js"))
+	// A digit after the name, so a new plantuml does not delete plantuml-themes.
+	old, _ := filepath.Glob(filepath.Join(dir, e.name+"-[0-9]*.js"))
 	for _, o := range old {
 		if o != p {
 			os.Remove(o)

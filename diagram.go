@@ -16,8 +16,19 @@ import (
 
 // diagramKinds are the diagram files, by extension. The page has the same list in view.js.
 var diagramKinds = map[string]string{
-	".mmd":     "mermaid",
-	".mermaid": "mermaid",
+	".mmd":      "mermaid",
+	".mermaid":  "mermaid",
+	".puml":     "plantuml",
+	".plantuml": "plantuml",
+	".pu":       "plantuml",
+	".wsd":      "plantuml",
+}
+
+// diagramFences are the languages of fenced blocks that hold a diagram, and its kind.
+var diagramFences = map[string]string{
+	"mermaid":  "mermaid",
+	"plantuml": "plantuml",
+	"puml":     "plantuml",
 }
 
 // diagramKind returns the engine of a slash-separated path, or "" when it is not a diagram file.
@@ -25,7 +36,7 @@ func diagramKind(p string) string {
 	return diagramKinds[strings.ToLower(path.Ext(p))]
 }
 
-// diagramMaxChars is Mermaid's maxTextSize: a longer diagram cannot be drawn.
+// diagramMaxChars is Mermaid's maxTextSize: a longer diagram cannot be drawn. PlantUML uses it too.
 const diagramMaxChars = 50000
 
 // writeDiagram writes a diagram block as uncolored, escaped text: the page draws it. Markdown
@@ -116,8 +127,9 @@ func diagramText(root string, b *blobRef) *diagramSide {
 }
 
 // frameCSP lets Mermaid's inline styles in, which the page's CSP blocks, and runs only kijk's
-// own scripts. The frame has no network: no connect-src, and images only as data: URLs.
-const frameCSP = "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'self'"
+// own scripts. 'wasm-unsafe-eval' is for PlantUML's Graphviz and allows no eval of JavaScript;
+// connect-src 'self' is for PlantUML includes, read through kijk's API.
+const frameCSP = "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'unsafe-inline'; img-src data:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'"
 
 // serveFrame answers GET /diagram: the frame that draws diagrams, with the engine URLs filled in.
 func serveFrame(web fs.FS) http.HandlerFunc {
