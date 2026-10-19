@@ -4,6 +4,9 @@ export const LINE_HEIGHT = 18;
 // The same types as imageTypes in image.go.
 const IMAGE = /\.(png|jpe?g|gif|webp|svg|ico|bmp|avif)$/i;
 const SVG = /\.svg$/i;
+// The same types as diagramKinds in diagram.go.
+const DIAGRAM = /\.(mmd|mermaid)$/i;
+const RENDERED = /\.(md|markdown|svg|mmd|mermaid)$/i;
 const CHUNK = 500;
 const FULL = 1000000; // diff context that returns the whole file
 let current = null; // the open file or diff; a newer open makes older fetches stale
@@ -133,7 +136,7 @@ function ruler(changes, lines) {
 
 // keep is set when an open view comes back or reloads: {scrollTop, info, image}, info being fetched
 // already and image a picture's zoom, or {line} after switching between rendered and source.
-// md holds a markdown or SVG tab's view: {source, toggle, open}.
+// md holds the view of a tab that has a rendered view: {source, toggle, open}.
 export async function openFile(viewer, root, path, keep, md) {
   const file = { kind: 'file', root, path, chunks: new Map(), pending: new Set() };
   // Image URLs in rendered markdown carry a version: new on each open, so the page never reuses an
@@ -155,12 +158,16 @@ export async function openFile(viewer, root, path, keep, md) {
   }
   if (current !== file) return;
   file.json = JSON.stringify(info);
-  const bar = md && /\.(md|markdown|svg)$/i.test(path) ? modeBar(file, md) : null;
+  let bar = md && RENDERED.test(path) ? modeBar(file, md) : null;
   const say = text => viewer.replaceChildren(...(bar ? [bar] : []), el('p', 'empty', text));
   if (IMAGE.test(path) && !(bar && md.source)) return openImage(viewer, file, info, bar, keep, say);
   if (info.tooLarge) return say('File too large');
   if (info.binary) return say(`Binary file, ${size(info.size)}`);
-  if (bar && !md.source) return openRendered(viewer, file, info, bar, keep, md);
+  if (bar && !md.source) {
+    if (await openRendered(viewer, file, info, bar, keep, md) !== 'too large') return;
+    bar = modeBar(file, { ...md, source: true }); // Rendered stays off: there is nothing to draw
+    bar.prepend(el('span', 'facts', 'Diagram too large to draw'));
+  }
   if (bar && SVG.test(path)) picture(imageURL(file, info), true).then(img => img && bar.prepend(facts(img, info.size)));
 
   const scrollTop = keep?.scrollTop ?? (keep?.line ? (keep.line - 1) * LINE_HEIGHT : 0);
@@ -211,7 +218,7 @@ function modeGroup(label, options, value, pick) {
   return group;
 }
 
-// sourceSwitch is the Rendered / Source switch of markdown, SVG images and SVG diffs.
+// sourceSwitch is the Rendered / Source switch of markdown, SVG images, diagram files and their diffs.
 function sourceSwitch(md, line) {
   return modeGroup('View', [[false, 'Rendered'], [true, 'Source']], md.source, source => {
     if (md.source !== source) md.toggle(source, line());
@@ -296,11 +303,13 @@ async function openImage(viewer, file, info, bar, keep, say) {
   viewChanged();
 }
 
+// openRendered returns 'too large' for a diagram file too large to draw, which shows as source.
 async function openRendered(viewer, file, info, bar, keep, md) {
   let res;
   try {
     res = await get('markdown', { root: file.root, path: file.path });
   } catch (err) {
+    if (current === file && DIAGRAM.test(file.path) && err.message === 'Diagram too large to draw') return 'too large';
     if (current === file) viewer.replaceChildren(bar, el('p', 'empty', err.message));
     return;
   }
@@ -309,6 +318,8 @@ async function openRendered(viewer, file, info, bar, keep, md) {
   t.innerHTML = res.html; // the server drops HTML inside the file, and the CSP blocks script as well
   const doc = el('article', 'md');
   doc.append(prepare(t.content, file, md, doc));
+  await settle(drawDiagrams(file));
+  if (current !== file) return;
   const gutter = el('div', 'md-marks');
   gutter.setAttribute('aria-hidden', 'true');
   doc.append(gutter);
@@ -356,12 +367,39 @@ async function openRendered(viewer, file, info, bar, keep, md) {
   draw();
   new ResizeObserver(draw).observe(doc);
 
+  if (DIAGRAM.test(file.path)) diagramZoom(file, doc, scroll, bar, keep);
   if (keep?.scrollTop != null) scroll.scrollTop = keep.scrollTop;
   else if (keep?.line) {
     const hit = blocks.filter(x => x.first <= keep.line && keep.line <= x.last).at(-1);
     if (hit) scroll.scrollTop = offset(hit.b) - 8;
   }
   viewChanged();
+}
+
+// diagramZoom fits a diagram file to the pane and never enlarges it. While it is shrunk, the
+// Fit / 100% switch and a click show it at 100%, as in the image view.
+function diagramZoom(file, doc, scroll, bar, keep) {
+  doc.classList.add('diagram-file');
+  let actual = !!keep?.image?.actual;
+  const zoom = modeGroup('Zoom', [[false, 'Fit'], [true, '100%']], actual, v => { actual = v; update(); });
+  bar.classList.add('imgbar');
+  bar.prepend(zoom);
+  const update = () => {
+    const img = doc.querySelector('.diagram img');
+    zoom.hidden = !img || (!actual && img.naturalWidth <= img.clientWidth);
+    doc.classList.toggle('actual', actual);
+    img?.classList.toggle('zoomable', !zoom.hidden);
+    for (const [i, b] of [...zoom.children].entries()) b.setAttribute('aria-pressed', (i === 1) === actual);
+  };
+  doc.addEventListener('click', e => {
+    if (zoom.hidden || !e.target.matches('.diagram img')) return;
+    actual = !actual;
+    update();
+  });
+  file.onDiagram = update;
+  new ResizeObserver(update).observe(scroll);
+  update();
+  file.image = () => ({ actual });
 }
 
 // changedBlocks finds the blocks that hold changed lines; removed lines count for the line above them.
@@ -411,10 +449,22 @@ function clean(frag) {
 }
 
 // prepare opens web links in a new tab and links to files in a kijk tab, and shows the images of
-// the folder. file.pics reloads them one by one.
+// the folder. file.pics reloads them one by one. file.diagrams are the blocks to draw.
 function prepare(frag, file, md, doc) {
   clean(frag);
   file.pics = [];
+  file.diagrams = [];
+  for (const pre of frag.querySelectorAll('pre.diagram')) {
+    const kind = [...pre.classList].find(c => ENGINES[c]);
+    if (!kind) continue; // a kind this kijk does not know, from a newer remote kijk
+    const box = el('div', 'diagram');
+    box.dataset.lines = pre.dataset.lines;
+    pre.removeAttribute('data-lines');
+    pre.removeAttribute('class');
+    pre.replaceWith(box);
+    box.append(pre);
+    file.diagrams.push({ box, pre, kind, text: pre.textContent });
+  }
   for (const img of frag.querySelectorAll('img')) {
     const src = img.getAttribute('src') || '';
     if (external(src)) continue;
@@ -508,8 +558,8 @@ async function load(file, c) {
 }
 
 // openDiff shows one file's change; mode is "staged", "unstaged", "untracked" or "commit".
-// keep is set when the diff reloads: {scrollTop, res}, res being fetched already. md holds an SVG
-// diff's view: {source, toggle}.
+// keep is set when the diff reloads: {scrollTop, res}, res being fetched already. md holds the
+// view of an SVG or diagram diff: {source, toggle}.
 export async function openDiff(viewer, root, change, mode, context = 3, keep, md) {
   const d = { kind: 'diff', starts: [], path: change.path, mode, hash: change.hash || '' };
   const params = { root, path: change.path, orig: change.orig || '', mode, hash: change.hash || '', context };
@@ -531,11 +581,12 @@ export async function openDiff(viewer, root, change, mode, context = 3, keep, md
   d.json = JSON.stringify(res);
 
   if (res.folder) return viewer.replaceChildren(el('p', 'empty', 'Untracked folder with its own git repository'));
-  // An SVG diff can show its source: the line diff below.
-  const modes = res.image && md && SVG.test(change.path) ? sourceSwitch(md, () => 1) : null;
-  if (res.image && !(modes && md.source)) {
+  // An SVG or diagram diff can show its source: the line diff below.
+  const modes = md && ((res.image && SVG.test(change.path)) || res.diagram) ? sourceSwitch(md, () => 1) : null;
+  if ((res.image || res.diagram) && !(modes && md.source)) {
     const bar = change.orig || modes ? el('div', 'diffbar', change.orig ? `Renamed from ${change.orig}` : '') : null;
     if (modes) bar.append(modes);
+    if (res.diagram) return diagramDiff(viewer, d, res.diagram, change, mode, bar);
     return imageDiff(viewer, d, res.image, root, change, mode, bar);
   }
   const say = text => {
@@ -604,8 +655,7 @@ export async function openDiff(viewer, root, change, mode, context = 3, keep, md
 
 // imageDiff shows the before and after pictures side by side, each fit to its column.
 async function imageDiff(viewer, d, image, root, change, mode, bar) {
-  const short = change.hash?.slice(0, 7);
-  const versions = { unstaged: ['Staged', 'On disk'], staged: ['HEAD', 'Staged'], untracked: ['', 'On disk'], commit: [image.parent, short] }[mode];
+  const versions = sideNames(mode, image.parent, change);
   const sides = await Promise.all(['before', 'after'].map(async (name, i) => {
     const s = image[name];
     if (!s) return { name, note: i === 0 ? 'Added' : 'Deleted' };
@@ -622,8 +672,7 @@ async function imageDiff(viewer, d, image, root, change, mode, bar) {
   const grid = el('div', 'imgdiff');
   sides.forEach(({ name, s, img, note }, i) => {
     const side = el('section', `side ${name}`);
-    const head = el('div', 'side-head');
-    head.append(el('span', 'tag', i === 0 ? 'Before' : 'After'), el('span', 'ver', versions[i] || ''));
+    const head = sideHead(i, versions);
     if (img) head.append(facts(img, s.size));
     else if (s) head.append(el('span', 'facts', size(s.size)));
     const body = el('div', 'side-body');
@@ -643,6 +692,138 @@ async function imageDiff(viewer, d, image, root, change, mode, bar) {
   viewer.replaceChildren(...(bar ? [bar] : []), grid);
   viewChanged();
 }
+
+const sideNames = (mode, parent, change) =>
+  ({ unstaged: ['Staged', 'On disk'], staged: ['HEAD', 'Staged'], untracked: ['', 'On disk'], commit: [parent, change.hash?.slice(0, 7)] })[mode];
+
+function sideHead(i, versions) {
+  const head = el('div', 'side-head');
+  head.append(el('span', 'tag', i === 0 ? 'Before' : 'After'), el('span', 'ver', versions[i] || ''));
+  return head;
+}
+
+// diagramDiff draws the before and after diagrams side by side, in the image diff layout.
+async function diagramDiff(viewer, d, diagram, change, mode, bar) {
+  const versions = sideNames(mode, diagram.parent, change);
+  const grid = el('div', 'imgdiff');
+  d.diagrams = [];
+  ['before', 'after'].forEach((name, i) => {
+    const s = diagram[name];
+    const side = el('section', `side ${name}`);
+    const body = el('div', 'side-body');
+    if (!s || s.tooLarge) {
+      body.append(el('div', 'side-none', !s ? (i === 0 ? 'Added' : 'Deleted') : 'Diagram too large to draw'));
+    } else {
+      const pre = el('pre');
+      pre.append(el('code', null, s.text));
+      const box = el('div', 'diagram');
+      box.append(pre);
+      body.append(box);
+      d.diagrams.push({ box, pre, kind: diagram.kind, text: s.text });
+    }
+    side.append(sideHead(i, versions), body);
+    grid.append(side);
+  });
+  await settle(drawDiagrams(d));
+  if (current !== d) return;
+  viewer.replaceChildren(...(bar ? [bar] : []), grid);
+  viewChanged();
+}
+
+// Diagrams are drawn in one hidden frame per window, with its own CSP, and come back as SVG.
+// The frame always comes from the local kijk, also for a remote folder.
+const ENGINES = { mermaid: 'Mermaid' };
+const DRAWN_MAX = 100;
+const drawn = new Map(); // kind, theme and text -> {promise, result}, oldest first
+const waiting = new Map();
+let frame = null;
+let frameReady = null;
+let drawId = 0;
+const darkTheme = matchMedia('(prefers-color-scheme: dark)');
+
+function diagramFrame() {
+  frameReady ??= new Promise(resolve => {
+    frame = el('iframe', 'diagram-frame');
+    frame.setAttribute('sandbox', 'allow-scripts allow-same-origin'); // same origin, so its requests carry the cookie
+    frame.setAttribute('aria-hidden', 'true');
+    frame.tabIndex = -1;
+    frame.src = '/diagram';
+    addEventListener('message', e => {
+      if (e.source !== frame.contentWindow || e.origin !== location.origin) return;
+      if (e.data?.ready) return resolve();
+      waiting.get(e.data?.id)?.(e.data);
+      waiting.delete(e.data?.id);
+    });
+    document.body.append(frame);
+  });
+  return frameReady;
+}
+
+// themeVars gives Mermaid kijk's colors, read from the page: the frame cannot see its CSS.
+function themeVars() {
+  const css = getComputedStyle(document.documentElement);
+  const v = name => css.getPropertyValue(name).trim();
+  return {
+    darkMode: darkTheme.matches, fontFamily: 'system-ui, -apple-system, "Segoe UI", sans-serif', fontSize: '14px',
+    background: v('--bg'), textColor: v('--text'), lineColor: v('--muted'),
+    primaryColor: v('--sep-bg'), mainBkg: v('--sep-bg'), primaryTextColor: v('--text'),
+    primaryBorderColor: v('--edge'), nodeBorder: v('--edge'),
+    secondaryColor: v('--select'), tertiaryColor: v('--panel'),
+    clusterBkg: v('--panel'), clusterBorder: v('--border'), edgeLabelBackground: v('--bg'),
+  };
+}
+
+// drawDiagram gives {svg, width, height} or {error}. An unchanged diagram reuses its SVG, so a
+// reload does not flicker; a failed download is not kept, so the next open tries again.
+function drawDiagram(kind, text) {
+  const key = `${kind}\n${darkTheme.matches}\n${text}`;
+  let entry = drawn.get(key);
+  if (entry) {
+    drawn.delete(key);
+    drawn.set(key, entry);
+    return entry;
+  }
+  const vars = themeVars();
+  entry = {};
+  entry.promise = diagramFrame().then(() => new Promise(resolve => {
+    const id = ++drawId;
+    waiting.set(id, resolve);
+    frame.contentWindow.postMessage({ id, kind, text, vars }, location.origin);
+  })).then(r => {
+    entry.result = r;
+    if (r.error?.startsWith('Could not download') && drawn.get(key) === entry) drawn.delete(key);
+    return r;
+  });
+  drawn.set(key, entry);
+  if (drawn.size > DRAWN_MAX) drawn.delete(drawn.keys().next().value);
+  return entry;
+}
+
+// drawDiagrams shows the diagrams of a view as pictures. Until one is drawn, or when it cannot
+// be, its block shows the text.
+function drawDiagrams(view) {
+  return Promise.all((view.diagrams || []).map(async x => {
+    const entry = drawDiagram(x.kind, x.text);
+    const r = entry.result ?? await entry.promise;
+    if (r.error) {
+      x.box.replaceChildren(el('p', 'diagram-note', r.error), x.pre);
+    } else {
+      const img = el('img', 'diagram-pic');
+      img.alt = `${ENGINES[x.kind]} diagram`;
+      if (r.width) [img.width, img.height] = [r.width, r.height];
+      img.src = `data:image/svg+xml,${encodeURIComponent(r.svg)}`;
+      await img.decode().catch(() => {});
+      x.box.replaceChildren(img);
+    }
+    view.onDiagram?.();
+  }));
+}
+
+// settle waits for the diagrams before a view shows, so a reload does not flash their text,
+// but not so long that a first download keeps the view empty.
+const settle = work => Promise.race([work, new Promise(r => setTimeout(r, 1000))]);
+
+darkTheme.addEventListener('change', () => { if (current?.diagrams?.length) drawDiagrams(current); });
 
 // viewScroll is the scroll position of the open file or diff, once it is drawn.
 export const viewScroll = () => current?.scroll?.scrollTop;

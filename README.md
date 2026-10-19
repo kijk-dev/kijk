@@ -72,6 +72,7 @@ kijk ~/code/api ~/notes
 - Markdown files show rendered, with a switch to the source. Changed blocks have a bar beside them. Images from the folder show too.
 - Images show as pictures: png, jpg, gif, webp, svg, ico, bmp and avif. A picture fits the pane and is never enlarged. Click it, or use the Fit / 100% switch, to see it at 100%.
 - SVG images show rendered, with a switch to the source.
+- Mermaid diagrams show as pictures: `mermaid` blocks in markdown, and `.mmd` and `.mermaid` files, with a switch to the source. They follow the light or dark theme. A diagram with an error shows its text and the error.
 - A single click opens a preview tab. A double click opens a tab that stays.
 - The open file reloads when an agent changes it, and keeps your scroll position.
 - Find in file, go to line, go to file (fuzzy match) and recent files.
@@ -81,6 +82,7 @@ kijk ~/code/api ~/notes
 
 - The Git tab lists the changed files with `+N −N` line counts. Click a file to see its diff, or review with the arrow keys and Space to stage.
 - A changed image shows the before and after pictures side by side. An SVG image can switch to its line diff.
+- A changed Mermaid file shows the before and after diagrams side by side, with a switch to its line diff.
 - A branch graph shows your branch, the main line and the pull request target, with the commits that are not pushed yet.
 - Stage, commit, push and fetch. There is no discard, checkout, pull or stash, so a click cannot destroy an agent's work.
 - kijk uses your installed `git`, so your config, credentials and hooks apply.

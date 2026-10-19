@@ -541,10 +541,11 @@ type hunk struct {
 }
 
 type diffResult struct {
-	Binary bool        `json:"binary,omitempty"`
-	Folder bool        `json:"folder,omitempty"` // an untracked folder git does not look into, such as a nested repository
-	Image  *imageSides `json:"image,omitempty"`
-	Hunks  []hunk      `json:"hunks"`
+	Binary  bool          `json:"binary,omitempty"`
+	Folder  bool          `json:"folder,omitempty"` // an untracked folder git does not look into, such as a nested repository
+	Image   *imageSides   `json:"image,omitempty"`
+	Diagram *diagramSides `json:"diagram,omitempty"`
+	Hunks   []hunk        `json:"hunks"`
 }
 
 // diff returns the change of one file. mode is "unstaged", "staged", "untracked" or "commit" (with hash).

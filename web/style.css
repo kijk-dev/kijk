@@ -337,6 +337,18 @@ dialog.goto::backdrop { background: none; }
 .md a { color: var(--modified); text-decoration: none; }
 .md a:hover { text-decoration: underline; }
 .md img { max-width: 100%; }
+/* Diagrams sit on the page background, with no card. Mermaid measures text, so the frame that
+   draws them is laid out off-screen rather than display: none. */
+.diagram-frame { position: fixed; top: 0; left: -10000px; width: 1200px; height: 800px; border: 0; visibility: hidden; pointer-events: none; }
+.md .diagram { margin: 0 0 1em; }
+.md .diagram pre { margin: 0; }
+.diagram-pic { display: block; max-width: 100%; height: auto; }
+.diagram-pic.zoomable { cursor: zoom-in; }
+.diagram-note { margin: 0 0 4px; color: var(--error); font-size: 12px; }
+.md.diagram-file { max-width: none; }
+.md.diagram-file.actual .diagram-pic { max-width: none; cursor: zoom-out; }
+.side-body .diagram { min-width: 0; max-width: 100%; }
+.side-body .diagram pre { overflow: auto; font: var(--code-size)/18px var(--code-font); }
 .md-img { display: inline-block; padding: 1px 8px; border: 1px dashed var(--border); border-radius: 4px; color: var(--muted); font-size: 12px; }
 .md-marks { position: absolute; top: 0; left: 14px; }
 .md-marks .mark { position: absolute; left: 0; width: 3px; border-radius: 2px; }

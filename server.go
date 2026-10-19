@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 // cookieName carries the port: browsers share cookies across the ports of one host, so two
@@ -27,6 +28,8 @@ func newServer(token string, port int, web fs.FS, h *hub, rts *roots, u *updater
 	mux := http.NewServeMux()
 	if web != nil {
 		mux.Handle("GET /", http.FileServerFS(web))
+		mux.HandleFunc("GET /diagram", serveFrame(web))
+		mux.HandleFunc("GET /api/engine/{name}", newEngineCache().serve)
 	}
 	if mm != nil {
 		mux.HandleFunc("GET /m/{machine}/api/", mm.serveMachine)
@@ -247,6 +250,14 @@ func (a *api) markdown(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
+	if kind := diagramKind(r.URL.Query().Get("path")); kind != "" {
+		if utf8.RuneCount(src) > diagramMaxChars {
+			http.Error(w, "Diagram too large to draw", http.StatusRequestEntityTooLarge)
+			return
+		}
+		reply(w, map[string]string{"html": renderDiagramFile(src, kind)})
+		return
+	}
 	out, err := renderMarkdown(src)
 	if err != nil {
 		fail(w, err)
@@ -312,6 +323,9 @@ func (a *api) diff(w http.ResponseWriter, r *http.Request) {
 	highlightDiff(q.Get("path"), &res)
 	if imageType(q.Get("path")) != "" {
 		res.Image = diffImage(root, q.Get("path"), q.Get("orig"), q.Get("mode"), q.Get("hash"))
+	}
+	if kind := diagramKind(q.Get("path")); kind != "" {
+		res.Diagram = diffDiagram(root, kind, q.Get("path"), q.Get("orig"), q.Get("mode"), q.Get("hash"))
 	}
 	reply(w, res)
 }
