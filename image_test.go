@@ -133,6 +133,7 @@ func TestLFSPointerOnDisk(t *testing.T) {
 func hashObject(t *testing.T, content string) string {
 	t.Helper()
 	cmd := exec.Command("git", "hash-object", "--stdin")
+	cmd.Dir = t.TempDir()
 	cmd.Stdin = strings.NewReader(content)
 	out, err := cmd.Output()
 	if err != nil {

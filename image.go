@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"errors"
 	"io/fs"
 	"net/http"
 	"os"
@@ -328,5 +327,3 @@ func serveImageFile(w http.ResponseWriter, r *http.Request, p, ct string) {
 	w.Header().Set("Content-Type", ct)
 	http.ServeContent(w, r, "", st.ModTime(), f)
 }
-
-var errBadMode = errors.New("bad diff mode")

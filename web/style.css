@@ -35,6 +35,8 @@
   --lane-main: #7946bd;
   --lane-target: #076e69;
   --on-accent: #ffffff;
+  --checker-a: #ffffff; /* no dark values: the checkerboard stays light */
+  --checker-b: #e3e6ea;
   --rail: 240px;
   --side: 260px;
   --code-font: "JetBrains Mono", "Fira Code", "Cascadia Code", "SF Mono", Menlo, Consolas, ui-monospace, monospace; /* user settings can override these two */
@@ -269,7 +271,7 @@ dialog.goto::backdrop { background: none; }
 .diffbar .mode:not([hidden]) + .mode, .diffbar .tool + .mode { margin-left: 0; }
 
 /* Images. The checkerboard stays light in both themes: dark ink in a logo vanishes on a dark one. */
-.checker { background: repeating-conic-gradient(#e3e6ea 0 25%, #ffffff 0 50%) 0 0 / 16px 16px; }
+.checker { background: repeating-conic-gradient(var(--checker-b) 0 25%, var(--checker-a) 0 50%) 0 0 / 16px 16px; }
 .facts { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .facts .sep { padding: 0 4px; }
 .diffbar.imgbar { min-height: 30px; }

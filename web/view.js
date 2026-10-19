@@ -157,7 +157,7 @@ export async function openFile(viewer, root, path, keep, md) {
   file.json = JSON.stringify(info);
   const bar = md && /\.(md|markdown|svg)$/i.test(path) ? modeBar(file, md) : null;
   const say = text => viewer.replaceChildren(...(bar ? [bar] : []), el('p', 'empty', text));
-  if (IMAGE.test(path) && !(bar && md.source)) return openImage(viewer, file, info, bar, keep);
+  if (IMAGE.test(path) && !(bar && md.source)) return openImage(viewer, file, info, bar, keep, say);
   if (info.tooLarge) return say('File too large');
   if (info.binary) return say(`Binary file, ${size(info.size)}`);
   if (bar && !md.source) return openRendered(viewer, file, info, bar, keep, md);
@@ -262,8 +262,7 @@ function facts(img, bytes) {
 
 // openImage fits the picture to the pane and never enlarges it. While it is shrunk, the Fit /
 // 100% switch and a click show it at 100%. Find and go to line have nothing to do here.
-async function openImage(viewer, file, info, bar, keep) {
-  const say = text => viewer.replaceChildren(...(bar ? [bar] : []), el('p', 'empty', text));
+async function openImage(viewer, file, info, bar, keep, say) {
   if (info.tooLarge) return say(`Image too large, ${size(info.size)}`);
   if (info.lfs) return say(`Stored in Git LFS, ${size(info.lfs)}`);
   const img = await picture(imageURL(file, info), SVG.test(file.path));
@@ -277,7 +276,7 @@ async function openImage(viewer, file, info, bar, keep) {
   let actual = !!keep?.image?.actual;
   const zoom = modeGroup('Zoom', [[false, 'Fit'], [true, '100%']], actual, v => { actual = v; update(); });
   bar.prepend(facts(img, info.size), zoom);
-  const shrunk = () => !img.classList.contains('sizeless') && img.naturalWidth > view.clientWidth - 48;
+  const shrunk = () => !img.classList.contains('sizeless') && img.naturalWidth > view.clientWidth - 2 * parseFloat(getComputedStyle(view).paddingLeft);
   const update = () => {
     zoom.hidden = !shrunk() && !actual;
     view.classList.toggle('actual', actual);

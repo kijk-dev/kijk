@@ -458,6 +458,7 @@ func graph(root, target string) (graphResult, error) {
 var (
 	hashRe     = regexp.MustCompile(`^[0-9a-f]{4,64}$`)
 	errBadHash = errors.New("bad commit hash")
+	errBadMode = errors.New("bad diff mode")
 )
 
 // commitFiles lists the files a commit changed, compared with its first parent.
