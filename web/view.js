@@ -165,8 +165,8 @@ export async function openFile(viewer, root, path, keep, md) {
   if (info.binary) return say(`Binary file, ${size(info.size)}`);
   if (bar && !md.source) {
     if (await openRendered(viewer, file, info, bar, keep, md) !== 'too large') return;
-    bar = modeBar(file, { ...md, source: true }); // Rendered stays off: there is nothing to draw
-    bar.prepend(el('span', 'facts', 'Diagram too large to draw'));
+    bar = el('div', 'diffbar'); // no Rendered / Source switch: there is nothing to draw
+    bar.append(el('span', 'facts', 'Diagram too large to draw'));
   }
   if (bar && SVG.test(path)) picture(imageURL(file, info), true).then(img => img && bar.prepend(facts(img, info.size)));
 
@@ -309,7 +309,7 @@ async function openRendered(viewer, file, info, bar, keep, md) {
   try {
     res = await get('markdown', { root: file.root, path: file.path });
   } catch (err) {
-    if (current === file && DIAGRAM.test(file.path) && err.message === 'Diagram too large to draw') return 'too large';
+    if (current === file && err.status === 413) return 'too large';
     if (current === file) viewer.replaceChildren(bar, el('p', 'empty', err.message));
     return;
   }

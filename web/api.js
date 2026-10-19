@@ -32,7 +32,7 @@ export function url(name, params) {
 
 export async function get(name, params) {
   const r = await fetch(url(name, params));
-  if (!r.ok) throw new Error((await r.text()).trim());
+  if (!r.ok) throw Object.assign(new Error((await r.text()).trim()), { status: r.status });
   return r.json();
 }
 

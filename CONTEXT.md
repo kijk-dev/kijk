@@ -56,12 +56,16 @@ _Avoid_: server, daemon, headless kijk
 A file that kijk shows as a picture, chosen by its extension: png, jpg, jpeg, gif, webp, svg, ico, bmp or avif, in any case. Not the same as a binary file, which kijk cannot show at all.
 _Avoid_: picture, media, asset
 
+**Diagram**:
+A picture that kijk draws from text written in Mermaid. It is either a whole diagram file, such as `flow.mmd`, or a block inside a markdown file. A diagram that kijk cannot draw shows as its text.
+_Avoid_: chart, graph, image (an image is a picture file)
+
 **Rendered view**:
-How a markdown file or an SVG image opens: as a reader sees it, not as its text. The diff of an SVG image also opens this way, with the before and after pictures side by side. The user can switch each tab to the source view and back.
+How a markdown file, a diagram file or an SVG image opens: as a reader sees it, not as its text. The diff of an SVG image or a diagram file also opens this way, with the before and after pictures side by side. The user can switch each tab to the source view and back.
 _Avoid_: preview (a preview tab is the tab a single click opens), visual mode
 
 **Source view**:
-The text of a markdown file or an SVG image, with line numbers and syntax colors. The source view of an SVG image's diff is its line diff.
+The text of a file that has a rendered view, with line numbers and syntax colors where kijk knows the language. The source view of the diff of an SVG image or a diagram file is its line diff.
 _Avoid_: raw, code view
 
 **Change**:
