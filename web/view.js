@@ -1,6 +1,9 @@
-import { get, el } from './api.js';
+import { get, url, el } from './api.js';
 
 export const LINE_HEIGHT = 18;
+// The same types as imageTypes in image.go.
+const IMAGE = /\.(png|jpe?g|gif|webp|svg|ico|bmp|avif)$/i;
+const SVG = /\.svg$/i;
 const CHUNK = 500;
 const FULL = 1000000; // diff context that returns the whole file
 let current = null; // the open file or diff; a newer open makes older fetches stale
@@ -128,15 +131,19 @@ function ruler(changes, lines) {
   return r;
 }
 
-// keep is set when an open view comes back or reloads: {scrollTop, info}, info being fetched already,
-// or {line} after switching between rendered and source. md holds a markdown tab's view: {source, toggle, open}.
+// keep is set when an open view comes back or reloads: {scrollTop, info, image}, info being fetched
+// already and image a picture's zoom, or {line} after switching between rendered and source.
+// md holds a markdown or SVG tab's view: {source, toggle, open}.
 export async function openFile(viewer, root, path, keep, md) {
   const file = { kind: 'file', root, path, chunks: new Map(), pending: new Set() };
+  // Image URLs in rendered markdown carry a version: new on each open, so the page never reuses an
+  // older copy, and kept across a redraw, so an image that did not change is not fetched again.
+  file.versions = keep?.versions || { at: Date.now(), of: new Map() };
   // Agents touch .git all the time; a reload that changes nothing must not redraw.
   file.reload = async () => {
     const info = await get('file', { root, path }).catch(() => null);
     if (current !== file || (info && JSON.stringify(info) === file.json)) return;
-    openFile(viewer, root, path, { scrollTop: file.scroll?.scrollTop ?? 0, info }, md);
+    openFile(viewer, root, path, { scrollTop: file.scroll?.scrollTop ?? 0, info, image: file.image?.(), versions: file.versions }, md);
   };
   current = file;
   let info;
@@ -148,10 +155,13 @@ export async function openFile(viewer, root, path, keep, md) {
   }
   if (current !== file) return;
   file.json = JSON.stringify(info);
-  if (info.tooLarge) return viewer.replaceChildren(el('p', 'empty', 'File too large'));
-  if (info.binary) return viewer.replaceChildren(el('p', 'empty', `Binary file, ${size(info.size)}`));
-  const bar = md && /\.(md|markdown)$/i.test(path) ? modeBar(file, md) : null;
+  const bar = md && /\.(md|markdown|svg)$/i.test(path) ? modeBar(file, md) : null;
+  const say = text => viewer.replaceChildren(...(bar ? [bar] : []), el('p', 'empty', text));
+  if (IMAGE.test(path) && !(bar && md.source)) return openImage(viewer, file, info, bar, keep, say);
+  if (info.tooLarge) return say('File too large');
+  if (info.binary) return say(`Binary file, ${size(info.size)}`);
   if (bar && !md.source) return openRendered(viewer, file, info, bar, keep, md);
+  if (bar && SVG.test(path)) picture(imageURL(file, info), true).then(img => img && bar.prepend(facts(img, info.size)));
 
   const scrollTop = keep?.scrollTop ?? (keep?.line ? (keep.line - 1) * LINE_HEIGHT : 0);
   if (keep) { // load the visible lines first, so a reload does not flash an empty view
@@ -188,19 +198,102 @@ export async function openFile(viewer, root, path, keep, md) {
   viewChanged();
 }
 
-function modeBar(file, md) {
-  const bar = el('div', 'diffbar');
+function modeGroup(label, options, value, pick) {
   const group = el('div', 'mode');
   group.setAttribute('role', 'group');
-  group.setAttribute('aria-label', 'View');
-  for (const [source, label] of [[false, 'Rendered'], [true, 'Source']]) {
-    const b = el('button', null, label);
-    b.setAttribute('aria-pressed', md.source === source);
-    b.onclick = () => { if (md.source !== source) md.toggle(source, file.topLine?.() ?? 1); };
+  group.setAttribute('aria-label', label);
+  for (const [v, text] of options) {
+    const b = el('button', null, text);
+    b.setAttribute('aria-pressed', v === value);
+    b.onclick = () => pick(v);
     group.append(b);
   }
-  bar.append(group);
+  return group;
+}
+
+// sourceSwitch is the Rendered / Source switch of markdown, SVG images and SVG diffs.
+function sourceSwitch(md, line) {
+  return modeGroup('View', [[false, 'Rendered'], [true, 'Source']], md.source, source => {
+    if (md.source !== source) md.toggle(source, line());
+  });
+}
+
+function modeBar(file, md) {
+  const bar = el('div', 'diffbar');
+  bar.append(sourceSwitch(md, () => file.topLine?.() ?? 1));
   return bar;
+}
+
+const imageURL = (file, info) => url('image', { root: file.root, path: file.path, v: info.mtime });
+
+// picture loads an image before it is shown, so a reload does not flash an empty pane. It is
+// null when the browser cannot show the image.
+async function picture(src, svg) {
+  const img = el('img', 'pic checker');
+  img.alt = '';
+  img.src = src;
+  try {
+    const [, noSize] = await Promise.all([img.decode(), svg && sizeless(src)]);
+    if (noSize) img.classList.add('sizeless');
+    return img;
+  } catch {
+    return null;
+  }
+}
+
+// sizeless tells whether an SVG has neither a width nor a height. Such an SVG has no size of its
+// own to keep, so it fills the pane.
+async function sizeless(src) {
+  try {
+    const tag = /<svg\b[^>]*>/i.exec(await (await fetch(src)).text())?.[0] ?? '';
+    const has = name => new RegExp(`\\s${name}\\s*=\\s*["']\\s*[\\d.]+\\s*[a-z]*\\s*["']`, 'i').test(tag);
+    return !has('width') && !has('height');
+  } catch {
+    return false;
+  }
+}
+
+function facts(img, bytes) {
+  const f = el('span', 'facts');
+  if (!img.classList.contains('sizeless')) f.append(`${img.naturalWidth} × ${img.naturalHeight}`, el('span', 'sep', '·'));
+  f.append(size(bytes));
+  return f;
+}
+
+// openImage fits the picture to the pane and never enlarges it. While it is shrunk, the Fit /
+// 100% switch and a click show it at 100%. Find and go to line have nothing to do here.
+async function openImage(viewer, file, info, bar, keep, say) {
+  if (info.tooLarge) return say(`Image too large, ${size(info.size)}`);
+  if (info.lfs) return say(`Stored in Git LFS, ${size(info.lfs)}`);
+  const img = await picture(imageURL(file, info), SVG.test(file.path));
+  if (current !== file) return;
+  if (!img) return say('Cannot show this image');
+  img.alt = file.path.split('/').pop();
+  bar ??= el('div', 'diffbar');
+  bar.classList.add('imgbar');
+  const view = el('div', 'imgview');
+  view.append(img);
+  let actual = !!keep?.image?.actual;
+  const zoom = modeGroup('Zoom', [[false, 'Fit'], [true, '100%']], actual, v => { actual = v; update(); });
+  bar.prepend(facts(img, info.size), zoom);
+  const shrunk = () => !img.classList.contains('sizeless') && img.naturalWidth > view.clientWidth - 2 * parseFloat(getComputedStyle(view).paddingLeft);
+  const update = () => {
+    zoom.hidden = !shrunk() && !actual;
+    view.classList.toggle('actual', actual);
+    img.classList.toggle('zoomable', !zoom.hidden);
+    for (const [i, b] of [...zoom.children].entries()) b.setAttribute('aria-pressed', (i === 1) === actual);
+  };
+  img.onclick = () => {
+    if (zoom.hidden) return;
+    actual = !actual;
+    update();
+  };
+  viewer.replaceChildren(bar, view);
+  update();
+  new ResizeObserver(update).observe(view);
+  if (keep?.image) [view.scrollTop, view.scrollLeft] = [keep.image.top, keep.image.left];
+  file.image = () => ({ actual, top: view.scrollTop, left: view.scrollLeft });
+  viewChanged();
 }
 
 async function openRendered(viewer, file, info, bar, keep, md) {
@@ -317,13 +410,33 @@ function clean(frag) {
   }
 }
 
-// prepare opens web links in a new tab and links to files in a kijk tab.
+// prepare opens web links in a new tab and links to files in a kijk tab, and shows the images of
+// the folder. file.pics reloads them one by one.
 function prepare(frag, file, md, doc) {
   clean(frag);
+  file.pics = [];
   for (const img of frag.querySelectorAll('img')) {
-    if (!external(img.getAttribute('src') || '')) {
-      img.replaceWith(el('span', 'md-img', `Image: ${img.getAttribute('alt') || img.getAttribute('src')}`));
+    const src = img.getAttribute('src') || '';
+    if (external(src)) continue;
+    const box = el('span', 'md-img', `Image: ${img.getAttribute('alt') || src}`);
+    const path = inFolder(src, file);
+    if (path == null || !IMAGE.test(path)) {
+      img.replaceWith(box);
+      continue;
     }
+    const { at, of } = file.versions;
+    const load = () => { img.src = url('image', { root: file.root, path, v: of.get(path) ?? at }); };
+    img.loading = 'lazy';
+    img.onerror = () => img.replaceWith(box);
+    load();
+    file.pics.push({
+      path,
+      reload: () => {
+        of.set(path, Date.now());
+        load();
+        if (box.isConnected) box.replaceWith(img);
+      },
+    });
   }
   for (const a of frag.querySelectorAll('a[href]')) {
     const href = a.getAttribute('href');
@@ -347,27 +460,39 @@ function prepare(frag, file, md, doc) {
 }
 
 function follow(href, file, md, doc) {
+  if (!href.split(/[?#]/)[0]) {
+    let id;
+    try {
+      id = slug(decodeURIComponent(href.slice(1)));
+    } catch {
+      return;
+    }
+    [...doc.querySelectorAll('h1, h2, h3, h4, h5, h6')].find(h => slug(h.textContent) === id)?.scrollIntoView();
+    return;
+  }
+  const path = inFolder(href, file);
+  if (path != null) md.open(path);
+}
+
+// inFolder turns a link or image of a markdown file into a path from the folder root: relative
+// to the file's folder, or to the root when it starts with /. null when it is above the root.
+function inFolder(href, file) {
   let target;
   try {
     target = decodeURIComponent(href.split(/[?#]/)[0]);
   } catch {
-    return;
-  }
-  if (!target) {
-    const id = slug(decodeURIComponent(href.slice(1)));
-    [...doc.querySelectorAll('h1, h2, h3, h4, h5, h6')].find(h => slug(h.textContent) === id)?.scrollIntoView();
-    return;
+    return null;
   }
   const parts = target.startsWith('/') ? [] : file.path.split('/').slice(0, -1);
   for (const s of target.split('/')) {
     if (s === '..') {
-      if (!parts.length) return;
+      if (!parts.length) return null;
       parts.pop();
     } else if (s && s !== '.') {
       parts.push(s);
     }
   }
-  md.open(parts.join('/'));
+  return parts.join('/');
 }
 
 async function load(file, c) {
@@ -383,14 +508,16 @@ async function load(file, c) {
 }
 
 // openDiff shows one file's change; mode is "staged", "unstaged", "untracked" or "commit".
-// keep is set when the diff reloads: {scrollTop, res}, res being fetched already.
-export async function openDiff(viewer, root, change, mode, context = 3, keep) {
+// keep is set when the diff reloads: {scrollTop, res}, res being fetched already. md holds an SVG
+// diff's view: {source, toggle}.
+export async function openDiff(viewer, root, change, mode, context = 3, keep, md) {
   const d = { kind: 'diff', starts: [], path: change.path, mode, hash: change.hash || '' };
   const params = { root, path: change.path, orig: change.orig || '', mode, hash: change.hash || '', context };
+  const again = (ctx, k) => openDiff(viewer, root, change, mode, ctx, k, md);
   d.reload = async () => {
     const res = await get('diff', params).catch(() => null);
     if (current !== d || (res && JSON.stringify(res) === d.json)) return;
-    openDiff(viewer, root, change, mode, context, { scrollTop: d.scroll?.scrollTop ?? 0, res });
+    again(context, { scrollTop: d.scroll?.scrollTop ?? 0, res });
   };
   current = d;
   let res;
@@ -404,18 +531,31 @@ export async function openDiff(viewer, root, change, mode, context = 3, keep) {
   d.json = JSON.stringify(res);
 
   if (res.folder) return viewer.replaceChildren(el('p', 'empty', 'Untracked folder with its own git repository'));
-  if (res.binary) return viewer.replaceChildren(el('p', 'empty', 'Binary file changed'));
-  if (!res.hunks.length) return viewer.replaceChildren(el('p', 'empty', change.orig ? `Renamed from ${change.orig}, no content changes` : 'No content changes'));
+  // An SVG diff can show its source: the line diff below.
+  const modes = res.image && md && SVG.test(change.path) ? sourceSwitch(md, () => 1) : null;
+  if (res.image && !(modes && md.source)) {
+    const bar = change.orig || modes ? el('div', 'diffbar', change.orig ? `Renamed from ${change.orig}` : '') : null;
+    if (modes) bar.append(modes);
+    return imageDiff(viewer, d, res.image, root, change, mode, bar);
+  }
+  const say = text => {
+    const bar = el('div', 'diffbar');
+    if (modes) bar.append(modes);
+    viewer.replaceChildren(...(modes ? [bar] : []), el('p', 'empty', text));
+  };
+  if (res.binary) return say('Binary file changed');
+  if (!res.hunks.length) return say(change.orig ? `Renamed from ${change.orig}, no content changes` : 'No content changes');
 
   // The tab names the file; this bar keeps what the tab cannot show.
   const full = context >= FULL;
   const bar = el('div', 'diffbar', change.orig ? `Renamed from ${change.orig}` : '');
   const toggle = el('button', 'tool', full ? 'Show changes only' : 'Show full file');
-  toggle.onclick = () => openDiff(viewer, root, change, mode, full ? 3 : FULL);
+  toggle.onclick = () => again(full ? 3 : FULL);
   bar.append(toggle);
+  if (modes) bar.append(modes);
 
   const rows = [];
-  const more = () => openDiff(viewer, root, change, mode, context + 20);
+  const more = () => again(context + 20);
   res.hunks.forEach((h, i) => {
     if (!full && (i > 0 || h.oldStart > 1 || h.newStart > 1)) rows.push({ sep: true });
     for (const l of h.lines) {
@@ -462,6 +602,48 @@ export async function openDiff(viewer, root, change, mode, context = 3, keep) {
   viewChanged();
 }
 
+// imageDiff shows the before and after pictures side by side, each fit to its column.
+async function imageDiff(viewer, d, image, root, change, mode, bar) {
+  const short = change.hash?.slice(0, 7);
+  const versions = { unstaged: ['Staged', 'On disk'], staged: ['HEAD', 'Staged'], untracked: ['', 'On disk'], commit: [image.parent, short] }[mode];
+  const sides = await Promise.all(['before', 'after'].map(async (name, i) => {
+    const s = image[name];
+    if (!s) return { name, note: i === 0 ? 'Added' : 'Deleted' };
+    if (s.size > MAX_SIZE) return { name, s, note: `Image too large, ${size(s.size)}` };
+    if (s.lfs) return { name, s, note: `Stored in Git LFS, ${size(s.lfs)}` };
+    const src = url('image', { root, path: change.path, orig: change.orig || '', mode, hash: change.hash || '', side: name, v: s.oid || s.mtime });
+    const img = await picture(src, SVG.test(i === 0 && change.orig ? change.orig : change.path));
+    if (!img) return { name, s, note: 'Cannot show this image' };
+    img.alt = i === 0 ? 'Before' : 'After';
+    return { name, s, img };
+  }));
+  if (current !== d) return;
+  const shown = sides.find(x => x.img)?.img;
+  const grid = el('div', 'imgdiff');
+  sides.forEach(({ name, s, img, note }, i) => {
+    const side = el('section', `side ${name}`);
+    const head = el('div', 'side-head');
+    head.append(el('span', 'tag', i === 0 ? 'Before' : 'After'), el('span', 'ver', versions[i] || ''));
+    if (img) head.append(facts(img, s.size));
+    else if (s) head.append(el('span', 'facts', size(s.size)));
+    const body = el('div', 'side-body');
+    if (img) {
+      body.append(img);
+    } else {
+      const box = el('div', 'side-none', note);
+      if (shown && !shown.classList.contains('sizeless')) { // as big as the other picture, so the two line up
+        box.style.setProperty('--w', `${shown.naturalWidth}px`);
+        box.style.setProperty('--ratio', `${shown.naturalWidth} / ${shown.naturalHeight}`);
+      }
+      body.append(box);
+    }
+    side.append(head, body);
+    grid.append(side);
+  });
+  viewer.replaceChildren(...(bar ? [bar] : []), grid);
+  viewChanged();
+}
+
 // viewScroll is the scroll position of the open file or diff, once it is drawn.
 export const viewScroll = () => current?.scroll?.scrollTop;
 
@@ -472,8 +654,10 @@ export function setViewScroll(top) {
 }
 
 // refreshView reloads the open file when it or git changed (its change marks), and the open diff on any change.
+// In rendered markdown, an image that changed reloads on its own, so the page does not move.
 export function refreshView(change) {
   if (!current?.reload) return;
+  for (const pic of current.pics || []) if (change.all || change.paths.includes(pic.path)) pic.reload();
   if (current.kind === 'file' && !change.all && !change.git && !change.paths.includes(current.path)) return;
   current.reload();
 }
@@ -487,6 +671,8 @@ export function jumpChange(dir) {
   if (target != null) scroll.scrollTop = Math.max(0, (target - 5) * LINE_HEIGHT);
   return true;
 }
+
+const MAX_SIZE = 50 * 1024 * 1024; // maxFileSize in files.go
 
 function size(n) {
   if (n < 1024) return `${n} bytes`;

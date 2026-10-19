@@ -455,12 +455,16 @@ func graph(root, target string) (graphResult, error) {
 	return res, nil
 }
 
-var hashRe = regexp.MustCompile(`^[0-9a-f]{4,64}$`)
+var (
+	hashRe     = regexp.MustCompile(`^[0-9a-f]{4,64}$`)
+	errBadHash = errors.New("bad commit hash")
+	errBadMode = errors.New("bad diff mode")
+)
 
 // commitFiles lists the files a commit changed, compared with its first parent.
 func commitFiles(root, hash string) ([]change, error) {
 	if !hashRe.MatchString(hash) {
-		return nil, errors.New("bad commit hash")
+		return nil, errBadHash
 	}
 	raw, err := gitRaw(root, "show", "-z", "--format=", "--name-status", "-M", "--first-parent", hash)
 	if err != nil {
@@ -537,9 +541,10 @@ type hunk struct {
 }
 
 type diffResult struct {
-	Binary bool   `json:"binary,omitempty"`
-	Folder bool   `json:"folder,omitempty"` // an untracked folder git does not look into, such as a nested repository
-	Hunks  []hunk `json:"hunks"`
+	Binary bool        `json:"binary,omitempty"`
+	Folder bool        `json:"folder,omitempty"` // an untracked folder git does not look into, such as a nested repository
+	Image  *imageSides `json:"image,omitempty"`
+	Hunks  []hunk      `json:"hunks"`
 }
 
 // diff returns the change of one file. mode is "unstaged", "staged", "untracked" or "commit" (with hash).
@@ -556,7 +561,7 @@ func diff(root, path, orig, mode, hash string, context int) (diffResult, error) 
 		args = append(args, "--cached")
 	case "commit":
 		if !hashRe.MatchString(hash) {
-			return diffResult{}, errors.New("bad commit hash")
+			return diffResult{}, errBadHash
 		}
 		args = []string{"show", "--format=", "--first-parent", "--no-color", "--no-ext-diff", "-M", "-U" + strconv.Itoa(context), hash}
 	}

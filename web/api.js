@@ -24,9 +24,14 @@ function route(name, root) {
   return { url: `${base(k.machine)}/api/${name}`, root: k.root };
 }
 
-export async function get(name, params) {
+// url is the address of a GET call, for what loads by URL, such as an image.
+export function url(name, params) {
   const r0 = route(name, params?.root);
-  const r = await fetch(`${r0.url}?` + new URLSearchParams(r0.root == null ? params : { ...params, root: r0.root }));
+  return `${r0.url}?` + new URLSearchParams(r0.root == null ? params : { ...params, root: r0.root });
+}
+
+export async function get(name, params) {
+  const r = await fetch(url(name, params));
   if (!r.ok) throw new Error((await r.text()).trim());
   return r.json();
 }

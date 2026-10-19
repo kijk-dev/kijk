@@ -469,11 +469,11 @@ func newRemoteProxy(t *http.Transport, addr string, cookie *http.Cookie) *remote
 			// Only what the UI reads passes: a remote kijk must not set local headers, or serve a
 			// type the local page could run as script.
 			ct := "text/plain; charset=utf-8"
-			if t, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type")); t == "application/json" || t == "text/event-stream" {
+			if t, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type")); t == "application/json" || t == "text/event-stream" || isImageType(t) {
 				ct = t
 			}
 			h := http.Header{}
-			for _, k := range []string{"Cache-Control", "Content-Length"} {
+			for _, k := range []string{"Cache-Control", "Content-Length", "ETag", "Last-Modified"} {
 				if v := resp.Header.Get(k); v != "" {
 					h.Set(k, v)
 				}

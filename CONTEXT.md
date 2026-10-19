@@ -52,6 +52,18 @@ _Avoid_: paused, offline, unreachable (unreachable means kijk tries and fails)
 The kijk that runs without a window on a remote machine, started by a local kijk to serve it. A remote machine runs one remote kijk per kijk version and user, and local kijks of that version share it.
 _Avoid_: server, daemon, headless kijk
 
+**Image**:
+A file that kijk shows as a picture, chosen by its extension: png, jpg, jpeg, gif, webp, svg, ico, bmp or avif, in any case. Not the same as a binary file, which kijk cannot show at all.
+_Avoid_: picture, media, asset
+
+**Rendered view**:
+How a markdown file or an SVG image opens: as a reader sees it, not as its text. The diff of an SVG image also opens this way, with the before and after pictures side by side. The user can switch each tab to the source view and back.
+_Avoid_: preview (a preview tab is the tab a single click opens), visual mode
+
+**Source view**:
+The text of a markdown file or an SVG image, with line numbers and syntax colors. The source view of an SVG image's diff is its line diff.
+_Avoid_: raw, code view
+
 **Change**:
 One file entry in the Git tab: a file that differs, with git's status letter (added, modified, deleted, renamed, untracked, conflict).
 _Avoid_: using "change" for a whole body of work
