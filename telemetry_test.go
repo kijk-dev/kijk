@@ -12,6 +12,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/kijk-dev/kijk/internal/agents"
 )
 
 type capturedEvent struct {
@@ -114,8 +116,13 @@ func TestEventsCarryOnlyTheAgreedProperties(t *testing.T) {
 		}
 	}
 	slices.SortFunc(ev, func(a, b capturedEvent) int { return strings.Compare(a.Event, b.Event) })
-	if ev[0].Event != "kijk active" || !slices.Equal(keys(ev[0].Properties), []string{"$os", "agents", "arch", "claude_agents", "codex_agents", "folders", "machines", "remote_agents", "version"}) {
-		t.Fatalf("kijk active: %v", ev[0].Properties)
+	want := []string{"$os", "agents", "arch", "folders", "machines", "remote_agents", "version"}
+	for _, at := range agents.Types {
+		want = append(want, at.Name+"_agents")
+	}
+	slices.Sort(want)
+	if ev[0].Event != "kijk active" || !slices.Equal(keys(ev[0].Properties), want) {
+		t.Fatalf("kijk active: %v, want the keys %v", ev[0].Properties, want)
 	}
 	if p := ev[0].Properties; p["agents"] != float64(5) || p["claude_agents"] != float64(3) || p["codex_agents"] != float64(2) || p["machines"] != float64(1) || p["remote_agents"] != float64(3) || p["folders"] != float64(2) {
 		t.Fatalf("counts = %v", p)
@@ -160,6 +167,11 @@ func TestActiveWithoutAgentScan(t *testing.T) {
 	}
 	if _, ok := e2.props["agents"]; ok || e2.props["folders"] != 2 || len(tel.events) != 0 {
 		t.Fatalf("day without a scan: %v", e2.props)
+	}
+	for k := range e2.props {
+		if strings.HasSuffix(k, "_agents") {
+			t.Fatalf("day without a scan: %v", e2.props)
+		}
 	}
 }
 

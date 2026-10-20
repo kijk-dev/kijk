@@ -11,6 +11,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/kijk-dev/kijk/internal/agents"
 )
 
 // posthogKey can only write events, so it is safe in public source.
@@ -86,7 +88,7 @@ type agentCounts struct {
 
 // active sends "kijk active" once a local day. While kijk looks for agents it waits for their
 // counts; otherwise it sends one minute after kijk starts or the date changes, without them.
-func (t *telemetry) active(now time.Time, folders int, looking bool, agents *agentCounts) {
+func (t *telemetry) active(now time.Time, folders int, looking bool, counts *agentCounts) {
 	if t == nil {
 		return
 	}
@@ -94,7 +96,7 @@ func (t *telemetry) active(now time.Time, folders int, looking bool, agents *age
 	if day == t.lastActive {
 		return
 	}
-	if agents == nil {
+	if counts == nil {
 		y, m, d := now.Date()
 		if looking || now.Sub(later(t.started, time.Date(y, m, d, 0, 0, 0, 0, now.Location()))) < time.Minute {
 			return
@@ -102,16 +104,17 @@ func (t *telemetry) active(now time.Time, folders int, looking bool, agents *age
 	}
 	t.lastActive = day
 	props := map[string]any{"folders": folders}
-	if agents != nil {
+	if counts != nil {
 		n := 0
-		for _, c := range agents.byType {
+		for _, c := range counts.byType {
 			n += c
 		}
 		props["agents"] = n
-		props["claude_agents"] = agents.byType["claude"]
-		props["codex_agents"] = agents.byType["codex"]
-		props["machines"] = agents.machines
-		props["remote_agents"] = agents.remote
+		for _, at := range agents.Types {
+			props[at.Name+"_agents"] = counts.byType[at.Name]
+		}
+		props["machines"] = counts.machines
+		props["remote_agents"] = counts.remote
 	}
 	t.send("kijk active", props)
 }
