@@ -49,7 +49,7 @@ var engines = map[string]engine{
 		url:     "https://cdn.jsdelivr.net/npm/@plantuml/core@1.2026.9/themes.js",
 		sum:     "d6f508704b276b66631cfff05291de3013ab7807972b7cb2b77a14d4beab2c2d",
 	},
-	"excalidraw": { // Excalidraw's export, without React; its fonts make it this large
+	"excalidraw": { // Excalidraw's export, without React; its fonts make it 14 MB
 		name:    "excalidraw",
 		label:   "Excalidraw",
 		version: "0.1.6",
@@ -95,12 +95,13 @@ func engineFile(e engine) (string, error) {
 	return filepath.Join(dir, "kijk", "engines", e.name+"-"+e.version+".js"), nil
 }
 
-// has tells whether the engine is in the cache, without downloading it.
-func (c *engineCache) has(e engine) bool {
+// engineCached tells whether the engine is in the cache, without downloading it.
+func engineCached(e engine) bool {
 	p, err := engineFile(e)
-	if err != nil {
-		return false
-	}
+	return err == nil && fileCached(p)
+}
+
+func fileCached(p string) bool {
 	st, err := os.Stat(p)
 	return err == nil && st.Size() > 0
 }
@@ -115,7 +116,7 @@ func (c *engineCache) path(e engine) (string, error) {
 	s := c.slots[e.name]
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if c.has(e) {
+	if fileCached(p) {
 		return p, nil
 	}
 	if c.now().Sub(s.failed) < engineRetry {

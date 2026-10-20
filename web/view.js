@@ -786,9 +786,20 @@ async function textKey(kind, text) {
   return Array.from(new Uint8Array(sum), b => b.toString(16).padStart(2, '0')).join('');
 }
 
+// frameMessage gives what the frame needs to draw a diagram of each kind.
+const frameMessage = {
+  mermaid: ({ kind, text }) => ({ kind, text, vars: themeVars() }),
+  plantuml: ({ kind, text, root, path }) => {
+    const place = splitKey(root);
+    return { kind, text, base: base(place.machine), root: place.root, path };
+  },
+  excalidraw: ({ kind, text }) => ({ kind, text, theme: darkTheme.matches ? 'dark' : 'light' }),
+};
+
 // drawDiagram gives {svg, width, height, includes} or {error}. A failed download is not kept, so
 // the next open tries again. PlantUML's key has the view's open time: its includes may change unseen.
-function drawDiagram({ kind, text, root, path, openedAt }, keyText) {
+function drawDiagram(diagram, keyText) {
+  const { kind, root, path, openedAt } = diagram;
   const plantuml = kind === 'plantuml';
   const key = `${kind}\n${plantuml ? `${root}\n${path}\n${openedAt}` : darkTheme.matches}\n${keyText}`;
   let entry = drawn.get(key);
@@ -797,10 +808,7 @@ function drawDiagram({ kind, text, root, path, openedAt }, keyText) {
     drawn.set(key, entry);
     return entry;
   }
-  const place = plantuml && splitKey(root);
-  const msg = plantuml ? { kind, text, base: base(place.machine), root: place.root, path }
-    : kind === 'excalidraw' ? { kind, text, theme: darkTheme.matches ? 'dark' : 'light' }
-    : { kind, text, vars: themeVars() };
+  const msg = frameMessage[kind](diagram);
   entry = { key, notes: [] };
   const downloading = label => {
     entry.downloading = label;
@@ -812,6 +820,7 @@ function drawDiagram({ kind, text, root, path, openedAt }, keyText) {
     frame.contentWindow.postMessage({ id, ...msg }, location.origin);
   })).then(r => {
     entry.result = r;
+    entry.notes = [];
     if (r.error?.startsWith('Could not download') && drawn.get(key) === entry) drawn.delete(key);
     trimDrawn();
     return r;

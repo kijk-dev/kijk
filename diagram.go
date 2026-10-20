@@ -44,6 +44,8 @@ const diagramMaxChars = 50000
 // excalidrawMaxBytes is larger, as pasted images live inside the drawing. diagram.js holds it too.
 const excalidrawMaxBytes = 8 << 20
 
+const diagramTooLargeText = "Diagram too large to draw"
+
 // diagramMaxBytes is the most a diagram's text can take, so a larger file need not be read.
 func diagramMaxBytes(kind string) int64 {
 	if kind == "excalidraw" {
@@ -152,7 +154,7 @@ const frameCSP = "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; styl
 
 // serveFrame answers GET /diagram: the frame that draws diagrams, with the engine URLs filled in
 // and the engines not in the cache yet, for which it says it is downloading.
-func serveFrame(web fs.FS, c *engineCache) http.HandlerFunc {
+func serveFrame(web fs.FS) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		page, err := fs.ReadFile(web, "diagram.html")
 		if err != nil {
@@ -162,7 +164,7 @@ func serveFrame(web fs.FS, c *engineCache) http.HandlerFunc {
 		var missing []string
 		for name, e := range engines {
 			page = bytes.ReplaceAll(page, []byte("{{"+name+"}}"), []byte(e.src()))
-			if !c.has(e) {
+			if !engineCached(e) {
 				missing = append(missing, name)
 			}
 		}

@@ -1,13 +1,11 @@
 // The frame that draws diagrams for the page. Its own CSP lets Mermaid's styles in, which the
 // page's CSP blocks; the page gets each diagram back as SVG text and shows it as a picture.
 const labels = { mermaid: 'Mermaid', plantuml: 'PlantUML', excalidraw: 'Excalidraw' };
-const engineFiles = { mermaid: ['mermaid'], plantuml: ['plantuml', 'graphviz', 'plantuml-themes'], excalidraw: ['excalidraw'] };
 const urls = document.documentElement.dataset;
 const missing = new Set(urls.missing.split(' ').filter(Boolean)); // engines not in kijk's cache yet
 const scripts = {};
 const loading = {};
 let tries = 0;
-let drawingId = null; // the diagram being drawn, told when its engine downloads
 
 // script adds a classic script once; after a failure the next diagram adds it again.
 function script(src) {
@@ -25,26 +23,26 @@ function script(src) {
   return scripts[src];
 }
 
-// PlantUML needs Graphviz and its themes as globals before its module loads. A failed import
-// stays failed for its URL, so a retry asks for a new one.
+// Each engine's files, named as in engine.go. PlantUML needs Graphviz and its themes as globals
+// before its module loads. A failed import stays failed for its URL, so a retry asks for a new one.
 const retry = () => (tries ? `&try=${tries}` : '');
 const engines = {
-  mermaid: () => script(urls.mermaid),
-  plantuml: async () => {
-    await Promise.all([script(urls.graphviz), script(urls.plantumlThemes)]);
-    return import(urls.plantuml + retry());
+  mermaid: { files: ['mermaid'], load: () => script(urls.mermaid) },
+  plantuml: {
+    files: ['plantuml', 'graphviz', 'plantuml-themes'],
+    load: async () => {
+      await Promise.all([script(urls.graphviz), script(urls.plantumlThemes)]);
+      return import(urls.plantuml + retry());
+    },
   },
-  excalidraw: () => import(urls.excalidraw + retry()),
+  excalidraw: { files: ['excalidraw'], load: () => import(urls.excalidraw + retry()) },
 };
 
 // load gets an engine once. After a failure the next diagram tries again; the server remembers
 // the failure for a minute.
 function load(kind) {
-  if (!loading[kind] && engineFiles[kind].some(f => missing.has(f))) {
-    parent.postMessage({ id: drawingId, downloading: labels[kind] }, location.origin);
-  }
-  loading[kind] ??= engines[kind]().then(engine => {
-    engineFiles[kind].forEach(f => missing.delete(f));
+  loading[kind] ??= engines[kind].load().then(engine => {
+    engines[kind].files.forEach(f => missing.delete(f));
     return engine;
   }, () => {
     delete loading[kind];
@@ -198,11 +196,10 @@ let queue = Promise.resolve(); // one diagram at a time
 addEventListener('message', e => {
   if (e.source !== parent || e.origin !== location.origin) return;
   const { id, kind } = e.data;
+  // Told on arrival, so a diagram that waits behind another one also says it is downloading.
+  if (engines[kind]?.files.some(f => missing.has(f))) parent.postMessage({ id, downloading: labels[kind] }, location.origin);
   queue = queue
-    .then(() => {
-      drawingId = id;
-      return draw[kind] ? draw[kind](e.data) : Promise.reject(new Error(`Unknown diagram kind ${kind}`));
-    })
+    .then(() => (draw[kind] ? draw[kind](e.data) : Promise.reject(new Error(`Unknown diagram kind ${kind}`))))
     .then(r => ({ id, ...r, ...(r.svg && sized(r.svg)) }), err => ({ id, error: err.message }))
     .then(msg => parent.postMessage(msg, location.origin));
 });

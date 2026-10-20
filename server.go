@@ -27,9 +27,8 @@ func newServer(token string, port int, web fs.FS, h *hub, rts *roots, u *updater
 	mux := http.NewServeMux()
 	if web != nil {
 		mux.Handle("GET /", http.FileServerFS(web))
-		ec := newEngineCache()
-		mux.HandleFunc("GET /diagram", serveFrame(web, ec))
-		mux.HandleFunc("GET /api/engine/{name}", ec.serve)
+		mux.HandleFunc("GET /diagram", serveFrame(web))
+		mux.HandleFunc("GET /api/engine/{name}", newEngineCache().serve)
 	}
 	if mm != nil {
 		mux.HandleFunc("GET /m/{machine}/api/", mm.serveMachine)
@@ -244,8 +243,8 @@ func (a *api) markdown(w http.ResponseWriter, r *http.Request) {
 	}
 	kind := diagramKind(r.URL.Query().Get("path"))
 	limit, tooLarge := int64(mdMaxBytes), "Too large to render"
-	if kind == "excalidraw" {
-		limit, tooLarge = excalidrawMaxBytes, "Diagram too large to draw"
+	if kind != "" {
+		limit, tooLarge = diagramMaxBytes(kind), diagramTooLargeText
 	}
 	if st.Size() > limit {
 		http.Error(w, tooLarge, http.StatusRequestEntityTooLarge)
@@ -258,7 +257,7 @@ func (a *api) markdown(w http.ResponseWriter, r *http.Request) {
 	}
 	if kind != "" {
 		if diagramTooLarge(kind, src) {
-			http.Error(w, "Diagram too large to draw", http.StatusRequestEntityTooLarge)
+			http.Error(w, diagramTooLargeText, http.StatusRequestEntityTooLarge)
 			return
 		}
 		reply(w, map[string]string{"html": renderDiagramFile(src, kind)})
