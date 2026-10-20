@@ -70,7 +70,7 @@ kijk ~/code/api ~/notes
 - Files open read-only, with line numbers and syntax colors, also for AsciiDoc, PlantUML and Mermaid.
 - Large files scroll smoothly, because kijk draws only the lines on the screen.
 - Markdown files show rendered, with a switch to the source. Changed blocks have a bar beside them. Images from the folder show too.
-- AsciiDoc files (`.adoc`, `.asciidoc`) show rendered the same way. kijk renders the common parts: sections, lists, tables, code, images, admonitions, cross references and attributes. Other syntax shows as plain text, and `include::` shows as a link to the file.
+- AsciiDoc files (`.adoc`, `.asciidoc`) show rendered the same way. kijk renders the common parts: sections, lists, tables, code, images, admonitions, cross references and attributes. Other syntax shows as plain text. `include::` shows the included file from the same folder in its place, and the view redraws when that file changes.
 - Images show as pictures: png, jpg, gif, webp, svg, ico, bmp and avif. A picture fits the pane and is never enlarged. Click it, or use the Fit / 100% switch, to see it at 100%.
 - SVG images show rendered, with a switch to the source.
 - Mermaid diagrams show as pictures: `mermaid` blocks in markdown, `[mermaid]` blocks in AsciiDoc, and `.mmd` and `.mermaid` files, with a switch to the source. They follow the light or dark theme. A diagram with an error shows its text and the error.

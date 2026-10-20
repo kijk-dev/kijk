@@ -2,9 +2,14 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
+	"html"
+	"io/fs"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -13,7 +18,27 @@ import (
 // adocHas renders src and checks that each want is in the HTML and no bad is.
 func adocHas(t *testing.T, src string, want []string, bad ...string) string {
 	t.Helper()
-	out := renderAsciiDoc([]byte(src))
+	out, _ := renderAsciiDoc([]byte(src), "", nil)
+	adocCheck(t, out, want, bad)
+	return out
+}
+
+// adocIncluding renders docs/guide.adoc with files as the rest of its folder, and gives the files
+// it included.
+func adocIncluding(t *testing.T, src string, files map[string]string, want []string, bad ...string) []string {
+	t.Helper()
+	out, inc := renderAsciiDoc([]byte(src), "docs/guide.adoc", func(p string) ([]byte, error) {
+		if s, ok := files[p]; ok {
+			return []byte(s), nil
+		}
+		return nil, fs.ErrNotExist
+	})
+	adocCheck(t, out, want, bad)
+	return inc
+}
+
+func adocCheck(t *testing.T, out string, want, bad []string) {
+	t.Helper()
 	for _, w := range want {
 		if !strings.Contains(out, w) {
 			t.Errorf("missing %s in\n%s", w, out)
@@ -24,7 +49,6 @@ func adocHas(t *testing.T, src string, want []string, bad ...string) string {
 			t.Errorf("%s kept in\n%s", b, out)
 		}
 	}
-	return out
 }
 
 func TestAsciiDocBlocks(t *testing.T) {
@@ -129,7 +153,7 @@ func TestAsciiDocNoHTML(t *testing.T) {
 		"https://example.com[<img src=x onerror=alert(3)>] pass:[<b onclick=alert(4)>x</b>] +++<i>y</i>+++\n\n" +
 		"link:javascript:alert(5)[click] image:javascript:alert(6)[pic] xref:javascript:alert(7).adoc[go] <<x\" onclick=\"alert(8)>>\n\n" +
 		"image::x.png[\"><script>alert(9)</script>]\n\n.<b>title</b>\n----\n<script>\n----\n\n|===\n| <script> | b\n|===\n"
-	out := renderAsciiDoc([]byte(src))
+	out, _ := renderAsciiDoc([]byte(src), "", nil)
 	for _, bad := range []string{"<script", "<img src=x", "<b", "<i>", "javascript:", `onclick="`} {
 		if strings.Contains(out, bad) {
 			t.Errorf("%s kept in\n%s", bad, out)
@@ -170,8 +194,8 @@ func TestAsciiDocConditionals(t *testing.T) {
 	adocHas(t, src, []string{"Beta on.\nEither.\nNot nope.\nNot both.\nEval shows.\nifdef::beta[]</p>"},
 		"Both.", "Neither.", "Inside", "Never closed", "endif", "ifeval")
 
-	without := renderAsciiDoc([]byte("= Doc\n\nifdef::beta[]\nBeta text.\nendif::[]\n"))
-	with := renderAsciiDoc([]byte("= Doc\n:beta:\n\nifdef::beta[]\nBeta text.\nendif::[]\n"))
+	without, _ := renderAsciiDoc([]byte("= Doc\n\nifdef::beta[]\nBeta text.\nendif::[]\n"), "", nil)
+	with, _ := renderAsciiDoc([]byte("= Doc\n:beta:\n\nifdef::beta[]\nBeta text.\nendif::[]\n"), "", nil)
 	if strings.Contains(without, "Beta text") || !strings.Contains(with, "Beta text") {
 		t.Errorf("without :beta:\n%s\nwith it\n%s", without, with)
 	}
@@ -255,6 +279,65 @@ func TestAsciiDocDiagrams(t *testing.T) {
 		})
 }
 
+func TestAsciiDocIncludes(t *testing.T) {
+	chapter := map[string]string{
+		"docs/chapters/intro.adoc": "= Introduction\n\nThe intro.\n\ninclude::part.adoc[]\n\n== Deeper\n",
+		"docs/chapters/part.adoc":  "A part.",
+		"shared/note.adoc":         "NOTE: Shared.",
+	}
+	inc := adocIncluding(t, "= Guide\n\ninclude::chapters/intro.adoc[leveloffset=+1]\n\n== After\n\ninclude::/shared/note.adoc[]\n", chapter, []string{
+		`<h2 data-lines="3-3">Introduction</h2>`, `<p data-lines="3-3">The intro.</p>`, `<p data-lines="3-3">A part.</p>`,
+		`<h3 data-lines="3-4">Deeper</h3>`, `<h2 data-lines="5-6">After</h2>`, `class="admonition note" data-lines="7-7"`,
+	})
+	if want := []string{"docs/chapters/intro.adoc", "docs/chapters/part.adoc", "shared/note.adoc"}; !slices.Equal(inc, want) {
+		t.Errorf("includes %v", inc)
+	}
+
+	code := "package x\n\n// tag::main[]\nfunc main() {\n\t// tag::body[]\n\trun()\n\t// end::body[]\n}\n// end::main[]\n\n// tag::skip[]\nfunc skip() {}\n// end::skip[]\n"
+	files := map[string]string{"docs/example.go": code, "docs/attrs.adoc": ":product: kijk\n:beta:\n"}
+	for _, c := range []struct{ attrs, want, bad string }{
+		{"tag=main", "func main() {\n\trun()\n}", "package"},
+		{"tags=body", "\trun()", "main"},
+		{"tags=**;!skip", "package x\n\nfunc main() {\n\trun()\n}", "skip"},
+		{"tags=!skip", "package x\n\nfunc main() {", "skip"},
+		{"tags=*;!body", "func main() {\n}\nfunc skip() {}", "run"},
+		{"lines=1;4..5", "package x\nfunc main() {\n\t// tag::body[]", "skip"},
+		{"lines=12..-1", "func skip() {}\n// end::skip[]", "main"},
+		{"tag=body,indent=0", "<code>run()</code>", "\trun"},
+	} {
+		t.Run(c.attrs, func(t *testing.T) {
+			src := "[source,text]\n----\ninclude::example.go[" + c.attrs + "]\n----\n"
+			adocIncluding(t, src, files, []string{"<code>" + strings.SplitN(strings.TrimPrefix(c.want, "<code>"), "\n", 2)[0]}, c.bad, "tag::main")
+			out, _ := renderAsciiDoc([]byte(src), "docs/guide.adoc", func(p string) ([]byte, error) { return []byte(files[p]), nil })
+			if !strings.Contains(html.UnescapeString(out), strings.TrimPrefix(c.want, "<code>")) {
+				t.Errorf("want %q in\n%s", c.want, out)
+			}
+		})
+	}
+	adocIncluding(t, "include::attrs.adoc[]\n\nWelcome to {product}.\n\nifdef::beta[]\nBeta.\nendif::[]\n", files,
+		[]string{`<p data-lines="3-5">Welcome to kijk.</p>`, "Beta."}, "attrs.adoc")
+	adocHas(t, ":leveloffset: +1\n\n= Part\n\n:leveloffset: -1\n\n== Back\n", []string{"<h2", ">Part</h2>", ">Back</h2>"})
+
+	loop := map[string]string{"docs/a.adoc": "A.\n\ninclude::b.adoc[]\n", "docs/b.adoc": "B.\n\ninclude::a.adoc[]\n"}
+	adocIncluding(t, "include::a.adoc[]\n", loop, []string{"A.", "B.", `<a href="a.adoc">a.adoc</a>`})
+	deep := map[string]string{}
+	for i := range 12 {
+		deep[fmt.Sprintf("docs/d%d.adoc", i)] = fmt.Sprintf("D%d.\n\ninclude::d%d.adoc[]\n", i, i+1)
+	}
+	if inc := adocIncluding(t, "include::d0.adoc[]\n", deep, []string{"D7.", `<a href="d8.adoc">`}, "D8."); len(inc) != 8 {
+		t.Errorf("deep includes %v", inc)
+	}
+	big := strings.Repeat("abcdefghi\n", mdMaxBytes/20+1)
+	adocIncluding(t, "include::big.txt[]\n\ninclude::big.txt[]\n", map[string]string{"docs/big.txt": big}, []string{`<a href="big.txt">`})
+	if inc := adocIncluding(t, "include::missing.adoc[]\n", nil, []string{`<a href="missing.adoc">`}); !slices.Equal(inc, []string{"docs/missing.adoc"}) {
+		t.Errorf("a missing include is not watched: %v", inc)
+	}
+	adocIncluding(t, "include::missing.adoc[]\n\ninclude::../../out.adoc[]\n\ninclude::https://e.com/x.adoc[]\n\ninclude::bin.adoc[]\n\ninclude::latin.adoc[]\n",
+		map[string]string{"out.adoc": "Out.", "docs/bin.adoc": "a\x00b", "docs/latin.adoc": "caf\xe9"},
+		[]string{`<a href="missing.adoc">`, `<a href="../../out.adoc">`, `<a href="https://e.com/x.adoc">`, `<a href="bin.adoc">`, `<a href="latin.adoc">`}, "Out.")
+	adocIncluding(t, "include::{snippets}/curl.adoc[]\n", nil, []string{`<p class="include" data-lines="1-1">{snippets}/curl.adoc</p>`})
+}
+
 func TestAsciiDocRoute(t *testing.T) {
 	dir := t.TempDir()
 	write(t, filepath.Join(dir, "docs", "Guide.ADOC"), "= Guide\n\nNOTE: Hi.\n")
@@ -268,6 +351,24 @@ func TestAsciiDocRoute(t *testing.T) {
 	}
 	if w := get("/api/markdown", url.Values{"path": {"big.adoc"}}); w.Code != http.StatusRequestEntityTooLarge {
 		t.Errorf("too large: %d", w.Code)
+	}
+
+	outside := filepath.Join(t.TempDir(), "secret.adoc")
+	write(t, outside, "Secret.")
+	if err := os.Symlink(outside, filepath.Join(dir, "docs", "link.adoc")); err != nil {
+		t.Skip(err)
+	}
+	write(t, filepath.Join(dir, "docs", "chapters", "intro.adoc"), "The intro.")
+	write(t, filepath.Join(dir, "docs", "book.adoc"), "include::chapters/intro.adoc[]\n\ninclude::link.adoc[]\n\ninclude::chapters[]\n")
+	w = get("/api/markdown", url.Values{"path": {"docs/book.adoc"}})
+	var book struct {
+		HTML     string
+		Includes []string
+	}
+	json.Unmarshal(w.Body.Bytes(), &book)
+	if !strings.Contains(book.HTML, "The intro.") || strings.Contains(book.HTML, "Secret.") || !strings.Contains(book.HTML, `<a href="link.adoc">`) ||
+		!strings.Contains(book.HTML, `<a href="chapters">`) || !slices.Equal(book.Includes, []string{"docs/chapters/intro.adoc", "docs/link.adoc", "docs/chapters"}) {
+		t.Errorf("%d %+v", w.Code, book)
 	}
 }
 
@@ -287,7 +388,7 @@ func TestAsciiDocSpeed(t *testing.T) {
 		b.WriteString("*a _b `c +d <<e [[f link:g image:h https://i ")
 	}
 	start := time.Now()
-	out := renderAsciiDoc([]byte(b.String()))
+	out, _ := renderAsciiDoc([]byte(b.String()), "", nil)
 	if took := time.Since(start); took > 3*time.Second {
 		t.Errorf("rendering 2 MB took %s", took)
 	}

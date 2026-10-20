@@ -233,7 +233,7 @@ func (a *api) lines(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *api) markdown(w http.ResponseWriter, r *http.Request) {
-	_, path, ok := a.target(w, r)
+	root, path, ok := a.target(w, r)
 	if !ok {
 		return
 	}
@@ -259,8 +259,9 @@ func (a *api) markdown(w http.ResponseWriter, r *http.Request) {
 		reply(w, map[string]string{"html": renderDiagramFile(src, kind)})
 		return
 	}
-	if isAsciiDoc(r.URL.Query().Get("path")) {
-		reply(w, map[string]string{"html": renderAsciiDoc(src)})
+	if rel := r.URL.Query().Get("path"); isAsciiDoc(rel) {
+		html, includes := renderAsciiDoc(src, rel, func(inc string) ([]byte, error) { return readIncluded(root, inc) })
+		reply(w, map[string]any{"html": html, "includes": includes})
 		return
 	}
 	out, err := renderMarkdown(src)
@@ -269,6 +270,22 @@ func (a *api) markdown(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	reply(w, map[string]string{"html": out})
+}
+
+// readIncluded reads a file an AsciiDoc file includes, by the same path rule as every route.
+func readIncluded(root, rel string) ([]byte, error) {
+	p, err := resolve(root, rel)
+	if err != nil {
+		return nil, err
+	}
+	st, err := os.Stat(p)
+	if err != nil {
+		return nil, err
+	}
+	if !st.Mode().IsRegular() || st.Size() > mdMaxBytes {
+		return nil, errors.New("not a file to include")
+	}
+	return os.ReadFile(p)
 }
 
 const textMaxBytes = 256 << 10

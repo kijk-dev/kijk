@@ -23,22 +23,22 @@ func isAsciiDoc(p string) bool {
 	return false
 }
 
-// renderAsciiDoc renders the common parts of AsciiDoc in the shape of renderMarkdown. Every piece
-// of the file's text is escaped, so the file cannot add HTML.
-func renderAsciiDoc(src []byte) string {
-	raw := strings.Split(string(src), "\n")
-	if len(raw) > 1 && raw[len(raw)-1] == "" {
-		raw = raw[:len(raw)-1]
-	}
-	for i, l := range raw {
-		raw[i] = strings.TrimRight(l, " \t\r")
-	}
+// renderAsciiDoc renders the common parts of AsciiDoc in the shape of renderMarkdown, and names
+// the files it included. Every piece of the files' text is escaped, so a file cannot add HTML.
+// path is the file's path from the folder root; read reads another file there, or is nil.
+func renderAsciiDoc(src []byte, path string, read func(path string) ([]byte, error)) (string, []string) {
+	raw := adocSplit(src)
 	p := &adocParser{
-		r:      &adocReader{raw: raw, attrs: adocDefaults()},
+		r: &adocReader{
+			files: []*adocFile{{raw: raw, path: path}},
+			attrs: adocDefaults(),
+			inc:   &adocIncludes{read: read, cache: map[string][]string{}, budget: mdMaxBytes},
+		},
 		secs:   map[string]adocSection{},
 		titles: map[string]adocSection{},
 		idUsed: map[string]int{},
 	}
+	p.r.sub = p.sub
 	nodes := p.blocks("")
 	adocMark(nodes, len(raw), true)
 	var out bytes.Buffer
@@ -47,31 +47,76 @@ func renderAsciiDoc(src []byte) string {
 		w.node(n)
 	}
 	w.Flush()
-	return out.String()
+	return out.String(), p.r.inc.files
 }
 
-// adocLine is a line the conditionals keep, with its 1-based line in the file.
+func adocSplit(src []byte) []string {
+	raw := strings.Split(string(src), "\n")
+	if len(raw) > 1 && raw[len(raw)-1] == "" {
+		raw = raw[:len(raw)-1]
+	}
+	for i, l := range raw {
+		raw[i] = strings.TrimRight(l, " \t\r")
+	}
+	return raw
+}
+
+// adocLine is a line the conditionals keep, with its 1-based line in the open file.
 type adocLine struct {
 	s string
 	n int
 }
 
-// adocReader hands out the lines that conditionals keep. It evaluates ifdef and ifndef when it
-// reaches them, against the attributes the parser has set so far.
+// adocReader hands out the lines that conditionals keep, with included files in place. It
+// evaluates ifdef, ifndef and include when it reaches them, against the attributes set so far.
 type adocReader struct {
-	raw   []string
-	i     int
+	files []*adocFile // the open file, then the files being included in it
 	ahead []adocLine
 	attrs map[string]string
 	open  []bool // for each open conditional, whether its lines show
+	inc   *adocIncludes
+	sub   func(string) string
 }
+
+// adocFile is a file the reader is in. An included file's lines all carry at, the line of the
+// include in the open file, so change bars and go to line stay on lines of that file.
+type adocFile struct {
+	raw    []string
+	i      int
+	path   string
+	at     int
+	offset *string // the leveloffset to put back at the end, when the include set one
+}
+
+type adocIncludes struct {
+	read   func(path string) ([]byte, error)
+	cache  map[string][]string
+	budget int      // bytes of included text left
+	files  []string // every file it tried to include, for live reload
+}
+
+const adocMaxIncludeDepth = 8
 
 var adocDirectiveRx = regexp.MustCompile(`^(\\?)(ifdef|ifndef|ifeval|endif)::([^\[\s]*)\[(.*)\]$`)
 
 func (r *adocReader) fill(k int) bool {
-	for len(r.ahead) < k && r.i < len(r.raw) {
-		s, n := r.raw[r.i], r.i+1
-		r.i++
+	for len(r.ahead) < k {
+		f := r.files[len(r.files)-1]
+		if f.i == len(f.raw) {
+			if len(r.files) == 1 {
+				break
+			}
+			r.files = r.files[:len(r.files)-1]
+			if f.offset != nil {
+				r.attrs["leveloffset"] = *f.offset
+			}
+			continue
+		}
+		s, n := f.raw[f.i], f.i+1
+		f.i++
+		if f.at > 0 {
+			n = f.at
+		}
 		shown := len(r.open) == 0 || r.open[len(r.open)-1]
 		if strings.HasPrefix(s, "if") || strings.HasPrefix(s, "endif") || strings.HasPrefix(s, `\if`) || strings.HasPrefix(s, `\endif`) {
 			if m := adocDirectiveRx.FindStringSubmatch(s); m != nil {
@@ -82,11 +127,168 @@ func (r *adocReader) fill(k int) bool {
 				}
 			}
 		}
+		if shown && strings.HasPrefix(s, "include::") && r.include(s, n) {
+			continue
+		}
 		if shown {
 			r.ahead = append(r.ahead, adocLine{s, n})
 		}
 	}
 	return len(r.ahead) >= k
+}
+
+// include puts the file an include line names in its place, and reports whether it could. A file
+// it cannot read leaves the line, which shows as a link.
+func (r *adocReader) include(s string, n int) bool {
+	m := adocInclRx.FindStringSubmatch(s)
+	if m == nil || r.inc.read == nil || len(r.files) > adocMaxIncludeDepth {
+		return false
+	}
+	target := adocUnhideSyntax(r.sub(m[1]))
+	if strings.Contains(target, "{") || adocSchemeRx.MatchString(target) {
+		return false
+	}
+	p := path.Join(path.Dir(r.files[len(r.files)-1].path), target)
+	if strings.HasPrefix(target, "/") {
+		p = path.Clean(target[1:])
+	}
+	if p == ".." || strings.HasPrefix(p, "../") || slices.ContainsFunc(r.files, func(f *adocFile) bool { return f.path == p }) {
+		return false
+	}
+	raw, ok := r.inc.cache[p]
+	if !ok {
+		if !slices.Contains(r.inc.files, p) { // also when missing, so the view redraws once it exists
+			r.inc.files = append(r.inc.files, p)
+		}
+		src, err := r.inc.read(p)
+		if err != nil || isBinary(src) || !utf8.Valid(src) {
+			return false
+		}
+		raw = adocSplit(src)
+		r.inc.cache[p] = raw
+	}
+	_, named := adocAttrList(r.sub(m[2]))
+	switch {
+	case named["lines"] != "":
+		raw = adocPickLines(raw, named["lines"])
+	case named["tags"] != "" || named["tag"] != "":
+		raw = adocPickTags(raw, named["tags"]+";"+named["tag"])
+	}
+	if in, err := strconv.Atoi(named["indent"]); err == nil && in >= 0 {
+		raw = adocDedent(raw)
+		for i, l := range raw {
+			if l != "" {
+				raw[i] = strings.Repeat(" ", in) + l
+			}
+		}
+	}
+	size := len(raw)
+	for _, l := range raw {
+		size += len(l)
+	}
+	if r.inc.budget -= size; r.inc.budget < 0 {
+		return false
+	}
+	f := &adocFile{raw: raw, path: p, at: n}
+	if v, ok := named["leveloffset"]; ok {
+		old := r.attrs["leveloffset"]
+		f.offset = &old
+		r.attrs["leveloffset"] = adocOffset(old, v)
+	}
+	r.files = append(r.files, f)
+	return true
+}
+
+// adocOffset is leveloffset after the value v: +n and -n move the current one, n sets it.
+func adocOffset(cur, v string) string {
+	n, err := strconv.Atoi(strings.TrimPrefix(v, "+"))
+	if err != nil {
+		return cur
+	}
+	if v[0] == '+' || v[0] == '-' {
+		c, _ := strconv.Atoi(cur)
+		n += c
+	}
+	return strconv.Itoa(n)
+}
+
+// adocPickLines keeps the lines of ranges such as 1..5;10..-1, in file order.
+func adocPickLines(raw []string, ranges string) []string {
+	keep := make([]bool, len(raw))
+	for _, rg := range strings.FieldsFunc(ranges, func(r rune) bool { return r == ';' || r == ',' }) {
+		from, to, isRange := strings.Cut(strings.TrimSpace(rg), "..")
+		a, err := strconv.Atoi(from)
+		if err != nil || a < 1 {
+			continue
+		}
+		b := a
+		if isRange {
+			if b, err = strconv.Atoi(to); err != nil || b < 0 {
+				b = len(raw)
+			}
+		}
+		for i := a; i <= min(b, len(raw)); i++ {
+			keep[i-1] = true
+		}
+	}
+	var out []string
+	for i, l := range raw {
+		if keep[i] {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+var adocTagLineRx = regexp.MustCompile(`\b(tag|end)::(\S+?)\[\](?:$|[ \r])`)
+
+// adocPickTags keeps the lines inside the tags named in spec, such as x;y, !x, * or **, and drops
+// the tag lines. The innermost tag a line is in that spec names decides it.
+func adocPickTags(raw []string, spec string) []string {
+	keep := map[string]bool{}
+	tagged, untagged, onlyNot := false, false, true
+	for _, t := range strings.FieldsFunc(spec, func(r rune) bool { return r == ';' || r == ',' }) {
+		t = strings.TrimSpace(t)
+		not := strings.HasPrefix(t, "!")
+		name := strings.TrimPrefix(t, "!")
+		onlyNot = onlyNot && not
+		switch name {
+		case "**":
+			tagged, untagged = !not, !not
+		case "*":
+			tagged = !not
+		default:
+			keep[name] = !not
+		}
+	}
+	if onlyNot { // only exclusions: everything else shows
+		tagged, untagged = true, true
+	}
+	var out, open []string
+	for _, l := range raw {
+		if m := adocTagLineRx.FindStringSubmatch(l); m != nil {
+			if m[1] == "tag" {
+				open = append(open, m[2])
+			} else if i := slices.Index(open, m[2]); i >= 0 {
+				open = slices.Delete(open, i, i+1)
+			}
+			continue
+		}
+		show := untagged
+		if len(open) > 0 {
+			show = tagged
+			for i := len(open) - 1; i >= 0; i-- {
+				if k, ok := keep[open[i]]; ok {
+					show = k
+					break
+				}
+			}
+		}
+		if show {
+			out = append(out, l)
+		}
+	}
+	return out
 }
 
 // directive applies a conditional line and reports whether it was one.
@@ -476,7 +678,10 @@ func (p *adocParser) entry(l adocLine) bool {
 		}
 		v += " " + strings.TrimSpace(nl.s)
 	}
-	p.r.attrs[name] = p.sub(v)
+	if v = p.sub(v); name == "leveloffset" {
+		v = adocOffset(p.r.attrs[name], v)
+	}
+	p.r.attrs[name] = v
 	return true
 }
 
@@ -493,7 +698,8 @@ func (p *adocParser) body(m *adocMeta, l adocLine) []*adocNode {
 	if s[0] == '=' || s[0] == '#' {
 		if t := adocTitleRx.FindStringSubmatch(s); t != nil {
 			p.r.next()
-			return p.section(m, len(t[1]), t[2], first)
+			off, _ := strconv.Atoi(p.r.attrs["leveloffset"])
+			return p.section(m, min(max(len(t[1])+off, 1), 6), t[2], first)
 		}
 	}
 	switch {
@@ -514,7 +720,7 @@ func (p *adocParser) body(m *adocMeta, l adocLine) []*adocNode {
 			p.r.next()
 			target := p.sub(in[1])
 			h := adocEsc(target)
-			if adocSafeURL(target) {
+			if adocSafeURL(target) && !strings.Contains(target, "{") { // an unknown {name} links nowhere
 				h = `<a href="` + h + `">` + h + `</a>`
 			}
 			return p.titled(m, first, &adocNode{tag: "p", class: "include", html: h}, l.n)
