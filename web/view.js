@@ -1,12 +1,8 @@
 import { get, url, el, splitKey, base } from './api.js';
 
 export const LINE_HEIGHT = 18;
-// The same types as imageTypes in image.go.
-const IMAGE = /\.(png|jpe?g|gif|webp|svg|ico|bmp|avif)$/i;
-const SVG = /\.svg$/i;
-// The same types as diagramKinds in diagram.go.
-const DIAGRAM = /\.(mmd|mermaid|puml|plantuml|pu|wsd|excalidraw)$/i;
-const RENDERED = /\.(md|markdown|adoc|asciidoc|svg|mmd|mermaid|puml|plantuml|pu|wsd|excalidraw)$/i;
+// The file types of filetypes.go. They come from the local kijk, also for a remote folder.
+const fileTypes = await get('filetypes');
 const CHUNK = 500;
 const FULL = 1000000; // diff context that returns the whole file
 let current = null; // the open file or diff; a newer open makes older fetches stale
@@ -14,6 +10,17 @@ let viewChanged = () => {};
 
 // onView runs after a file or diff is drawn, also after a reload, so find can search it again.
 export function onView(fn) { viewChanged = fn; }
+
+// typeOf gives the file type of a path, as TypeOf in filetypes.go does; {} shows as source.
+function typeOf(path) {
+  const name = path.split('/').pop();
+  const dot = name.lastIndexOf('.');
+  const ext = dot < 0 ? '' : name.slice(dot).toLowerCase();
+  return fileTypes.find(t => t.names?.includes(name)) ?? fileTypes.find(t => ext && t.exts?.includes(ext)) ?? {};
+}
+
+// rendered tells whether a type opens in a rendered view, with a switch to its source view.
+const rendered = t => t.show === 'rendered' || t.show === 'drawn' || !!t.text;
 
 export function showMessage(viewer, msg) {
   current = null;
@@ -158,9 +165,10 @@ export async function openFile(viewer, root, path, keep, md) {
   }
   if (current !== file) return;
   file.json = JSON.stringify(info);
-  let bar = md && RENDERED.test(path) ? modeBar(file, md) : null;
+  const type = typeOf(path);
+  let bar = md && rendered(type) ? modeBar(file, md) : null;
   const say = text => viewer.replaceChildren(...(bar ? [bar] : []), el('p', 'empty', text));
-  if (IMAGE.test(path) && !(bar && md.source)) return openImage(viewer, file, info, bar, keep, say);
+  if (type.show === 'image' && !(bar && md.source)) return openImage(viewer, file, info, bar, keep, say);
   if (info.tooLarge) return say('File too large');
   if (info.binary) return say(`Binary file, ${size(info.size)}`);
   if (bar && !md.source) {
@@ -168,7 +176,7 @@ export async function openFile(viewer, root, path, keep, md) {
     bar = el('div', 'diffbar'); // no Rendered / Source switch: there is nothing to draw
     bar.append(el('span', 'facts', 'Diagram too large to draw'));
   }
-  if (bar && SVG.test(path)) picture(imageURL(file, info), true).then(img => img && bar.prepend(facts(img, info.size)));
+  if (bar && type.show === 'image') picture(imageURL(file, info), true).then(img => img && bar.prepend(facts(img, info.size)));
 
   const scrollTop = keep?.scrollTop ?? (keep?.line ? (keep.line - 1) * LINE_HEIGHT : 0);
   if (keep) { // load the visible lines first, so a reload does not flash an empty view
@@ -234,13 +242,13 @@ function modeBar(file, md) {
 const imageURL = (file, info) => url('image', { root: file.root, path: file.path, v: info.mtime });
 
 // picture loads an image before it is shown, so a reload does not flash an empty pane. It is
-// null when the browser cannot show the image.
-async function picture(src, svg) {
+// null when the browser cannot show the image. text is set for an image that is text, such as SVG.
+async function picture(src, text) {
   const img = el('img', 'pic checker');
   img.alt = '';
   img.src = src;
   try {
-    const [, noSize] = await Promise.all([img.decode(), svg && sizeless(src)]);
+    const [, noSize] = await Promise.all([img.decode(), text && sizeless(src)]);
     if (noSize) img.classList.add('sizeless');
     return img;
   } catch {
@@ -272,7 +280,7 @@ function facts(img, bytes) {
 async function openImage(viewer, file, info, bar, keep, say) {
   if (info.tooLarge) return say(`Image too large, ${size(info.size)}`);
   if (info.lfs) return say(`Stored in Git LFS, ${size(info.lfs)}`);
-  const img = await picture(imageURL(file, info), SVG.test(file.path));
+  const img = await picture(imageURL(file, info), !!typeOf(file.path).text);
   if (current !== file) return;
   if (!img) return say('Cannot show this image');
   img.alt = file.path.split('/').pop();
@@ -314,7 +322,7 @@ async function openRendered(viewer, file, info, bar, keep, md) {
     return;
   }
   if (current !== file) return;
-  file.includes = res.includes || []; // the files an AsciiDoc file shows in place
+  file.includes = res.includes || []; // the files it shows in place
   const t = document.createElement('template'); // inert: nothing loads before prepare runs
   t.innerHTML = res.html; // the server drops HTML inside the file, and the CSP blocks script as well
   const doc = el('article', 'md');
@@ -368,7 +376,7 @@ async function openRendered(viewer, file, info, bar, keep, md) {
   draw();
   new ResizeObserver(draw).observe(doc);
 
-  if (DIAGRAM.test(file.path)) diagramZoom(file, doc, scroll, bar, keep);
+  if (typeOf(file.path).show === 'drawn') diagramZoom(file, doc, scroll, bar, keep);
   if (keep?.scrollTop != null) scroll.scrollTop = keep.scrollTop;
   else if (keep?.line) {
     const hit = blocks.filter(x => x.first <= keep.line && keep.line <= x.last).at(-1);
@@ -387,7 +395,7 @@ function diagramZoom(file, doc, scroll, bar, keep) {
   bar.prepend(zoom);
   const update = () => {
     const img = doc.querySelector('.diagram img');
-    // The box's width, not the picture's: at 100% the picture is never shrunk. Padding is PlantUML's card.
+    // The box's width, not the picture's: at 100% the picture is never shrunk. Padding is the light card.
     const room = img && img.parentElement.clientWidth - 2 * parseFloat(getComputedStyle(img).paddingLeft);
     zoom.hidden = !img || (!actual && img.naturalWidth <= room);
     doc.classList.toggle('actual', actual);
@@ -458,22 +466,22 @@ function prepare(frag, file, md, doc) {
   file.pics = [];
   file.diagrams = [];
   for (const pre of frag.querySelectorAll('pre.diagram')) {
-    const kind = [...pre.classList].find(c => ENGINES[c]);
-    if (!kind) continue; // a kind this kijk does not know, from a newer remote kijk
+    const type = fileTypes.find(t => t.show === 'drawn' && pre.classList.contains(t.name));
+    if (!type) continue;
     const box = el('div', 'diagram');
     box.dataset.lines = pre.dataset.lines;
     pre.removeAttribute('data-lines');
     pre.removeAttribute('class');
     pre.replaceWith(box);
     box.append(pre);
-    file.diagrams.push({ box, pre, kind, text: pre.textContent, root: file.root, path: file.path, openedAt: file.versions.at });
+    file.diagrams.push({ box, pre, type, text: pre.textContent, root: file.root, path: file.path, openedAt: file.versions.at });
   }
   for (const img of frag.querySelectorAll('img')) {
     const src = img.getAttribute('src') || '';
     if (external(src)) continue;
     const box = el('span', 'md-img', `Image: ${img.getAttribute('alt') || src}`);
     const path = inFolder(src, file);
-    if (path == null || !IMAGE.test(path)) {
+    if (path == null || typeOf(path).show !== 'image') {
       img.replaceWith(box);
       continue;
     }
@@ -583,8 +591,8 @@ export async function openDiff(viewer, root, change, mode, context = 3, keep, md
   d.json = JSON.stringify(res);
 
   if (res.folder) return viewer.replaceChildren(el('p', 'empty', 'Untracked folder with its own git repository'));
-  // An SVG or diagram diff can show its source: the line diff below.
-  const modes = md && ((res.image && SVG.test(change.path)) || res.diagram) ? sourceSwitch(md, () => 1) : null;
+  // A picture diff of a type with a source view can show the line diff below.
+  const modes = md && (res.image || res.diagram) && rendered(typeOf(change.path)) ? sourceSwitch(md, () => 1) : null;
   if ((res.image || res.diagram) && !(modes && md.source)) {
     const bar = change.orig || modes ? el('div', 'diffbar', change.orig ? `Renamed from ${change.orig}` : '') : null;
     if (modes) bar.append(modes);
@@ -664,7 +672,7 @@ async function imageDiff(viewer, d, image, root, change, mode, bar) {
     if (s.size > MAX_SIZE) return { name, s, note: `Image too large, ${size(s.size)}` };
     if (s.lfs) return { name, s, note: `Stored in Git LFS, ${size(s.lfs)}` };
     const src = url('image', { root, path: change.path, orig: change.orig || '', mode, hash: change.hash || '', side: name, v: s.oid || s.mtime });
-    const img = await picture(src, SVG.test(i === 0 && change.orig ? change.orig : change.path));
+    const img = await picture(src, !!typeOf(i === 0 && change.orig ? change.orig : change.path).text);
     if (!img) return { name, s, note: 'Cannot show this image' };
     img.alt = i === 0 ? 'Before' : 'After';
     return { name, s, img };
@@ -707,6 +715,7 @@ function sideHead(i, versions) {
 // diagramDiff draws the before and after diagrams side by side, in the image diff layout.
 async function diagramDiff(viewer, d, diagram, root, change, mode, bar) {
   const versions = sideNames(mode, diagram.parent, change);
+  const type = fileTypes.find(t => t.name === diagram.type);
   const grid = el('div', 'imgdiff');
   d.diagrams = [];
   ['before', 'after'].forEach((name, i) => {
@@ -721,7 +730,7 @@ async function diagramDiff(viewer, d, diagram, root, change, mode, bar) {
       const box = el('div', 'diagram');
       box.append(pre);
       body.append(box);
-      d.diagrams.push({ box, pre, kind: diagram.kind, text: s.text, root, path: i === 0 && change.orig ? change.orig : change.path, openedAt: d.openedAt });
+      d.diagrams.push({ box, pre, type, text: s.text, root, path: i === 0 && change.orig ? change.orig : change.path, openedAt: d.openedAt });
     }
     side.append(sideHead(i, versions), body);
     grid.append(side);
@@ -734,9 +743,8 @@ async function diagramDiff(viewer, d, diagram, root, change, mode, bar) {
 
 // Diagrams are drawn in one hidden frame per window, with its own CSP, and come back as SVG.
 // The frame always comes from the local kijk, also for a remote folder.
-const ENGINES = { mermaid: 'Mermaid', plantuml: 'PlantUML', excalidraw: 'Excalidraw' };
 const DRAWN_MAX = 100;
-const DRAWN_MAX_BYTES = 64 << 20; // an Excalidraw picture can be megabytes
+const DRAWN_MAX_BYTES = 64 << 20; // a drawing with pasted images can be megabytes
 const drawn = new Map(); // key from drawDiagram -> {key, promise, result}, oldest first
 const waiting = new Map(); // draw id -> {resolve, downloading}
 let frame = null;
@@ -765,7 +773,7 @@ function diagramFrame() {
   return frameReady;
 }
 
-// themeVars gives Mermaid kijk's colors, read from the page: the frame cannot see its CSS.
+// themeVars gives kijk's colors as theme variables, read from the page: the frame cannot see its CSS.
 function themeVars() {
   const css = getComputedStyle(document.documentElement);
   const v = name => css.getPropertyValue(name).trim();
@@ -779,36 +787,39 @@ function themeVars() {
   };
 }
 
-// textKey is the text a cache key holds: a digest for Excalidraw, whose text can be megabytes.
-async function textKey(kind, text) {
-  if (kind !== 'excalidraw') return text;
+// textKey is the text a cache key holds: a digest, as a drawing's text can be megabytes.
+async function textKey(text) {
   const sum = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
   return Array.from(new Uint8Array(sum), b => b.toString(16).padStart(2, '0')).join('');
 }
 
-// frameMessage gives what the frame needs to draw a diagram of each kind.
-const frameMessage = {
-  mermaid: ({ kind, text }) => ({ kind, text, vars: themeVars() }),
-  plantuml: ({ kind, text, root, path }) => {
-    const place = splitKey(root);
-    return { kind, text, base: base(place.machine), root: place.root, path };
-  },
-  excalidraw: ({ kind, text }) => ({ kind, text, theme: darkTheme.matches ? 'dark' : 'light' }),
-};
+// themeOf is the theme a type draws in: a type that keeps its author's colors is always light.
+const themeOf = type => (type.dark && darkTheme.matches ? 'dark' : 'light');
+
+// drawContext is everything any engine needs to draw; each engine uses its part.
+function drawContext({ type, root, path }) {
+  const place = splitKey(root);
+  return {
+    theme: themeOf(type), vars: themeVars(),
+    base: base(place.machine), root: place.root, path, // includes are read through the folder's machine
+    maxBytes: type.maxBytes, maxChars: type.maxChars,
+  };
+}
 
 // drawDiagram gives {svg, width, height, includes} or {error}. A failed download is not kept, so
-// the next open tries again. PlantUML's key has the view's open time: its includes may change unseen.
+// the next open tries again. A drawing that reads includes is kept for its file and the view's open
+// time: the includes may change unseen.
 function drawDiagram(diagram, keyText) {
-  const { kind, root, path, openedAt } = diagram;
-  const plantuml = kind === 'plantuml';
-  const key = `${kind}\n${plantuml ? `${root}\n${path}\n${openedAt}` : darkTheme.matches}\n${keyText}`;
+  const { type, root, path, openedAt } = diagram;
+  const at = type.engine.includes ? `${root}\n${path}\n${openedAt}` : '';
+  const key = `${type.name}\n${at}\n${themeOf(type)}\n${keyText}`;
   let entry = drawn.get(key);
   if (entry) {
     drawn.delete(key);
     drawn.set(key, entry);
     return entry;
   }
-  const msg = frameMessage[kind](diagram);
+  const msg = { engine: type.name, text: diagram.text, ctx: drawContext(diagram) };
   entry = { key, notes: [] };
   const downloading = label => {
     entry.downloading = label;
@@ -845,7 +856,7 @@ function trimDrawn() {
 // be, its block shows the text.
 function drawDiagrams(view) {
   return Promise.all((view.diagrams || []).map(async x => {
-    const entry = x.entry = drawDiagram(x, await textKey(x.kind, x.text));
+    const entry = x.entry = drawDiagram(x, await textKey(x.text));
     if (!entry.result) {
       const note = label => x.box.replaceChildren(el('p', 'diagram-note busy', `Downloading ${label}…`), x.pre);
       if (entry.downloading) note(entry.downloading);
@@ -855,8 +866,8 @@ function drawDiagrams(view) {
     if (r.error) {
       x.box.replaceChildren(el('p', 'diagram-note', r.error), x.pre);
     } else {
-      const img = el('img', `diagram-pic ${x.kind}`);
-      img.alt = `${ENGINES[x.kind]} diagram`;
+      const img = el('img', `diagram-pic ${x.type.name}${x.type.dark ? '' : ' card'}`);
+      img.alt = `${x.type.engine.label} diagram`;
       if (r.width) [img.width, img.height] = [r.width, r.height];
       img.src = `data:image/svg+xml,${encodeURIComponent(r.svg)}`;
       await img.decode().catch(() => {});

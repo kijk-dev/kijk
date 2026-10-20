@@ -13,7 +13,7 @@ import (
 // adocHas renders src and checks that each want is in the HTML and no bad is.
 func adocHas(t *testing.T, src string, want []string, bad ...string) string {
 	t.Helper()
-	out, _ := AsciiDoc([]byte(src), "", nil)
+	out, _, _ := AsciiDoc([]byte(src), "", nil)
 	adocCheck(t, out, want, bad)
 	return out
 }
@@ -22,7 +22,7 @@ func adocHas(t *testing.T, src string, want []string, bad ...string) string {
 // it included.
 func adocIncluding(t *testing.T, src string, files map[string]string, want []string, bad ...string) []string {
 	t.Helper()
-	out, inc := AsciiDoc([]byte(src), "docs/guide.adoc", func(p string) ([]byte, error) {
+	out, inc, _ := AsciiDoc([]byte(src), "docs/guide.adoc", func(p string) ([]byte, error) {
 		if s, ok := files[p]; ok {
 			return []byte(s), nil
 		}
@@ -148,7 +148,7 @@ func TestAsciiDocNoHTML(t *testing.T) {
 		"https://example.com[<img src=x onerror=alert(3)>] pass:[<b onclick=alert(4)>x</b>] +++<i>y</i>+++\n\n" +
 		"link:javascript:alert(5)[click] image:javascript:alert(6)[pic] xref:javascript:alert(7).adoc[go] <<x\" onclick=\"alert(8)>>\n\n" +
 		"image::x.png[\"><script>alert(9)</script>]\n\n.<b>title</b>\n----\n<script>\n----\n\n|===\n| <script> | b\n|===\n"
-	out, _ := AsciiDoc([]byte(src), "", nil)
+	out, _, _ := AsciiDoc([]byte(src), "", nil)
 	for _, bad := range []string{"<script", "<img src=x", "<b", "<i>", "javascript:", `onclick="`} {
 		if strings.Contains(out, bad) {
 			t.Errorf("%s kept in\n%s", bad, out)
@@ -189,8 +189,8 @@ func TestAsciiDocConditionals(t *testing.T) {
 	adocHas(t, src, []string{"Beta on.\nEither.\nNot nope.\nNot both.\nEval shows.\nifdef::beta[]</p>"},
 		"Both.", "Neither.", "Inside", "Never closed", "endif", "ifeval")
 
-	without, _ := AsciiDoc([]byte("= Doc\n\nifdef::beta[]\nBeta text.\nendif::[]\n"), "", nil)
-	with, _ := AsciiDoc([]byte("= Doc\n:beta:\n\nifdef::beta[]\nBeta text.\nendif::[]\n"), "", nil)
+	without, _, _ := AsciiDoc([]byte("= Doc\n\nifdef::beta[]\nBeta text.\nendif::[]\n"), "", nil)
+	with, _, _ := AsciiDoc([]byte("= Doc\n:beta:\n\nifdef::beta[]\nBeta text.\nendif::[]\n"), "", nil)
 	if strings.Contains(without, "Beta text") || !strings.Contains(with, "Beta text") {
 		t.Errorf("without :beta:\n%s\nwith it\n%s", without, with)
 	}
@@ -303,7 +303,7 @@ func TestAsciiDocIncludes(t *testing.T) {
 		t.Run(c.attrs, func(t *testing.T) {
 			src := "[source,text]\n----\ninclude::example.go[" + c.attrs + "]\n----\n"
 			adocIncluding(t, src, files, []string{"<code>" + strings.SplitN(strings.TrimPrefix(c.want, "<code>"), "\n", 2)[0]}, c.bad, "tag::main")
-			out, _ := AsciiDoc([]byte(src), "docs/guide.adoc", func(p string) ([]byte, error) { return []byte(files[p]), nil })
+			out, _, _ := AsciiDoc([]byte(src), "docs/guide.adoc", func(p string) ([]byte, error) { return []byte(files[p]), nil })
 			if !strings.Contains(html.UnescapeString(out), strings.TrimPrefix(c.want, "<code>")) {
 				t.Errorf("want %q in\n%s", c.want, out)
 			}
@@ -349,7 +349,7 @@ func TestAsciiDocSpeed(t *testing.T) {
 		b.WriteString("*a _b `c +d <<e [[f link:g image:h https://i ")
 	}
 	start := time.Now()
-	out, _ := AsciiDoc([]byte(b.String()), "", nil)
+	out, _, _ := AsciiDoc([]byte(b.String()), "", nil)
 	if took := time.Since(start); took > 3*time.Second {
 		t.Errorf("rendering 2 MB took %s", took)
 	}

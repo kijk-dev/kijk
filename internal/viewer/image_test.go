@@ -39,6 +39,14 @@ func TestImageType(t *testing.T) {
 	}
 }
 
+func TestIsImageType(t *testing.T) {
+	for ct, want := range map[string]bool{"image/png": true, "image/svg+xml": true, "": false, "text/html": false} {
+		if IsImageType(ct) != want {
+			t.Errorf("%q: %v", ct, !want)
+		}
+	}
+}
+
 func TestLFSSize(t *testing.T) {
 	pointer := "version https://git-lfs.github.com/spec/v1\noid sha256:4d7a214614ab2935c943f9e0ff69d22eadbb8f32b1258daaa5e2ca24d17e2393\nsize 2400000\n"
 	for in, want := range map[string]int64{

@@ -1,0 +1,5 @@
+@startuml
+participant Alice #LightBlue
+Alice -> Bob: "hi"
+Bob --> Alice
+@enduml
