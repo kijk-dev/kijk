@@ -12,12 +12,12 @@ import (
 // MaxFileSize is the largest file kijk reads; a larger file is not shown or counted.
 const MaxFileSize = 50 << 20
 
-type LineCount struct{ Add, Del int }
+type lineCount struct{ Add, Del int }
 
 // parseNumstat reads `git diff --numstat -z` into counts by path. A rename is keyed by its new
 // path. Binary files show "-", which counts as zero.
-func parseNumstat(out []byte) map[string]LineCount {
-	m := map[string]LineCount{}
+func parseNumstat(out []byte) map[string]lineCount {
+	m := map[string]lineCount{}
 	f := strings.Split(string(out), "\x00")
 	for i := 0; i < len(f); i++ {
 		parts := strings.SplitN(strings.TrimLeft(f[i], "\n"), "\t", 3)
@@ -31,23 +31,23 @@ func parseNumstat(out []byte) map[string]LineCount {
 		}
 		a, _ := strconv.Atoi(parts[0])
 		d, _ := strconv.Atoi(parts[1])
-		m[path] = LineCount{a, d}
+		m[path] = lineCount{a, d}
 	}
 	return m
 }
 
-func numstat(root string, args ...string) map[string]LineCount {
+func numstat(root string, args ...string) map[string]lineCount {
 	out, err := Raw(root, append([]string{"diff", "--no-ext-diff", "--numstat", "-z"}, args...)...)
 	if err != nil {
-		return map[string]LineCount{}
+		return map[string]lineCount{}
 	}
 	return parseNumstat(out)
 }
 
 // NumstatOf diffs only the files git status listed, so git does not look at every file on disk.
-func NumstatOf(root string, cs []change, args ...string) map[string]LineCount {
+func NumstatOf(root string, cs []change, args ...string) map[string]lineCount {
 	if len(cs) == 0 {
-		return map[string]LineCount{}
+		return map[string]lineCount{}
 	}
 	if len(cs) <= 500 { // beyond that a full diff is cheaper than a huge argument list
 		args = append(args, "--")
@@ -61,7 +61,7 @@ func NumstatOf(root string, cs []change, args ...string) map[string]LineCount {
 	return numstat(root, args...)
 }
 
-func setCounts(cs []change, m map[string]LineCount) {
+func setCounts(cs []change, m map[string]lineCount) {
 	for i := range cs {
 		n := m[cs[i].Path]
 		cs[i].Add, cs[i].Del = n.Add, n.Del

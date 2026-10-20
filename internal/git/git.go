@@ -154,7 +154,7 @@ func StatusFor(root, target string) Status {
 	st.Git = true
 	ParseStatus(out, &st)
 	var wg sync.WaitGroup
-	var unstagedN, stagedN map[string]LineCount
+	var unstagedN, stagedN map[string]lineCount
 	wg.Add(2)
 	go func() { defer wg.Done(); unstagedN = NumstatOf(root, st.Changes) }()
 	go func() { defer wg.Done(); stagedN = NumstatOf(root, st.Staged, "--cached", "-M") }()
