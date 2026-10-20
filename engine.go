@@ -49,12 +49,19 @@ var engines = map[string]engine{
 		url:     "https://cdn.jsdelivr.net/npm/@plantuml/core@1.2026.9/themes.js",
 		sum:     "d6f508704b276b66631cfff05291de3013ab7807972b7cb2b77a14d4beab2c2d",
 	},
+	"excalidraw": { // Excalidraw's export, without React; its fonts make it this large
+		name:    "excalidraw",
+		label:   "Excalidraw",
+		version: "0.1.6",
+		url:     "https://cdn.jsdelivr.net/npm/@excalidraw/utils@0.1.6/dist/prod/index.js",
+		sum:     "70096399885cd5cb6b0ea9a2716e0a0413cfa15ed59cfd2bb50b42ec2b30c29c",
+	},
 }
 
 const (
-	engineMaxBytes = 16 << 20
-	engineTimeout  = 60 * time.Second
-	engineRetry    = time.Minute // a page with ten diagrams makes one try, not ten
+	engineMaxBytes = 32 << 20
+	engineTimeout  = 5 * time.Minute // Excalidraw is 14 MB, also on a slow connection
+	engineRetry    = time.Minute     // a page with ten diagrams makes one try, not ten
 )
 
 // src is the URL the frame loads the engine from; a new version gets a new URL, so the
@@ -80,18 +87,35 @@ func newEngineCache() *engineCache {
 	return c
 }
 
-// path gives the engine's file, downloaded and checked first when it is not in the cache.
-func (c *engineCache) path(e engine) (string, error) {
+func engineFile(e engine) (string, error) {
 	dir, err := cacheDir()
 	if err != nil {
 		return "", err
 	}
-	dir = filepath.Join(dir, "kijk", "engines")
-	p := filepath.Join(dir, e.name+"-"+e.version+".js")
+	return filepath.Join(dir, "kijk", "engines", e.name+"-"+e.version+".js"), nil
+}
+
+// has tells whether the engine is in the cache, without downloading it.
+func (c *engineCache) has(e engine) bool {
+	p, err := engineFile(e)
+	if err != nil {
+		return false
+	}
+	st, err := os.Stat(p)
+	return err == nil && st.Size() > 0
+}
+
+// path gives the engine's file, downloaded and checked first when it is not in the cache.
+func (c *engineCache) path(e engine) (string, error) {
+	p, err := engineFile(e)
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Dir(p)
 	s := c.slots[e.name]
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if st, err := os.Stat(p); err == nil && st.Size() > 0 {
+	if c.has(e) {
 		return p, nil
 	}
 	if c.now().Sub(s.failed) < engineRetry {

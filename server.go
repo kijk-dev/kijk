@@ -14,7 +14,6 @@ import (
 	"strconv"
 	"sync"
 	"time"
-	"unicode/utf8"
 )
 
 // cookieName carries the port: browsers share cookies across the ports of one host, so two
@@ -28,8 +27,9 @@ func newServer(token string, port int, web fs.FS, h *hub, rts *roots, u *updater
 	mux := http.NewServeMux()
 	if web != nil {
 		mux.Handle("GET /", http.FileServerFS(web))
-		mux.HandleFunc("GET /diagram", serveFrame(web))
-		mux.HandleFunc("GET /api/engine/{name}", newEngineCache().serve)
+		ec := newEngineCache()
+		mux.HandleFunc("GET /diagram", serveFrame(web, ec))
+		mux.HandleFunc("GET /api/engine/{name}", ec.serve)
 	}
 	if mm != nil {
 		mux.HandleFunc("GET /m/{machine}/api/", mm.serveMachine)
@@ -242,8 +242,13 @@ func (a *api) markdown(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
-	if st.Size() > mdMaxBytes {
-		http.Error(w, "Too large to render", http.StatusRequestEntityTooLarge)
+	kind := diagramKind(r.URL.Query().Get("path"))
+	limit, tooLarge := int64(mdMaxBytes), "Too large to render"
+	if kind == "excalidraw" {
+		limit, tooLarge = excalidrawMaxBytes, "Diagram too large to draw"
+	}
+	if st.Size() > limit {
+		http.Error(w, tooLarge, http.StatusRequestEntityTooLarge)
 		return
 	}
 	src, err := os.ReadFile(path)
@@ -251,8 +256,8 @@ func (a *api) markdown(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
-	if kind := diagramKind(r.URL.Query().Get("path")); kind != "" {
-		if utf8.RuneCount(src) > diagramMaxChars {
+	if kind != "" {
+		if diagramTooLarge(kind, src) {
 			http.Error(w, "Diagram too large to draw", http.StatusRequestEntityTooLarge)
 			return
 		}

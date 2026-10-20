@@ -20,6 +20,9 @@ const (
 type tok [2]string
 
 func lexerFor(path string) chroma.Lexer {
+	if diagramKind(filepath.ToSlash(path)) == "excalidraw" { // a drawing is JSON
+		return chroma.Coalesce(lexers.Get("json"))
+	}
 	if l := lexers.Match(filepath.Base(path)); l != nil {
 		return chroma.Coalesce(l)
 	}
