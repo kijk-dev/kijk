@@ -14,6 +14,7 @@ import (
 	"github.com/chromedp/chromedp"
 	"github.com/chromedp/chromedp/kb"
 
+	"github.com/kijk-dev/kijk/internal/agentstest"
 	"github.com/kijk-dev/kijk/internal/git"
 )
 
@@ -26,8 +27,8 @@ func TestBrowser(t *testing.T) {
 	api, origin := apiRepo(t)
 	claude := t.TempDir()
 	claudeAgent(t, claude, shop, "Add the cart", "busy")
-	codexHome, codex := fakeCodexHome(t)
-	codex.set(thread("t1", api, "idle", "name", "Fix the login bug"))
+	codexHome, codex := agentstest.CodexHome(t)
+	codex.Set(agentstest.Thread("t1", api, "idle", "name", "Fix the login bug"))
 	home := t.TempDir()
 	k := startKijkIn(t, exe, home, "CLAUDE_CONFIG_DIR="+claude, "CODEX_HOME="+codexHome, keepEngines(t, home))
 	tab := startBrowser(t, browser)

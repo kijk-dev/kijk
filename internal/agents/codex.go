@@ -1,9 +1,10 @@
-package main
+package agents
 
 import (
 	"bufio"
 	"crypto/rand"
 	"crypto/sha1"
+	_ "embed"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
@@ -12,14 +13,28 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"time"
 )
 
 // All knowledge of the Codex app server protocol lives in this file. The `codex` TUI runs its
 // threads in a shared app server, which speaks JSON-RPC in WebSocket text frames on a Unix socket.
+
+// The OpenAI mark, from lobe-icons (MIT).
+//
+//go:embed codex.svg
+var codexIcon string
+
+func init() {
+	add(AgentType{
+		Name:     "codex",
+		Label:    "Codex",
+		Icon:     strings.TrimSpace(codexIcon),
+		Sessions: codexSessions,
+	})
+}
 
 const (
 	codexTimeout  = 500 * time.Millisecond // per request
@@ -30,6 +45,12 @@ const (
 
 // codexCache keeps the last read of each loaded thread, between scans.
 type codexCache map[string]codexThread
+
+// codexState is what the Codex reader keeps between scans.
+type codexState struct {
+	cache codexCache
+	seen  statusClock
+}
 
 type codexThread struct {
 	ID             string  `json:"id"`
@@ -51,12 +72,8 @@ func (t codexThread) busy() bool {
 	return t.Status.Type == "active" && !slices.Contains(f, "waitingOnApproval") && !slices.Contains(f, "waitingOnUserInput")
 }
 
-func codexHome() string {
-	if d := os.Getenv("CODEX_HOME"); d != "" {
-		return d
-	}
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".codex")
+func codexHome(env *Env) string {
+	return env.folder("CODEX_HOME", ".codex")
 }
 
 func codexSocket(home string) string {
@@ -65,7 +82,7 @@ func codexSocket(home string) string {
 
 // readCodexThreads returns the threads loaded in the app server; none when no Codex TUI runs. It
 // closes the connection, because Codex attaches each open connection to new threads and keeps them loaded.
-func readCodexThreads(socket string, cache codexCache) ([]codexThread, error) {
+func readCodexThreads(socket string, cache codexCache, version string) ([]codexThread, error) {
 	nc, err := net.DialTimeout("unix", socket, codexTimeout)
 	// Checks the file, as Windows reports a missing socket as a dead network.
 	if err != nil && (!exists(socket) || errors.Is(err, errConnRefused)) {
@@ -80,7 +97,7 @@ func readCodexThreads(socket string, cache codexCache) ([]codexThread, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := c.initialize(); err != nil {
+	if err := c.initialize(version); err != nil {
 		return nil, err
 	}
 	ids, err := c.loadedThreads()
@@ -130,6 +147,41 @@ func readCodexThreads(socket string, cache codexCache) ([]codexThread, error) {
 	return threads, nil
 }
 
+func codexSessions(env *Env) ([]Session, error) {
+	st := state(env, "codex", func() *codexState { return &codexState{cache: codexCache{}, seen: statusClock{}} })
+	threads, err := readCodexThreads(codexSocket(codexHome(env)), st.cache, env.Version)
+	if err != nil {
+		return nil, err
+	}
+	var sessions []Session
+	loaded := map[string]bool{}
+	for _, t := range threads {
+		loaded[t.ID] = true
+		if t.Ephemeral || t.ParentThreadID != nil {
+			continue // hidden helpers and sub-agents
+		}
+		sessions = append(sessions, st.session(t))
+	}
+	st.seen.keep(loaded)
+	return sessions, nil
+}
+
+// The app server gives no time for a status change, so kijk notes when it sees one.
+func (st *codexState) session(t codexThread) Session {
+	last := st.seen.since(t.ID, t.Status.Type+fmt.Sprint(t.Status.ActiveFlags), time.Unix(t.UpdatedAt, 0))
+	if t.busy() {
+		last = time.Now()
+	}
+	name := t.Preview
+	if t.Name != nil && *t.Name != "" {
+		name = *t.Name
+	}
+	if name == "" {
+		name = t.ID[:min(8, len(t.ID))]
+	}
+	return Session{Name: name, Cwd: t.Cwd, Busy: t.busy(), Last: last}
+}
+
 // codexConn offers only the requests that read; the same socket can start turns and approve commands.
 type codexConn struct {
 	nc   net.Conn
@@ -137,8 +189,8 @@ type codexConn struct {
 	next int
 }
 
-func (c *codexConn) initialize() error {
-	params := map[string]any{"clientInfo": map[string]string{"name": "kijk", "version": kijkVersion}}
+func (c *codexConn) initialize(version string) error {
+	params := map[string]any{"clientInfo": map[string]string{"name": "kijk", "version": version}}
 	return c.call("initialize", params, nil)
 }
 

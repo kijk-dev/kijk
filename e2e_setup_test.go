@@ -388,20 +388,6 @@ func claudeAgent(t *testing.T, config, cwd, name, status string) {
 	write(t, filepath.Join(config, "sessions", "1.json"), sessionJSON(os.Getpid(), "s-"+name, cwd, name, status, time.Now().UnixMilli()))
 }
 
-// fakeCodexHome is a Codex home with a fake app server on the socket kijk looks for.
-func fakeCodexHome(t *testing.T) (string, *fakeCodex) {
-	t.Helper()
-	home, err := os.MkdirTemp("/tmp", "kijk-codex") // a socket path must stay under about 104 bytes
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.RemoveAll(home) })
-	if err := os.MkdirAll(filepath.Dir(codexSocket(home)), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	return home, newFakeCodexAt(t, codexSocket(home))
-}
-
 // keepEngines lets the diagram engines that kijk downloads into home outlive the test, so a
 // machine downloads them once. env points kijk's cache into home.
 func keepEngines(t *testing.T, home string) (env string) {

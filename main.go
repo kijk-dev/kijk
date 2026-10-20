@@ -25,6 +25,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/kijk-dev/kijk/internal/agents"
 	"github.com/kijk-dev/kijk/internal/viewer"
 )
 
@@ -174,7 +175,7 @@ func main() {
 		addedNote = addedText(adds, added, false)
 	}
 	go fl.watch(h, u)
-	go watchSessions(newScanner(claudeDir(), codexHome()), h, rts, u, tel, mm, fl)
+	go watchSessions(newScanner(agents.Types, agents.NewEnv(kijkVersion)), h, rts, u, tel, mm, fl)
 
 	web, _ := fs.Sub(webFiles, "web")
 	url := uiURL(a.port, token)
