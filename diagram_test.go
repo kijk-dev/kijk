@@ -46,7 +46,8 @@ func TestPlantUMLBlock(t *testing.T) {
 
 func TestDiagramKind(t *testing.T) {
 	for p, want := range map[string]string{"a/flow.mmd": "mermaid", "FLOW.MMD": "mermaid", "x.Mermaid": "mermaid", "x.md": "", "mmd": "",
-		"docs/Login.PUML": "plantuml", "a.plantuml": "plantuml", "a.pu": "plantuml", "a.wsd": "plantuml", "common.iuml": ""} {
+		"docs/Login.PUML": "plantuml", "a.plantuml": "plantuml", "a.pu": "plantuml", "a.wsd": "plantuml", "common.iuml": "",
+		"docs/Arch.EXCALIDRAW": "excalidraw", "shapes.excalidrawlib": "", "arch.excalidraw.svg": ""} {
 		if got := diagramKind(p); got != want {
 			t.Errorf("%s: %q", p, got)
 		}
@@ -69,6 +70,21 @@ func TestDiagramFileRender(t *testing.T) {
 	}
 }
 
+// A pasted image makes a drawing megabytes, larger than any markdown file kijk renders.
+func TestExcalidrawFileSize(t *testing.T) {
+	dir := t.TempDir()
+	drawing := func(n int) string { return `{"type":"excalidraw","files":{"a":"` + strings.Repeat("x", n) + `"}}` }
+	write(t, filepath.Join(dir, "shot.excalidraw"), drawing(3<<20))
+	write(t, filepath.Join(dir, "huge.excalidraw"), drawing(excalidrawMaxBytes))
+	get := imageServer(t, dir)
+	if w := get("/api/markdown", url.Values{"path": {"shot.excalidraw"}}); w.Code != http.StatusOK || !strings.HasPrefix(w.Body.String(), `{"html":"\u003cpre class=\"diagram excalidraw\" data-lines=\"1-1\"`) {
+		t.Errorf("3 MB: %d %.80q", w.Code, w.Body.String())
+	}
+	if w := get("/api/markdown", url.Values{"path": {"huge.excalidraw"}}); w.Code != http.StatusRequestEntityTooLarge || strings.TrimSpace(w.Body.String()) != "Diagram too large to draw" {
+		t.Errorf("over 8 MB: %d %q", w.Code, w.Body.String())
+	}
+}
+
 func TestDiagramDiff(t *testing.T) {
 	isolatedGit(t)
 	repo := gitRepo(t)
@@ -86,6 +102,8 @@ func TestDiagramDiff(t *testing.T) {
 	write(t, filepath.Join(repo, "flow.mmd"), "A4")
 	write(t, filepath.Join(repo, "new.mmd"), "N1")
 	write(t, filepath.Join(repo, "big.mmd"), strings.Repeat("x", diagramMaxChars+1))
+	write(t, filepath.Join(repo, "shot.excalidraw"), strings.Repeat("x", diagramMaxChars+1))
+	write(t, filepath.Join(repo, "huge.excalidraw"), strings.Repeat("x", excalidrawMaxBytes+1))
 
 	get := imageServer(t, repo)
 	side := func(s *diagramSide) string {
@@ -102,6 +120,8 @@ func TestDiagramDiff(t *testing.T) {
 		{"flow.mmd", "staged", "", "A2 | A3"},
 		{"new.mmd", "untracked", "", "none | N1"},
 		{"big.mmd", "untracked", "", "none | too large"},
+		{"shot.excalidraw", "untracked", "", "none | " + strings.Repeat("x", diagramMaxChars+1)},
+		{"huge.excalidraw", "untracked", "", "none | too large"},
 		{"flow.mmd", "commit", hash, "A1 | A2"},
 		{"gone.mmd", "commit", hash, "G1 | none"},
 	} {
@@ -111,7 +131,7 @@ func TestDiagramDiff(t *testing.T) {
 			t.Errorf("%s %s: %d %s", c.path, c.mode, w.Code, w.Body.String())
 			continue
 		}
-		if got := side(res.Diagram.Before) + " | " + side(res.Diagram.After); got != c.want || res.Diagram.Kind != "mermaid" || len(res.Hunks) == 0 {
+		if got := side(res.Diagram.Before) + " | " + side(res.Diagram.After); got != c.want || res.Diagram.Kind != diagramKind(c.path) || len(res.Hunks) == 0 {
 			t.Errorf("%s %s: %s, %d hunks, want %s", c.path, c.mode, got, len(res.Hunks), c.want)
 		}
 	}

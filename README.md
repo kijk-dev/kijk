@@ -75,6 +75,7 @@ kijk ~/code/api ~/notes
 - SVG images show rendered, with a switch to the source.
 - Mermaid diagrams show as pictures: `mermaid` blocks in markdown, `[mermaid]` blocks in AsciiDoc, and `.mmd` and `.mermaid` files, with a switch to the source. They follow the light or dark theme. A diagram with an error shows its text and the error.
 - PlantUML diagrams show as pictures: `plantuml` and `puml` blocks in markdown and AsciiDoc, and `.puml`, `.plantuml`, `.pu` and `.wsd` files, with a switch to the source. They keep their own colors, on a light card. `!include` reads files from the same folder, and a diagram redraws when an included file changes.
+- Excalidraw drawings in `.excalidraw` files show as pictures, with a switch to the source. They follow the light or dark theme.
 - A single click opens a preview tab. A double click opens a tab that stays.
 - The open file reloads when an agent changes it, and keeps your scroll position.
 - Find in file, go to line, go to file (fuzzy match) and recent files.
@@ -84,7 +85,7 @@ kijk ~/code/api ~/notes
 
 - The Git tab lists the changed files with `+N −N` line counts. Click a file to see its diff, or review with the arrow keys and Space to stage.
 - A changed image shows the before and after pictures side by side. An SVG image can switch to its line diff.
-- A changed Mermaid or PlantUML file shows the before and after diagrams side by side, with a switch to its line diff.
+- A changed Mermaid, PlantUML or Excalidraw file shows the before and after diagrams side by side, with a switch to its line diff.
 - A branch graph shows your branch, the main line and the pull request target, with the commits that are not pushed yet.
 - Stage, commit, push and fetch. There is no discard, checkout, pull or stash, so a click cannot destroy an agent's work.
 - kijk uses your installed `git`, so your config, credentials and hooks apply.

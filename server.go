@@ -14,7 +14,6 @@ import (
 	"strconv"
 	"sync"
 	"time"
-	"unicode/utf8"
 )
 
 // cookieName carries the port: browsers share cookies across the ports of one host, so two
@@ -242,8 +241,13 @@ func (a *api) markdown(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
-	if st.Size() > mdMaxBytes {
-		http.Error(w, "Too large to render", http.StatusRequestEntityTooLarge)
+	kind := diagramKind(r.URL.Query().Get("path"))
+	limit, tooLarge := int64(mdMaxBytes), "Too large to render"
+	if kind != "" {
+		limit, tooLarge = diagramMaxBytes(kind), diagramTooLargeText
+	}
+	if st.Size() > limit {
+		http.Error(w, tooLarge, http.StatusRequestEntityTooLarge)
 		return
 	}
 	src, err := os.ReadFile(path)
@@ -251,9 +255,9 @@ func (a *api) markdown(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
-	if kind := diagramKind(r.URL.Query().Get("path")); kind != "" {
-		if utf8.RuneCount(src) > diagramMaxChars {
-			http.Error(w, "Diagram too large to draw", http.StatusRequestEntityTooLarge)
+	if kind != "" {
+		if diagramTooLarge(kind, src) {
+			http.Error(w, diagramTooLargeText, http.StatusRequestEntityTooLarge)
 			return
 		}
 		reply(w, map[string]string{"html": renderDiagramFile(src, kind)})

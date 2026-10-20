@@ -1,7 +1,8 @@
 // The frame that draws diagrams for the page. Its own CSP lets Mermaid's styles in, which the
 // page's CSP blocks; the page gets each diagram back as SVG text and shows it as a picture.
-const labels = { mermaid: 'Mermaid', plantuml: 'PlantUML' };
+const labels = { mermaid: 'Mermaid', plantuml: 'PlantUML', excalidraw: 'Excalidraw' };
 const urls = document.documentElement.dataset;
+const missing = new Set(urls.missing.split(' ').filter(Boolean)); // engines not in kijk's cache yet
 const scripts = {};
 const loading = {};
 let tries = 0;
@@ -22,20 +23,28 @@ function script(src) {
   return scripts[src];
 }
 
-// PlantUML needs Graphviz and its themes as globals before its module loads. A failed import
-// stays failed for its URL, so a retry asks for a new one.
+// Each engine's files, named as in engine.go. PlantUML needs Graphviz and its themes as globals
+// before its module loads. A failed import stays failed for its URL, so a retry asks for a new one.
+const retry = () => (tries ? `&try=${tries}` : '');
 const engines = {
-  mermaid: () => script(urls.mermaid),
-  plantuml: async () => {
-    await Promise.all([script(urls.graphviz), script(urls.plantumlThemes)]);
-    return import(urls.plantuml + (tries ? `&try=${tries}` : ''));
+  mermaid: { files: ['mermaid'], load: () => script(urls.mermaid) },
+  plantuml: {
+    files: ['plantuml', 'graphviz', 'plantuml-themes'],
+    load: async () => {
+      await Promise.all([script(urls.graphviz), script(urls.plantumlThemes)]);
+      return import(urls.plantuml + retry());
+    },
   },
+  excalidraw: { files: ['excalidraw'], load: () => import(urls.excalidraw + retry()) },
 };
 
 // load gets an engine once. After a failure the next diagram tries again; the server remembers
 // the failure for a minute.
 function load(kind) {
-  loading[kind] ??= engines[kind]().catch(() => {
+  loading[kind] ??= engines[kind].load().then(engine => {
+    engines[kind].files.forEach(f => missing.delete(f));
+    return engine;
+  }, () => {
     delete loading[kind];
     tries++;
     throw new Error(`Could not download ${labels[kind]}`);
@@ -146,6 +155,30 @@ function pictureError(svg, wrapped) {
   return `PlantUML: ${msg} (${line})`;
 }
 
+const MAX_EXCALIDRAW = 8 << 20; // excalidrawMaxBytes in diagram.go
+
+// excalidraw draws in kijk's light or dark colors, on no background, so the drawing sits on the page.
+async function excalidraw({ text, theme }) {
+  if (text.length > MAX_EXCALIDRAW) throw new Error('Diagram too large to draw');
+  let scene = null;
+  try {
+    scene = JSON.parse(text);
+  } catch {}
+  if (scene?.type !== 'excalidraw' || !Array.isArray(scene.elements)) throw new Error('Excalidraw: this file is not a drawing');
+  const elements = scene.elements.filter(x => !x.isDeleted);
+  if (!elements.length) throw new Error('Excalidraw: the drawing is empty');
+  const ex = await load('excalidraw');
+  try {
+    const svg = await ex.exportScene({
+      type: 'svg', data: { elements, appState: scene.appState, files: scene.files },
+      config: { theme, canvasBackgroundColor: false, padding: 16 },
+    });
+    return { svg: new XMLSerializer().serializeToString(svg) };
+  } catch (err) {
+    throw new Error(`Excalidraw: ${String(err?.message || err).split('\n')[0]}`);
+  }
+}
+
 // sized gives the SVG its own width and height from its viewBox: as a picture, Mermaid's
 // width="100%" has no size and the browser makes it 150 px high.
 function sized(svg) {
@@ -157,12 +190,14 @@ function sized(svg) {
   return { svg: svg.replace(tag, () => own), width, height };
 }
 
-const draw = { mermaid, plantuml };
+const draw = { mermaid, plantuml, excalidraw };
 let queue = Promise.resolve(); // one diagram at a time
 
 addEventListener('message', e => {
   if (e.source !== parent || e.origin !== location.origin) return;
   const { id, kind } = e.data;
+  // Told on arrival, so a diagram that waits behind another one also says it is downloading.
+  if (engines[kind]?.files.some(f => missing.has(f))) parent.postMessage({ id, downloading: labels[kind] }, location.origin);
   queue = queue
     .then(() => (draw[kind] ? draw[kind](e.data) : Promise.reject(new Error(`Unknown diagram kind ${kind}`))))
     .then(r => ({ id, ...r, ...(r.svg && sized(r.svg)) }), err => ({ id, error: err.message }))

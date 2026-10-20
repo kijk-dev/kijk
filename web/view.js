@@ -5,8 +5,8 @@ export const LINE_HEIGHT = 18;
 const IMAGE = /\.(png|jpe?g|gif|webp|svg|ico|bmp|avif)$/i;
 const SVG = /\.svg$/i;
 // The same types as diagramKinds in diagram.go.
-const DIAGRAM = /\.(mmd|mermaid|puml|plantuml|pu|wsd)$/i;
-const RENDERED = /\.(md|markdown|adoc|asciidoc|svg|mmd|mermaid|puml|plantuml|pu|wsd)$/i;
+const DIAGRAM = /\.(mmd|mermaid|puml|plantuml|pu|wsd|excalidraw)$/i;
+const RENDERED = /\.(md|markdown|adoc|asciidoc|svg|mmd|mermaid|puml|plantuml|pu|wsd|excalidraw)$/i;
 const CHUNK = 500;
 const FULL = 1000000; // diff context that returns the whole file
 let current = null; // the open file or diff; a newer open makes older fetches stale
@@ -734,10 +734,11 @@ async function diagramDiff(viewer, d, diagram, root, change, mode, bar) {
 
 // Diagrams are drawn in one hidden frame per window, with its own CSP, and come back as SVG.
 // The frame always comes from the local kijk, also for a remote folder.
-const ENGINES = { mermaid: 'Mermaid', plantuml: 'PlantUML' };
+const ENGINES = { mermaid: 'Mermaid', plantuml: 'PlantUML', excalidraw: 'Excalidraw' };
 const DRAWN_MAX = 100;
+const DRAWN_MAX_BYTES = 64 << 20; // an Excalidraw picture can be megabytes
 const drawn = new Map(); // key from drawDiagram -> {key, promise, result}, oldest first
-const waiting = new Map();
+const waiting = new Map(); // draw id -> {resolve, downloading}
 let frame = null;
 let frameReady = null;
 let drawId = 0;
@@ -753,8 +754,11 @@ function diagramFrame() {
     addEventListener('message', e => {
       if (e.source !== frame.contentWindow || e.origin !== location.origin) return;
       if (e.data?.ready) return resolve();
-      waiting.get(e.data?.id)?.(e.data);
-      waiting.delete(e.data?.id);
+      const w = waiting.get(e.data?.id);
+      if (!w) return;
+      if (e.data.downloading) return w.downloading(e.data.downloading);
+      w.resolve(e.data);
+      waiting.delete(e.data.id);
     });
     document.body.append(frame);
   });
@@ -775,39 +779,78 @@ function themeVars() {
   };
 }
 
+// textKey is the text a cache key holds: a digest for Excalidraw, whose text can be megabytes.
+async function textKey(kind, text) {
+  if (kind !== 'excalidraw') return text;
+  const sum = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(sum), b => b.toString(16).padStart(2, '0')).join('');
+}
+
+// frameMessage gives what the frame needs to draw a diagram of each kind.
+const frameMessage = {
+  mermaid: ({ kind, text }) => ({ kind, text, vars: themeVars() }),
+  plantuml: ({ kind, text, root, path }) => {
+    const place = splitKey(root);
+    return { kind, text, base: base(place.machine), root: place.root, path };
+  },
+  excalidraw: ({ kind, text }) => ({ kind, text, theme: darkTheme.matches ? 'dark' : 'light' }),
+};
+
 // drawDiagram gives {svg, width, height, includes} or {error}. A failed download is not kept, so
 // the next open tries again. PlantUML's key has the view's open time: its includes may change unseen.
-function drawDiagram({ kind, text, root, path, openedAt }) {
+function drawDiagram(diagram, keyText) {
+  const { kind, root, path, openedAt } = diagram;
   const plantuml = kind === 'plantuml';
-  const key = `${kind}\n${plantuml ? `${root}\n${path}\n${openedAt}` : darkTheme.matches}\n${text}`;
+  const key = `${kind}\n${plantuml ? `${root}\n${path}\n${openedAt}` : darkTheme.matches}\n${keyText}`;
   let entry = drawn.get(key);
   if (entry) {
     drawn.delete(key);
     drawn.set(key, entry);
     return entry;
   }
-  const place = plantuml && splitKey(root);
-  const msg = plantuml ? { kind, text, base: base(place.machine), root: place.root, path } : { kind, text, vars: themeVars() };
-  entry = { key };
+  const msg = frameMessage[kind](diagram);
+  entry = { key, notes: [] };
+  const downloading = label => {
+    entry.downloading = label;
+    entry.notes.forEach(note => note(label));
+  };
   entry.promise = diagramFrame().then(() => new Promise(resolve => {
     const id = ++drawId;
-    waiting.set(id, resolve);
+    waiting.set(id, { resolve, downloading });
     frame.contentWindow.postMessage({ id, ...msg }, location.origin);
   })).then(r => {
     entry.result = r;
+    entry.notes = [];
     if (r.error?.startsWith('Could not download') && drawn.get(key) === entry) drawn.delete(key);
+    trimDrawn();
     return r;
   });
   drawn.set(key, entry);
-  if (drawn.size > DRAWN_MAX) drawn.delete(drawn.keys().next().value);
+  trimDrawn();
   return entry;
+}
+
+function trimDrawn() {
+  const bytes = e => e.key.length + (e.result?.svg?.length ?? 0);
+  let total = 0;
+  for (const e of drawn.values()) total += bytes(e);
+  for (const [key, e] of drawn) {
+    if (drawn.size <= DRAWN_MAX && total <= DRAWN_MAX_BYTES) break;
+    drawn.delete(key);
+    total -= bytes(e);
+  }
 }
 
 // drawDiagrams shows the diagrams of a view as pictures. Until one is drawn, or when it cannot
 // be, its block shows the text.
 function drawDiagrams(view) {
   return Promise.all((view.diagrams || []).map(async x => {
-    const entry = x.entry = drawDiagram(x);
+    const entry = x.entry = drawDiagram(x, await textKey(x.kind, x.text));
+    if (!entry.result) {
+      const note = label => x.box.replaceChildren(el('p', 'diagram-note busy', `Downloading ${label}…`), x.pre);
+      if (entry.downloading) note(entry.downloading);
+      else entry.notes.push(note);
+    }
     const r = entry.result ?? await entry.promise;
     if (r.error) {
       x.box.replaceChildren(el('p', 'diagram-note', r.error), x.pre);

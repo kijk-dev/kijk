@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -16,12 +17,13 @@ import (
 
 // diagramKinds are the diagram files, by extension. The page has the same list in view.js.
 var diagramKinds = map[string]string{
-	".mmd":      "mermaid",
-	".mermaid":  "mermaid",
-	".puml":     "plantuml",
-	".plantuml": "plantuml",
-	".pu":       "plantuml",
-	".wsd":      "plantuml",
+	".mmd":        "mermaid",
+	".mermaid":    "mermaid",
+	".puml":       "plantuml",
+	".plantuml":   "plantuml",
+	".pu":         "plantuml",
+	".wsd":        "plantuml",
+	".excalidraw": "excalidraw",
 }
 
 // diagramFences are the languages of fenced blocks that hold a diagram, and its kind.
@@ -38,6 +40,26 @@ func diagramKind(p string) string {
 
 // diagramMaxChars is Mermaid's maxTextSize; diagram.js holds it too, for PlantUML.
 const diagramMaxChars = 50000
+
+// excalidrawMaxBytes is larger, as pasted images live inside the drawing. diagram.js holds it too.
+const excalidrawMaxBytes = 8 << 20
+
+const diagramTooLargeText = "Diagram too large to draw"
+
+// diagramMaxBytes is the most a diagram's text can take, so a larger file need not be read.
+func diagramMaxBytes(kind string) int64 {
+	if kind == "excalidraw" {
+		return excalidrawMaxBytes
+	}
+	return 4 * diagramMaxChars // at most 4 bytes a character
+}
+
+func diagramTooLarge(kind string, src []byte) bool {
+	if kind == "excalidraw" {
+		return len(src) > excalidrawMaxBytes
+	}
+	return utf8.RuneCount(src) > diagramMaxChars
+}
 
 // writeDiagram writes a diagram block as uncolored, escaped text: the page draws it. Markdown
 // cannot set a class, so the page can trust the class.
@@ -81,14 +103,14 @@ func diffDiagram(root, kind, path, orig, mode, hash string) *diagramSides {
 	if err != nil {
 		return nil
 	}
-	res := &diagramSides{Kind: kind, Before: diagramText(root, before), After: diagramText(root, after)}
+	res := &diagramSides{Kind: kind, Before: diagramText(root, kind, before), After: diagramText(root, kind, after)}
 	if mode == "commit" && before != nil {
 		res.Parent, _ = git(root, "rev-parse", "--short", hash+"^")
 	}
 	return res
 }
 
-func diagramText(root string, b *blobRef) *diagramSide {
+func diagramText(root, kind string, b *blobRef) *diagramSide {
 	if b == nil {
 		return nil
 	}
@@ -102,7 +124,7 @@ func diagramText(root string, b *blobRef) *diagramSide {
 		if err != nil || st.IsDir() {
 			return nil
 		}
-		if st.Size() > 4*diagramMaxChars { // at most 4 bytes a character
+		if st.Size() > diagramMaxBytes(kind) {
 			return &diagramSide{TooLarge: true}
 		}
 		if src, err = os.ReadFile(p); err != nil {
@@ -113,14 +135,14 @@ func diagramText(root string, b *blobRef) *diagramSide {
 		if err != nil {
 			return nil
 		}
-		if size > 4*diagramMaxChars {
+		if size > diagramMaxBytes(kind) {
 			return &diagramSide{TooLarge: true}
 		}
 		if src, err = gitRaw(root, "cat-file", "blob", b.oid); err != nil {
 			return nil
 		}
 	}
-	if utf8.RuneCount(src) > diagramMaxChars {
+	if diagramTooLarge(kind, src) {
 		return &diagramSide{TooLarge: true}
 	}
 	return &diagramSide{Text: string(src)}
@@ -130,7 +152,8 @@ func diagramText(root string, b *blobRef) *diagramSide {
 // blocks. Its only network is kijk's own API, for PlantUML includes.
 const frameCSP = "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'unsafe-inline'; img-src data:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'"
 
-// serveFrame answers GET /diagram: the frame that draws diagrams, with the engine URLs filled in.
+// serveFrame answers GET /diagram: the frame that draws diagrams, with the engine URLs filled in
+// and the engines not in the cache yet, for which it says it is downloading.
 func serveFrame(web fs.FS) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		page, err := fs.ReadFile(web, "diagram.html")
@@ -138,9 +161,15 @@ func serveFrame(web fs.FS) http.HandlerFunc {
 			fail(w, err)
 			return
 		}
+		var missing []string
 		for name, e := range engines {
 			page = bytes.ReplaceAll(page, []byte("{{"+name+"}}"), []byte(e.src()))
+			if !engineCached(e) {
+				missing = append(missing, name)
+			}
 		}
+		slices.Sort(missing)
+		page = bytes.ReplaceAll(page, []byte("{{missing}}"), []byte(strings.Join(missing, " ")))
 		w.Header().Set("Content-Security-Policy", frameCSP)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-cache")

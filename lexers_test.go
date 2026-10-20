@@ -10,7 +10,7 @@ import (
 func TestLexersFound(t *testing.T) {
 	for file, want := range map[string]string{"docs/guide.adoc": "AsciiDoc", "README.ASCIIDOC": "AsciiDoc",
 		"login.puml": "PlantUML", "a.plantuml": "PlantUML", "a.pu": "PlantUML", "a.wsd": "PlantUML", "docs/common.iuml": "PlantUML",
-		"flow.mmd": "Mermaid", "flow.mermaid": "Mermaid"} {
+		"flow.mmd": "Mermaid", "flow.mermaid": "Mermaid", "docs/arch.excalidraw": "JSON"} {
 		if l := lexerFor(strings.ToLower(file)); l == nil || l.Config().Name != want {
 			t.Errorf("%s: %v", file, l)
 		}

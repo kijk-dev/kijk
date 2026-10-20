@@ -363,6 +363,7 @@ dialog.goto::backdrop { background: none; }
   background: var(--checker-a); outline: 1px solid var(--border); border-radius: 4px;
 }
 .diagram-note { margin: 0 0 4px; color: var(--error); font-size: 12px; }
+.diagram-note.busy { color: var(--muted); }
 .md.diagram-file { max-width: none; }
 .md.diagram-file.actual .diagram-pic { max-width: none; cursor: zoom-out; }
 .side-body .diagram { min-width: 0; max-width: 100%; }
