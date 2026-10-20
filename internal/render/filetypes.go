@@ -46,7 +46,8 @@ var FileTypes = []FileType{
 		}}},
 }
 
-// diagramMaxChars is Mermaid's own default limit; kijk holds PlantUML to it too.
+// diagramMaxChars is Mermaid's own default limit; kijk holds PlantUML to it too. A character takes
+// at most 4 bytes, so MaxBytes is 4 times it.
 const diagramMaxChars = 50000
 
 // A FileType is how kijk shows one type of file.
