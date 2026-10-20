@@ -1,5 +1,5 @@
 import { el, post, folderKey } from './api.js';
-import { refreshTip } from './tip.js';
+import { refreshTip, tipSide } from './tip.js';
 import { openKey, openFolder, closeFolder, setMachine, setupFolder, showFetched, SERVER } from './folder.js';
 import { ago, lineCount } from './git.js';
 import { mac } from './keys.js';
@@ -37,6 +37,8 @@ function announce(text) {
   if (text && announcer.textContent !== text) announcer.textContent = text;
 }
 setupFolder({ lastKey, start, announce, onChange: () => { if (foldersMode) refreshRow(); } });
+tipSide('#rail', 'right');
+tipSide('#statusbar', 'above');
 
 function showStatus(text, isError) {
   statusEl.hidden = !text;

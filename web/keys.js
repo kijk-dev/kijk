@@ -1,5 +1,5 @@
-// The IntelliJ default keys for the platform. Letters and digits match the physical key (e.code),
-// because Alt changes e.key on macOS.
+// The folder view's keys, IntelliJ's defaults for the platform; app.js binds the rail's own keys.
+// Letters and digits match the physical key (e.code), because Alt changes e.key on macOS.
 export const mac = /Mac/.test(navigator.platform);
 
 // A normal browser tab keeps some keys for itself; an app window gives them to the page. Each such
