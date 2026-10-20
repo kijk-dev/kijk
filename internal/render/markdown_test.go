@@ -7,7 +7,7 @@ import (
 
 func TestRenderMarkdownLines(t *testing.T) {
 	src := "# Title\n\nSome text\non two lines.\n\n- one\n- two\n  - nested\n\n```go\nfunc main() {}\n```\n\n| a | b |\n|---|:-:|\n| 1 | 2 |\n"
-	out, err := Markdown([]byte(src))
+	out, _, err := Markdown([]byte(src), "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,7 +32,7 @@ func TestRenderMarkdownLines(t *testing.T) {
 
 func TestRenderMarkdownDropsHTML(t *testing.T) {
 	src := "<script>alert(1)</script>\n\nHi <img src=x onerror=alert(1)> [x](javascript:alert(1)) [y](https://example.com)\n"
-	out, err := Markdown([]byte(src))
+	out, _, err := Markdown([]byte(src), "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +47,7 @@ func TestRenderMarkdownDropsHTML(t *testing.T) {
 }
 
 func TestRenderMarkdownTaskList(t *testing.T) {
-	out, err := Markdown([]byte("- [x] done\n- [ ] todo\n"))
+	out, _, err := Markdown([]byte("- [x] done\n- [ ] todo\n"), "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

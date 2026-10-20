@@ -13,6 +13,12 @@ import (
 	"github.com/kijk-dev/kijk/internal/render"
 )
 
+// The diagram limits, from the list.
+var (
+	diagramMaxChars    = render.TypeOf("x.mmd").MaxChars
+	excalidrawMaxBytes = int(render.TypeOf("x.excalidraw").MaxBytes)
+)
+
 func TestDiagramFileRender(t *testing.T) {
 	dir := t.TempDir()
 	gittest.Write(t, filepath.Join(dir, "docs", "FLOW.MMD"), "graph TD\nA-->B\n")
@@ -90,7 +96,7 @@ func TestDiagramDiff(t *testing.T) {
 			t.Errorf("%s %s: %d %s", c.path, c.mode, w.Code, w.Body.String())
 			continue
 		}
-		if got := side(res.Diagram.Before) + " | " + side(res.Diagram.After); got != c.want || res.Diagram.Kind != render.DiagramKind(c.path) || len(res.Hunks) == 0 {
+		if got := side(res.Diagram.Before) + " | " + side(res.Diagram.After); got != c.want || res.Diagram.Type != render.TypeOf(c.path).Name || len(res.Hunks) == 0 {
 			t.Errorf("%s %s: %s, %d hunks, want %s", c.path, c.mode, got, len(res.Hunks), c.want)
 		}
 	}

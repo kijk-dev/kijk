@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/kijk-dev/kijk/internal/gittest"
+	"github.com/kijk-dev/kijk/internal/render"
 )
 
 // cacheDir is the user cache folder of the engine caches in these tests; fakeEngine sets it.
@@ -37,20 +38,24 @@ func fakeEngine(t *testing.T, body, pinned string, gate chan struct{}) (string, 
 	}))
 	t.Cleanup(srv.Close)
 	sum := sha256.Sum256([]byte(pinned))
-	oldEngines, oldCache := engines, cacheDir
-	engines = map[string]engine{"test": {name: "test", label: "Test", version: "2.0.0", url: srv.URL + "/test.js", sum: hex.EncodeToString(sum[:])}}
+	oldTypes, oldCache := render.FileTypes, cacheDir
+	render.FileTypes = []render.FileType{{Name: "test", Exts: []string{".test"}, Show: render.ShowDrawn, Diff: render.DiffPictures, MaxBytes: 1,
+		Engine: &render.Engine{Label: "Test", Files: []render.Download{{Name: "test", Version: "2.0.0", URL: srv.URL + "/test.js", SHA256: hex.EncodeToString(sum[:])}}}}}
 	dir := t.TempDir()
 	cacheDir = func() (string, error) { return dir, nil }
-	t.Cleanup(func() { engines, cacheDir = oldEngines, oldCache })
+	t.Cleanup(func() { render.FileTypes, cacheDir = oldTypes, oldCache })
 	return filepath.Join(dir, "kijk", "engines"), &n
 }
+
+// testFile is the one engine file of fakeEngine's list.
+func testFile() download { return downloads()["test"] }
 
 func TestEngineDownload(t *testing.T) {
 	dir, n := fakeEngine(t, "draw()", "draw()", nil)
 	gittest.Write(t, filepath.Join(dir, "test-1.0.0.js"), "old")
 	gittest.Write(t, filepath.Join(dir, "test-themes-2.0.0.js"), "another engine")
 	c := newEngineCache(cacheDir, "test")
-	p, err := c.path(engines["test"])
+	p, err := c.path(testFile())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +71,7 @@ func TestEngineDownload(t *testing.T) {
 	if left, _ := filepath.Glob(filepath.Join(dir, ".download-*")); len(left) > 0 {
 		t.Errorf("temp files left: %v", left)
 	}
-	if _, err := newEngineCache(cacheDir, "test").path(engines["test"]); err != nil || n.Load() != 1 {
+	if _, err := newEngineCache(cacheDir, "test").path(testFile()); err != nil || n.Load() != 1 {
 		t.Errorf("cached engine downloaded again: %v, %d requests", err, n.Load())
 	}
 }
@@ -76,18 +81,18 @@ func TestEngineWrongSum(t *testing.T) {
 	now := time.Now()
 	c := newEngineCache(cacheDir, "test")
 	c.now = func() time.Time { return now }
-	if _, err := c.path(engines["test"]); err == nil {
+	if _, err := c.path(testFile()); err == nil {
 		t.Fatal("no error")
 	}
 	if files, _ := os.ReadDir(dir); len(files) != 0 {
 		t.Errorf("saved: %v", files)
 	}
 	now = now.Add(30 * time.Second)
-	if _, err := c.path(engines["test"]); err == nil || n.Load() != 1 {
+	if _, err := c.path(testFile()); err == nil || n.Load() != 1 {
 		t.Errorf("a retry within the minute: %v, %d requests", err, n.Load())
 	}
 	now = now.Add(31 * time.Second)
-	c.path(engines["test"])
+	c.path(testFile())
 	if n.Load() != 2 {
 		t.Errorf("no retry after the minute: %d requests", n.Load())
 	}
@@ -96,7 +101,7 @@ func TestEngineWrongSum(t *testing.T) {
 func TestEngineTooLarge(t *testing.T) {
 	big := strings.Repeat("x", engineMaxBytes+1)
 	dir, _ := fakeEngine(t, big, big, nil)
-	if _, err := newEngineCache(cacheDir, "test").path(engines["test"]); err == nil || !strings.Contains(err.Error(), "larger") {
+	if _, err := newEngineCache(cacheDir, "test").path(testFile()); err == nil || !strings.Contains(err.Error(), "larger") {
 		t.Fatalf("err = %v", err)
 	}
 	if files, _ := os.ReadDir(dir); len(files) != 0 {
@@ -111,7 +116,7 @@ func TestEngineOneDownloadAtATime(t *testing.T) {
 	var wg sync.WaitGroup
 	errs := make([]error, 2)
 	for i := range errs {
-		wg.Go(func() { _, errs[i] = c.path(engines["test"]) })
+		wg.Go(func() { _, errs[i] = c.path(testFile()) })
 	}
 	time.Sleep(50 * time.Millisecond)
 	close(gate)

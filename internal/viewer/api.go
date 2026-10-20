@@ -29,6 +29,7 @@ func Register(mux *http.ServeMux, rts *Roots, o Options) {
 		mux.HandleFunc("GET /diagram", serveFrame(o.Web, ec))
 		mux.HandleFunc("GET /api/engine/{name}", ec.serve)
 	}
+	mux.HandleFunc("GET /api/filetypes", func(w http.ResponseWriter, r *http.Request) { reply(w, render.FileTypes) })
 	mux.HandleFunc("GET /api/tree", a.tree)
 	mux.HandleFunc("GET /api/file", a.file)
 	mux.HandleFunc("GET /api/lines", a.lines)
@@ -176,22 +177,28 @@ func (a *api) lines(w http.ResponseWriter, r *http.Request) {
 	reply(w, lines)
 }
 
+// markdown answers the rendered view of a file: the HTML of a rendered type, or the block of a drawn one.
 func (a *api) markdown(w http.ResponseWriter, r *http.Request) {
 	root, path, ok := a.target(w, r)
 	if !ok {
 		return
+	}
+	rel := r.URL.Query().Get("path")
+	t := render.TypeOf(rel)
+	if t == nil || (t.Show != render.ShowRendered && t.Show != render.ShowDrawn) {
+		http.Error(w, "No rendered view of this file", http.StatusNotFound)
+		return
+	}
+	tooLarge := "Too large to render"
+	if t.Show == render.ShowDrawn {
+		tooLarge = diagramTooLargeText
 	}
 	st, err := os.Stat(path)
 	if err != nil {
 		fail(w, err)
 		return
 	}
-	kind := render.DiagramKind(r.URL.Query().Get("path"))
-	limit, tooLarge := int64(render.MaxSourceBytes), "Too large to render"
-	if kind != "" {
-		limit, tooLarge = diagramMaxBytes(kind), diagramTooLargeText
-	}
-	if st.Size() > limit {
+	if st.Size() > t.MaxBytes {
 		http.Error(w, tooLarge, http.StatusRequestEntityTooLarge)
 		return
 	}
@@ -200,25 +207,25 @@ func (a *api) markdown(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
-	if kind != "" {
-		if diagramTooLarge(kind, src) {
-			http.Error(w, diagramTooLargeText, http.StatusRequestEntityTooLarge)
-			return
-		}
-		reply(w, map[string]string{"html": render.DiagramFile(src, kind)})
+	if t.TooLarge(src) {
+		http.Error(w, tooLarge, http.StatusRequestEntityTooLarge)
 		return
 	}
-	if rel := r.URL.Query().Get("path"); render.IsAsciiDoc(rel) {
-		html, includes := render.AsciiDoc(src, rel, func(inc string) ([]byte, error) { return readIncluded(root, inc) })
-		reply(w, map[string]any{"html": html, "includes": includes})
+	if t.Show == render.ShowDrawn {
+		reply(w, rendered{HTML: render.DiagramFile(src, t.Name)})
 		return
 	}
-	out, err := render.Markdown(src)
+	html, includes, err := t.Render(src, rel, func(inc string) ([]byte, error) { return readIncluded(root, inc) })
 	if err != nil {
 		fail(w, err)
 		return
 	}
-	reply(w, map[string]string{"html": out})
+	reply(w, rendered{html, includes})
+}
+
+type rendered struct {
+	HTML     string   `json:"html"`
+	Includes []string `json:"includes,omitempty"` // the files it shows in place, so it redraws when one changes
 }
 
 // readIncluded reads a file an AsciiDoc file includes, by the same path rule as every route.
@@ -326,11 +333,13 @@ func (a *api) diff(w http.ResponseWriter, r *http.Request) {
 	}
 	highlightDiff(q.Get("path"), &res)
 	out := diffReply{DiffResult: res}
-	if imageType(q.Get("path")) != "" {
-		out.Image = diffImage(root, q.Get("path"), q.Get("orig"), q.Get("mode"), q.Get("hash"))
-	}
-	if kind := render.DiagramKind(q.Get("path")); kind != "" {
-		out.Diagram = diffDiagram(root, kind, q.Get("path"), q.Get("orig"), q.Get("mode"), q.Get("hash"))
+	if t := render.TypeOf(q.Get("path")); t != nil && t.Diff == render.DiffPictures {
+		switch t.Show {
+		case render.ShowImage:
+			out.Image = diffImage(root, q.Get("path"), q.Get("orig"), q.Get("mode"), q.Get("hash"))
+		case render.ShowDrawn:
+			out.Diagram = diffDiagram(root, t, q.Get("path"), q.Get("orig"), q.Get("mode"), q.Get("hash"))
+		}
 	}
 	reply(w, out)
 }

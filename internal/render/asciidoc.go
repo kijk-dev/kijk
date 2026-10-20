@@ -14,19 +14,9 @@ import (
 	"unicode/utf8"
 )
 
-// IsAsciiDoc reports whether a path is an AsciiDoc file; RENDERED in view.js lists them too.
-func IsAsciiDoc(p string) bool {
-	switch strings.ToLower(path.Ext(p)) {
-	case ".adoc", ".asciidoc":
-		return true
-	}
-	return false
-}
-
-// AsciiDoc renders the common parts of AsciiDoc in the shape of Markdown, and names
-// the files it included. Every piece of the files' text is escaped, so a file cannot add HTML.
-// path is the file's path from the folder root; read reads another file there, or is nil.
-func AsciiDoc(src []byte, path string, read func(path string) ([]byte, error)) (string, []string) {
+// AsciiDoc is the Renderer of AsciiDoc: it renders the common parts in the shape of Markdown.
+// Every piece of the files' text is escaped, so a file cannot add HTML. read may be nil.
+func AsciiDoc(src []byte, path string, read func(path string) ([]byte, error)) (string, []string, error) {
 	raw := adocSplit(src)
 	p := &adocParser{
 		r: &adocReader{
@@ -47,7 +37,7 @@ func AsciiDoc(src []byte, path string, read func(path string) ([]byte, error)) (
 		w.node(n)
 	}
 	w.Flush()
-	return out.String(), p.r.inc.files
+	return out.String(), p.r.inc.files, nil
 }
 
 func adocSplit(src []byte) []string {
@@ -773,8 +763,7 @@ func (p *adocParser) body(m *adocMeta, l adocLine) []*adocNode {
 }
 
 func isDiagram(style string) bool {
-	_, ok := diagramFences[style]
-	return ok
+	return FenceType(style) != nil
 }
 
 func adocCodeStyle(style string) bool {
@@ -1353,7 +1342,7 @@ func (w adocWriter) node(n *adocNode) {
 	}
 	if c := n.code; c != nil {
 		if c.diagram {
-			writeDiagram(w.Writer, diagramFences[c.lang], attrs, []byte(strings.Join(c.lines, "\n")))
+			writeDiagram(w.Writer, FenceType(c.lang).Name, attrs, []byte(strings.Join(c.lines, "\n")))
 		} else {
 			writeColored(w.Writer, c.lang, c.lines, attrs)
 		}
@@ -1722,11 +1711,17 @@ func (c adocInline) xrefAngle(sc *adocScan, i int) (int, string) {
 	return j + 2 - i, c.xref(target, strings.TrimSpace(text))
 }
 
+// adocDocument tells whether an xref target names another AsciiDoc file.
+func adocDocument(target string) bool {
+	t := TypeOf(target)
+	return t != nil && t.Name == "asciidoc"
+}
+
 // xref links a section of this file by the slug the page finds headings with, or another file.
 func (c adocInline) xref(target, text string) string {
 	target = strings.TrimSpace(target)
 	file, id, hash := strings.Cut(target, "#")
-	if !hash && !IsAsciiDoc(target) {
+	if !hash && !adocDocument(target) {
 		file, id = "", target
 	}
 	label := func(def string) string {

@@ -47,3 +47,40 @@ func TestAsciiDocRoute(t *testing.T) {
 		t.Errorf("%d %+v", w.Code, book)
 	}
 }
+
+func TestFileTypesRoute(t *testing.T) {
+	get := imageServer(t, t.TempDir())
+	w := get("/api/filetypes", url.Values{})
+	var list []struct {
+		Name   string
+		Show   string
+		Engine *struct {
+			Label    string
+			Includes bool
+		}
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &list); err != nil || len(list) != len(render.FileTypes) {
+		t.Fatalf("%d %v %s", w.Code, err, w.Body.String())
+	}
+	for i, ft := range list {
+		want := render.FileTypes[i]
+		if ft.Name != want.Name || ft.Show != string(want.Show) || (ft.Engine == nil) != (want.Engine == nil) {
+			t.Errorf("%+v, want %s", ft, want.Name)
+		}
+	}
+	if strings.Contains(w.Body.String(), "sha256") || strings.Contains(w.Body.String(), "https:") {
+		t.Errorf("the page gets no download data: %s", w.Body.String())
+	}
+}
+
+func TestNoRenderedView(t *testing.T) {
+	dir := t.TempDir()
+	gittest.Write(t, filepath.Join(dir, "main.go"), "package main\n")
+	gittest.Write(t, filepath.Join(dir, "logo.svg"), "<svg/>")
+	get := imageServer(t, dir)
+	for _, p := range []string{"main.go", "logo.svg"} {
+		if w := get("/api/markdown", url.Values{"path": {p}}); w.Code != http.StatusNotFound {
+			t.Errorf("%s: %d %q", p, w.Code, w.Body.String())
+		}
+	}
+}

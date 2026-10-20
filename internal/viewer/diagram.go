@@ -7,33 +7,12 @@ import (
 	"os"
 	"slices"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/kijk-dev/kijk/internal/git"
+	"github.com/kijk-dev/kijk/internal/render"
 )
 
-// diagramMaxChars is Mermaid's maxTextSize; diagram.js holds it too, for PlantUML.
-const diagramMaxChars = 50000
-
-// excalidrawMaxBytes is larger, as pasted images live inside the drawing. diagram.js holds it too.
-const excalidrawMaxBytes = 8 << 20
-
 const diagramTooLargeText = "Diagram too large to draw"
-
-// diagramMaxBytes is the most a diagram's text can take, so a larger file need not be read.
-func diagramMaxBytes(kind string) int64 {
-	if kind == "excalidraw" {
-		return excalidrawMaxBytes
-	}
-	return 4 * diagramMaxChars // at most 4 bytes a character
-}
-
-func diagramTooLarge(kind string, src []byte) bool {
-	if kind == "excalidraw" {
-		return len(src) > excalidrawMaxBytes
-	}
-	return utf8.RuneCount(src) > diagramMaxChars
-}
 
 // diagramSide is one version of a changed diagram file.
 type diagramSide struct {
@@ -42,25 +21,25 @@ type diagramSide struct {
 }
 
 type diagramSides struct {
-	Kind   string       `json:"kind"`
+	Type   string       `json:"type"` // the name of the file type
 	Before *diagramSide `json:"before"`
 	After  *diagramSide `json:"after"`
 	Parent string       `json:"parent,omitempty"` // a commit's first parent, short, to name the before side
 }
 
-func diffDiagram(root, kind, path, orig, mode, hash string) *diagramSides {
+func diffDiagram(root string, t *render.FileType, path, orig, mode, hash string) *diagramSides {
 	before, after, err := changeSides(root, path, orig, mode, hash)
 	if err != nil {
 		return nil
 	}
-	res := &diagramSides{Kind: kind, Before: diagramText(root, kind, before), After: diagramText(root, kind, after)}
+	res := &diagramSides{Type: t.Name, Before: diagramText(root, t, before), After: diagramText(root, t, after)}
 	if mode == "commit" && before != nil {
 		res.Parent, _ = git.Run(root, "rev-parse", "--short", hash+"^")
 	}
 	return res
 }
 
-func diagramText(root, kind string, b *blobRef) *diagramSide {
+func diagramText(root string, t *render.FileType, b *blobRef) *diagramSide {
 	if b == nil {
 		return nil
 	}
@@ -74,7 +53,7 @@ func diagramText(root, kind string, b *blobRef) *diagramSide {
 		if err != nil || st.IsDir() {
 			return nil
 		}
-		if st.Size() > diagramMaxBytes(kind) {
+		if st.Size() > t.MaxBytes {
 			return &diagramSide{TooLarge: true}
 		}
 		if src, err = os.ReadFile(p); err != nil {
@@ -85,14 +64,14 @@ func diagramText(root, kind string, b *blobRef) *diagramSide {
 		if err != nil {
 			return nil
 		}
-		if size > diagramMaxBytes(kind) {
+		if size > t.MaxBytes {
 			return &diagramSide{TooLarge: true}
 		}
 		if src, err = git.Raw(root, "cat-file", "blob", b.oid); err != nil {
 			return nil
 		}
 	}
-	if diagramTooLarge(kind, src) {
+	if t.TooLarge(src) {
 		return &diagramSide{TooLarge: true}
 	}
 	return &diagramSide{Text: string(src)}
@@ -112,9 +91,9 @@ func serveFrame(web fs.FS, c *engineCache) http.HandlerFunc {
 			return
 		}
 		var missing []string
-		for name, e := range engines {
-			page = bytes.ReplaceAll(page, []byte("{{"+name+"}}"), []byte(e.src()))
-			if !c.cached(e) {
+		for name, d := range c.files {
+			page = bytes.ReplaceAll(page, []byte("{{"+name+"}}"), []byte(d.src()))
+			if !c.cached(d) {
 				missing = append(missing, name)
 			}
 		}

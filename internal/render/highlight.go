@@ -15,8 +15,8 @@ const hlMaxBytes = 512 << 10 // larger windows stay plain; chroma is too slow fo
 type Token = [2]string
 
 func LexerFor(path string) chroma.Lexer {
-	if DiagramKind(filepath.ToSlash(path)) == "excalidraw" { // a drawing is JSON
-		return chroma.Coalesce(lexers.Get("json"))
+	if t := TypeOf(filepath.ToSlash(path)); t != nil && t.Lexer != "" {
+		return chroma.Coalesce(lexers.Get(t.Lexer))
 	}
 	if l := lexers.Match(filepath.Base(path)); l != nil {
 		return chroma.Coalesce(l)

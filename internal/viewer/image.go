@@ -5,40 +5,25 @@ import (
 	"io/fs"
 	"net/http"
 	"os"
-	"path"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/kijk-dev/kijk/internal/git"
+	"github.com/kijk-dev/kijk/internal/render"
 )
-
-// imageTypes are the files kijk shows as pictures. The type comes from the extension, never from
-// the bytes: an SVG is text, and a type guessed from the bytes is what nosniff exists to stop.
-var imageTypes = map[string]string{
-	".png":  "image/png",
-	".jpg":  "image/jpeg",
-	".jpeg": "image/jpeg",
-	".gif":  "image/gif",
-	".webp": "image/webp",
-	".svg":  "image/svg+xml",
-	".ico":  "image/x-icon",
-	".bmp":  "image/bmp",
-	".avif": "image/avif",
-}
 
 // imageType returns the content type of a slash-separated path, or "" when it is not an image.
 func imageType(p string) string {
-	return imageTypes[strings.ToLower(path.Ext(p))]
+	if t := render.TypeOf(p); t != nil {
+		return t.MIME
+	}
+	return ""
 }
 
 func IsImageType(ct string) bool {
-	for _, t := range imageTypes {
-		if t == ct {
-			return true
-		}
-	}
-	return false
+	return ct != "" && slices.ContainsFunc(render.FileTypes, func(t render.FileType) bool { return t.MIME == ct })
 }
 
 const lfsMaxPointer = 1024

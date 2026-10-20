@@ -721,7 +721,7 @@ async function diagramDiff(viewer, d, diagram, root, change, mode, bar) {
       const box = el('div', 'diagram');
       box.append(pre);
       body.append(box);
-      d.diagrams.push({ box, pre, kind: diagram.kind, text: s.text, root, path: i === 0 && change.orig ? change.orig : change.path, openedAt: d.openedAt });
+      d.diagrams.push({ box, pre, kind: diagram.type, text: s.text, root, path: i === 0 && change.orig ? change.orig : change.path, openedAt: d.openedAt });
     }
     side.append(sideHead(i, versions), body);
     grid.append(side);

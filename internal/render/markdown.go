@@ -32,9 +32,9 @@ var md = goldmark.New(
 	goldmark.WithRendererOptions(renderer.WithNodeRenderers(util.Prioritized(codeRenderer{}, 100))),
 )
 
-// Markdown returns the HTML of a markdown file. Each top-level block and list item carries
+// Markdown is the Renderer of markdown. Each top-level block and list item carries
 // data-lines="first-last", the 1-based source lines it covers, for change marks and switching views.
-func Markdown(src []byte) (string, error) {
+func Markdown(src []byte, _ string, _ func(string) ([]byte, error)) (string, []string, error) {
 	doc := md.Parser().Parse(text.NewReader(src))
 	starts := []int{0}
 	for i, b := range src {
@@ -46,9 +46,9 @@ func Markdown(src []byte) (string, error) {
 	markLines(doc, len(starts), true, lineOf)
 	var out bytes.Buffer
 	if err := md.Renderer().Render(&out, src, doc); err != nil {
-		return "", err
+		return "", nil, err
 	}
-	return out.String(), nil
+	return out.String(), nil, nil
 }
 
 // markLines marks top-level blocks and list items with the lines of lineRanges.
@@ -115,8 +115,8 @@ func renderCode(w util.BufWriter, src []byte, n ast.Node, entering bool) (ast.Wa
 
 // writeCode writes a diagram block when lang names a diagram, else the lines colored for lang.
 func writeCode(w util.BufWriter, lang string, lines []string, attrs func()) {
-	if kind, ok := diagramFences[lang]; ok {
-		writeDiagram(w, kind, attrs, []byte(strings.Join(lines, "\n")))
+	if t := FenceType(lang); t != nil {
+		writeDiagram(w, t.Name, attrs, []byte(strings.Join(lines, "\n")))
 		return
 	}
 	writeColored(w, lang, lines, attrs)
