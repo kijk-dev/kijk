@@ -188,6 +188,7 @@ func TestScanInstalled(t *testing.T) {
 	}{
 		{"Codex only", missing, agentstest.ShortTempDir(t), true},
 		{"Claude Code only", claude, missing, true},
+		{"Claude Code without sessions, and Codex", t.TempDir(), agentstest.ShortTempDir(t), true},
 		{"neither", missing, missing, false},
 	} {
 		rows, errs, installed := newScanner(agents.Types, testEnv(t, "CLAUDE_CONFIG_DIR", c.claude, "CODEX_HOME", c.codex)).scan()

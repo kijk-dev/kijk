@@ -102,9 +102,15 @@ func TestClaudeSessions(t *testing.T) {
 
 func TestClaudeErrors(t *testing.T) {
 	dir := t.TempDir()
-	if _, err := claudeSessions(claudeEnv(t, dir)); err == nil {
-		t.Fatal("want error for a missing sessions folder")
+	env := claudeEnv(t, dir)
+	if sessions, err := claudeSessions(env); err != nil || len(sessions) != 0 || !env.Installed() {
+		t.Fatalf("no sessions folder: got %v, %v; want no agents, no error, and Claude Code installed", sessions, err)
 	}
+	write(t, filepath.Join(dir, "sessions"), "not a folder")
+	if _, err := claudeSessions(claudeEnv(t, dir)); err == nil {
+		t.Fatal("want error for a sessions folder kijk cannot read")
+	}
+	os.Remove(filepath.Join(dir, "sessions"))
 	write(t, filepath.Join(dir, "sessions", "9.json"), "{broken")
 	_, err := claudeSessions(claudeEnv(t, dir))
 	if err == nil || !strings.Contains(err.Error(), "9.json") {

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -61,6 +62,9 @@ func claudeSessions(env *Env) ([]Session, error) {
 	st := state(env, "claude", func() *claudeState { return &claudeState{transcripts: map[string]transcript{}} })
 	sessDir := filepath.Join(dir, "sessions")
 	des, err := os.ReadDir(sessDir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil // Claude Code has written no session file here yet
+	}
 	if err != nil {
 		return nil, fmt.Errorf("cannot read Claude sessions folder %s: %w", sessDir, err)
 	}
