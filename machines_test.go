@@ -78,13 +78,40 @@ func TestParseBoot(t *testing.T) {
 
 func TestSessionMessageWithoutMachines(t *testing.T) {
 	var mm *machineManager
-	b := sessionMessage([]Row{}, nil, nil, kijkState{Version: "0.9.0"}, mm.views())
+	b := sessionMessage([]Row{}, nil, false, kijkState{Version: "0.9.0"}, mm.views())
 	if string(b) != `{"rows":[],"kijk":{"version":"0.9.0","canRestart":false}}` {
 		t.Fatalf("local-only message changed: %s", b)
 	}
-	b = sessionMessage(nil, nil, nil, kijkState{}, []machineView{{Name: "azvm", State: stateDisabled, Rows: []Row{}}})
+	b = sessionMessage(nil, nil, false, kijkState{}, []machineView{{Name: "azvm", State: stateDisabled, Rows: []Row{}}})
 	if !strings.Contains(string(b), `"machines":[{"name":"azvm","state":"disabled","stale":false,"rows":[]}]`) {
 		t.Fatalf("machines: %s", b)
+	}
+}
+
+func TestSessionMessageErrors(t *testing.T) {
+	b := sessionMessage([]Row{}, []typeError{{"claude", "cannot read"}}, true, kijkState{Version: "0.9.0"}, nil)
+	if string(b) != `{"rows":[],"errors":[{"type":"claude","error":"cannot read"}],"noneInstalled":true,"kijk":{"version":"0.9.0","canRestart":false}}` {
+		t.Fatalf("message: %s", b)
+	}
+}
+
+// The errors of the kijk on a remote machine pass through while it is connected.
+func TestRemoteErrors(t *testing.T) {
+	msg := `{"rows":[{"root":"/r","names":["a"],"agents":[{"type":"codex","busy":false}]}],"errors":[{"type":"claude","error":"cannot read session file"}],"noneInstalled":true}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, "data: %s\n\n", msg)
+	}))
+	defer srv.Close()
+	addr := strings.TrimPrefix(srv.URL, "http://")
+	r := &remoteMachine{name: "azvm", mm: newMachineManager("0.9.0"), state: stateConnected,
+		proxy: newRemoteProxy(&http.Transport{}, addr, &http.Cookie{Name: "kijk", Value: "token"})}
+	r.follow(context.Background()) // returns when the stream ends
+	if v := r.view(); len(v.Rows) != 1 || !slices.Equal(v.Errors, []typeError{{"claude", "cannot read session file"}}) || v.Message != "" {
+		t.Fatalf("view = %+v", v)
+	}
+	r.state = stateReconnecting
+	if v := r.view(); v.Errors != nil {
+		t.Fatalf("errors of a machine that is not connected: %v", v.Errors)
 	}
 }
 

@@ -1,15 +1,17 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/kijk-dev/kijk/internal/agents"
+	"github.com/kijk-dev/kijk/internal/agentstest"
 	"github.com/kijk-dev/kijk/internal/gittest"
 )
 
@@ -28,22 +30,18 @@ func run(t *testing.T, dir string, args ...string) {
 	gittest.Run(t, dir, args...)
 }
 
-func sessionJSON(pid int, id, cwd, name, status string, startedAt int64) string {
-	return fmt.Sprintf(`{"pid":%d,"sessionId":%q,"cwd":%q,"name":%q,"status":%q,"startedAt":%d,"futureField":{"x":1}}`,
-		pid, id, cwd, name, status, startedAt)
-}
-
-// noCodex is a Codex home that does not exist, so no Codex agent shows.
-func noCodex(t *testing.T) string {
-	return filepath.Join(t.TempDir(), "codex")
-}
-
-func deadPID(t *testing.T) int {
-	cmd := exec.Command(os.Args[0], "-test.run=^$")
-	if err := cmd.Run(); err != nil {
-		t.Fatal(err)
+// testEnv is a machine with an empty home folder and only the environment variables in kv.
+func testEnv(t *testing.T, kv ...string) *agents.Env {
+	vars := map[string]string{}
+	for i := 0; i+1 < len(kv); i += 2 {
+		vars[kv[i]] = kv[i+1]
 	}
-	return cmd.Process.Pid
+	return &agents.Env{Home: t.TempDir(), Getenv: func(k string) string { return vars[k] }, Version: "dev"}
+}
+
+func exists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 func samePath(t *testing.T, got, want string) {
@@ -54,60 +52,6 @@ func samePath(t *testing.T, got, want string) {
 		t.Fatalf("path = %q, want %q", got, want)
 	}
 }
-
-func TestReadSessionFile(t *testing.T) {
-	p := filepath.Join(t.TempDir(), "1.json")
-	write(t, p, sessionJSON(42, "abc", "/x", "fix", "busy", 5))
-	s, err := readSessionFile(p)
-	if err != nil || s.PID != 42 || s.SessionID != "abc" || s.Status != "busy" || s.StartedAt != 5 {
-		t.Fatalf("got %+v, %v", s, err)
-	}
-	write(t, p, `{"status":"idle"}`)
-	if _, err := readSessionFile(p); err == nil {
-		t.Fatal("want error for a file without pid")
-	}
-}
-
-func TestLastCwd(t *testing.T) {
-	p := filepath.Join(t.TempDir(), "t.jsonl")
-	write(t, p, `{"type":"user","cwd":"/repo"}`+"\n"+
-		`{"type":"user","cwd":"/tmp/wt-feature"}`+"\n"+
-		`{"type":"user","message":{"content":"{\"cwd\":\"/evil\"}"}}`+"\n")
-	if got := lastCwd(p); got != "/tmp/wt-feature" {
-		t.Fatalf("got %q", got)
-	}
-
-	// cwd only near the start of a file much larger than the first read window
-	write(t, p, `{"cwd":"C:\\Users\\me\\repo"}`+"\n"+strings.Repeat(`{"type":"x","data":"yyyyyyyy"}`+"\n", 20000))
-	if got := lastCwd(p); got != `C:\Users\me\repo` {
-		t.Fatalf("got %q", got)
-	}
-}
-
-func TestFirstPrompt(t *testing.T) {
-	p := filepath.Join(t.TempDir(), "t.jsonl")
-	write(t, p, `{"type":"last-prompt","leafUuid":"a"}`+"\n"+
-		`{"type":"last-prompt","lastPrompt":"fix the \"login\" bug\u2026"}`+"\n"+
-		`{"type":"last-prompt","lastPrompt":"later prompt"}`+"\n")
-	if got := firstPrompt(p); got != `fix the "login" bug…` {
-		t.Fatalf("got %q", got)
-	}
-}
-
-func TestIsRunning(t *testing.T) {
-	now := time.Now().UnixMilli()
-	if !isRunning(os.Getpid(), now) {
-		t.Error("own process should be running")
-	}
-	if isRunning(os.Getpid(), now-time.Hour.Milliseconds()-time.Since(startTime).Milliseconds()) {
-		t.Error("a process that started after the session file is a reused pid")
-	}
-	if isRunning(deadPID(t), now) {
-		t.Error("dead process should not be running")
-	}
-}
-
-var startTime = time.Now()
 
 func TestGroupRows(t *testing.T) {
 	now := time.Now()
@@ -144,74 +88,108 @@ func TestGitInfo(t *testing.T) {
 }
 
 func TestScan(t *testing.T) {
-	dir := t.TempDir()
+	claude := t.TempDir()
 	repo := gitRepo(t)
 	os.MkdirAll(filepath.Join(repo, "src"), 0o755)
-	now := time.Now().UnixMilli()
-	write(t, filepath.Join(dir, "sessions", "1.json"), sessionJSON(os.Getpid(), "s1", "/started/here", "", "busy", now))
-	write(t, filepath.Join(dir, "projects", "enc", "s1.jsonl"),
-		`{"type":"last-prompt","lastPrompt":"review the code"}`+"\n"+fmt.Sprintf(`{"cwd":%q}`, filepath.Join(repo, "src")))
-	write(t, filepath.Join(dir, "sessions", "2.json"), sessionJSON(deadPID(t), "s2", repo, "stale", "idle", now))
-	write(t, filepath.Join(dir, "sessions", "3.json"), "not json")
-
-	rows, err, _ := newScanner(dir, noCodex(t)).scan()
-	if err != nil {
-		t.Fatal(err)
+	write(t, filepath.Join(claude, "sessions", "1.json"), agentstest.SessionJSON(os.Getpid(), "s1", filepath.Join(repo, "src"), "review the code", "busy", time.Now().UnixMilli()))
+	rows, errs, _ := newScanner(agents.Types, testEnv(t, "CLAUDE_CONFIG_DIR", claude)).scan()
+	if errs != nil {
+		t.Fatal(errs)
 	}
 	if len(rows) != 1 {
 		t.Fatalf("got %d rows: %+v", len(rows), rows)
 	}
 	samePath(t, rows[0].Root, repo)
-	if rows[0].Names[0] != "review the code" || !rows[0].Busy || rows[0].Branch != "main" {
+	if rows[0].Names[0] != "review the code" || !rows[0].Busy || rows[0].Branch != "main" || rows[0].Cwd != "src" ||
+		!slices.Equal(rows[0].Agents, []RowAgent{{"claude", true}}) {
 		t.Fatalf("row = %+v", rows[0])
 	}
 }
 
-func TestScanErrors(t *testing.T) {
-	dir := t.TempDir()
-	if _, err, _ := newScanner(dir, noCodex(t)).scan(); err == nil {
-		t.Fatal("want error for a missing sessions folder")
+func TestScanClaudeAndCodexInOneFolder(t *testing.T) {
+	claude := t.TempDir()
+	repo := gitRepo(t)
+	write(t, filepath.Join(claude, "sessions", "1.json"),
+		strings.Replace(agentstest.SessionJSON(os.Getpid(), "s1", repo, "auth-fix", "idle", time.Now().UnixMilli()),
+			`"futureField"`, fmt.Sprintf(`"statusUpdatedAt":%d,"futureField"`, time.Now().Add(-time.Hour).UnixMilli()), 1))
+	codexHome, f := agentstest.CodexHome(t)
+	f.Set(agentstest.Thread("t1", repo, "active", "name", "fix the login bug"))
+	rows, errs, _ := newScanner(agents.Types, testEnv(t, "CLAUDE_CONFIG_DIR", claude, "CODEX_HOME", codexHome)).scan()
+	if errs != nil || len(rows) != 1 {
+		t.Fatalf("rows = %+v, errs = %v", rows, errs)
 	}
-	write(t, filepath.Join(dir, "sessions", "9.json"), "{broken")
-	_, err, _ := newScanner(dir, noCodex(t)).scan()
-	if err == nil || !strings.Contains(err.Error(), "9.json") {
-		t.Fatalf("want error naming the file, got %v", err)
-	}
-	os.WriteFile(filepath.Join(dir, "sessions", "9.json"), []byte(sessionJSON(deadPID(t), "x", "/", "", "", 1)), 0o644)
-	if rows, err, _ := newScanner(dir, noCodex(t)).scan(); err != nil || len(rows) != 0 {
-		t.Fatalf("got %v, %v", rows, err)
-	}
-}
-
-func TestClaudeDir(t *testing.T) {
-	t.Setenv("CLAUDE_CONFIG_DIR", "/custom")
-	if claudeDir() != "/custom" {
-		t.Fatal(claudeDir())
+	r := rows[0]
+	if !slices.Equal(r.Names, []string{"fix the login bug", "auth-fix"}) || !slices.Equal(r.Agents, []RowAgent{{"codex", true}, {"claude", false}}) || !r.Busy {
+		t.Fatalf("row = %+v, want the busy Codex agent first", r)
 	}
 }
 
-func TestScanIdleAge(t *testing.T) {
-	dir := t.TempDir()
+// fakeType is an agent type for scanner tests, with the sessions and error its reader gives.
+func fakeType(name string, err error, sessions ...agents.Session) agents.AgentType {
+	return agents.AgentType{Name: name, Label: name, Sessions: func(*agents.Env) ([]agents.Session, error) { return sessions, err }}
+}
+
+func TestScanFailingTypeHidesOnlyItsAgents(t *testing.T) {
 	now := time.Now()
-	idleSince := now.Add(-48 * time.Hour).UnixMilli()
-	withField := strings.Replace(sessionJSON(os.Getpid(), "s1", t.TempDir(), "a", "idle", now.UnixMilli()),
-		`"futureField"`, fmt.Sprintf(`"statusUpdatedAt":%d,"futureField"`, idleSince), 1)
-	write(t, filepath.Join(dir, "sessions", "1.json"), withField)
-	write(t, filepath.Join(dir, "projects", "enc", "s1.jsonl"), `{"type":"mode"}`+"\n") // fresh mtime, no new messages
-	old := filepath.Join(dir, "sessions", "2.json")
-	write(t, old, sessionJSON(os.Getpid(), "s2", t.TempDir(), "b", "idle", now.UnixMilli()))
-	os.Chtimes(old, now.Add(-3*time.Hour), now.Add(-3*time.Hour))
+	types := []agents.AgentType{
+		fakeType("one", nil, agents.Session{Name: "a", Cwd: t.TempDir(), Last: now}),
+		fakeType("two", errors.New("unreadable")),
+		fakeType("three", nil, agents.Session{Name: "b", Cwd: t.TempDir(), Last: now}),
+		fakeType("four", errors.New("gone")),
+	}
+	rows, errs, _ := newScanner(types, testEnv(t)).scan()
+	if len(rows) != 2 || rows[0].Agents[0].Type != "one" || rows[1].Agents[0].Type != "three" {
+		t.Fatalf("rows = %+v, want the agents of one and three", rows)
+	}
+	if !slices.Equal(errs, []typeError{{"two", "unreadable"}, {"four", "gone"}}) {
+		t.Fatalf("errs = %v", errs)
+	}
+}
 
-	rows, err, _ := newScanner(dir, noCodex(t)).scan()
-	if err != nil || len(rows) != 2 {
-		t.Fatalf("rows = %+v, err = %v", rows, err)
+func TestScanBrokenCodexKeepsClaude(t *testing.T) {
+	claude := t.TempDir()
+	write(t, filepath.Join(claude, "sessions", "1.json"), agentstest.SessionJSON(os.Getpid(), "s1", t.TempDir(), "docs", "idle", time.Now().UnixMilli()))
+	codexHome, f := agentstest.CodexHome(t)
+	f.Reply(func(c *agentstest.Conn, id int, _ string) { c.Send(0x1, []byte("{oops")) })
+	rows, errs, _ := newScanner(agents.Types, testEnv(t, "CLAUDE_CONFIG_DIR", claude, "CODEX_HOME", codexHome)).scan()
+	if len(errs) != 1 || errs[0].Type != "codex" || len(rows) != 1 || rows[0].Names[0] != "docs" {
+		t.Fatalf("rows = %+v, errs = %v", rows, errs)
 	}
-	ages := map[string]time.Duration{}
-	for _, r := range rows {
-		ages[r.Names[0]] = now.Sub(time.UnixMilli(r.LastActivity)).Round(time.Hour)
+}
+
+func TestScanBrokenClaudeKeepsCodex(t *testing.T) {
+	claude := t.TempDir()
+	write(t, filepath.Join(claude, "sessions", "9.json"), "{broken")
+	codexHome, f := agentstest.CodexHome(t)
+	f.Set(agentstest.Thread("t1", t.TempDir(), "idle", "name", "fix the login bug"))
+	rows, errs, _ := newScanner(agents.Types, testEnv(t, "CLAUDE_CONFIG_DIR", claude, "CODEX_HOME", codexHome)).scan()
+	if len(errs) != 1 || errs[0].Type != "claude" || !strings.Contains(errs[0].Error, "9.json") {
+		t.Fatalf("errs = %v, want the Claude Code error naming the file", errs)
 	}
-	if ages["a"] != 48*time.Hour || ages["b"] != 3*time.Hour {
-		t.Fatalf("ages = %v, want a 48h (statusUpdatedAt) and b 3h (session file)", ages)
+	if len(rows) != 1 || rows[0].Names[0] != "fix the login bug" {
+		t.Fatalf("rows = %+v, want the Codex agent", rows)
+	}
+}
+
+// A missing tool folder is no error, and the scan says whether any tool is installed.
+func TestScanInstalled(t *testing.T) {
+	claude := t.TempDir()
+	os.Mkdir(filepath.Join(claude, "sessions"), 0o755)
+	missing := filepath.Join(t.TempDir(), "missing")
+	for _, c := range []struct {
+		name          string
+		claude, codex string
+		installed     bool
+	}{
+		{"Codex only", missing, agentstest.ShortTempDir(t), true},
+		{"Claude Code only", claude, missing, true},
+		{"Claude Code without sessions, and Codex", t.TempDir(), agentstest.ShortTempDir(t), true},
+		{"neither", missing, missing, false},
+	} {
+		rows, errs, installed := newScanner(agents.Types, testEnv(t, "CLAUDE_CONFIG_DIR", c.claude, "CODEX_HOME", c.codex)).scan()
+		if len(rows) != 0 || errs != nil || installed != c.installed {
+			t.Errorf("%s: got %v, %v, installed %v", c.name, rows, errs, installed)
+		}
 	}
 }
 

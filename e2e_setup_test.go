@@ -5,6 +5,7 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image"
 	"image/color"
@@ -12,15 +13,19 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/chromedp/cdproto"
 	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/emulation"
 	"github.com/chromedp/chromedp"
 	"github.com/chromedp/chromedp/kb"
+
+	"github.com/kijk-dev/kijk/internal/agentstest"
 )
 
 const stepTimeout = 15 * time.Second
@@ -192,13 +197,40 @@ func evalJS[T any](p page, js string) T {
 
 func (p page) click(what, el string) {
 	p.t.Helper()
-	p.act("click "+what, chromedp.Click(chromedp.JSPath(el)))
+	p.act("click "+what, delivered(chromedp.Click(chromedp.JSPath(el))))
 }
 
 func (p page) doubleClick(what, el string) {
 	p.t.Helper()
-	p.act("double-click "+what, chromedp.DoubleClick(chromedp.JSPath(el)))
+	p.act("double-click "+what, delivered(chromedp.DoubleClick(chromedp.JSPath(el))))
 }
+
+// delivered clicks again when the page redrew the element during the click, as a Git tab refresh
+// does to its list: then its node is gone, or the browser sends no click event at all.
+func delivered(click chromedp.Action[chromedp.Void]) chromedp.Action[chromedp.Void] {
+	return chromedp.Func(func(ctx context.Context, t *chromedp.Target) error {
+		for {
+			if _, err := chromedp.Evaluate[bool](`(window.e2eClicked = false, document.addEventListener('click', () => window.e2eClicked = true, {capture: true, once: true}), true)`)(ctx, t); err != nil {
+				return err
+			}
+			_, err := click(ctx, t)
+			var e *cdproto.Error
+			if errors.As(err, &e) && slices.Contains(goneNode, e.Message) && ctx.Err() == nil {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			// A click that opened another page leaves no flag behind.
+			if lost, err := chromedp.Evaluate[bool](`window.e2eClicked === false`)(ctx, t); err != nil || !lost {
+				return err
+			}
+		}
+	})
+}
+
+// goneNode are the browser's errors for a node that left the page.
+var goneNode = []string{"Could not find node with given id", "Node is detached from document", "Node with given id does not belong to the document"}
 
 // typeText types into the element that has the focus.
 func (p page) typeText(text string) {
@@ -383,23 +415,21 @@ func apiRepo(t *testing.T) (dir, origin string) {
 
 // claudeAgent writes the session file of a Claude Code agent in config, run by this test's own
 // process, so kijk sees it running.
-func claudeAgent(t *testing.T, config, cwd, name, status string) {
+// journeyMachine saves one fake machine. The real binary keeps its logins where a user's kijk does,
+// so the login goes when the journey ends; its target is a name no one else uses.
+func journeyMachine(t *testing.T) (*fakeMachines, string) {
 	t.Helper()
-	write(t, filepath.Join(config, "sessions", "1.json"), sessionJSON(os.Getpid(), "s-"+name, cwd, name, status, time.Now().UnixMilli()))
+	m := newFakeMachines(t)
+	vm := m.add("vm", "vm", "")
+	t.Cleanup(func() {
+		os.Remove(filepath.Join("/tmp", fmt.Sprintf("kijk-%d", os.Getuid()), filepath.Base(newSSHClient(vm).ctl)))
+	})
+	return m, vm
 }
 
-// fakeCodexHome is a Codex home with a fake app server on the socket kijk looks for.
-func fakeCodexHome(t *testing.T) (string, *fakeCodex) {
+func claudeAgent(t *testing.T, config, cwd, name, status string) {
 	t.Helper()
-	home, err := os.MkdirTemp("/tmp", "kijk-codex") // a socket path must stay under about 104 bytes
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.RemoveAll(home) })
-	if err := os.MkdirAll(filepath.Dir(codexSocket(home)), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	return home, newFakeCodexAt(t, codexSocket(home))
+	write(t, filepath.Join(config, "sessions", "1.json"), agentstest.SessionJSON(os.Getpid(), "s-"+name, cwd, name, status, time.Now().UnixMilli()))
 }
 
 // keepEngines lets the diagram engines that kijk downloads into home outlive the test, so a

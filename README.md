@@ -42,6 +42,7 @@ from it. It never starts Codex or the app server, and never answers an approval.
 - Each row shows the agent's name, the icon of its agent type, Busy or Idle, the time of its last activity, the repository and the branch.
 - Agents that work in the same folder share one row, also a Claude Code and a Codex agent. Only the icon of the agent type that works pulses. An agent in a git worktree gets the row of that worktree.
 - The newest activity is on top. Rows appear, change and go away as agents start, work and stop.
+- When kijk cannot read the agents of an agent type, for example after an update of that tool, the status bar says so. The agents of the other types still show.
 
 ### Folders without agents
 
@@ -298,9 +299,11 @@ You can also start kijk with `-no-update-check`. `kijk update` and the **Update*
 kijk sends anonymous usage data, so we know how many people use it and on which systems.
 It never sends your code, your folder or file names, or anything about you.
 It sends the number of folders in the folders window. On a day when kijk looked for agents, it
-also sends the number of agents on your machine, in total and per agent type (Claude Code or
-Codex), and how many remote machines you saved and how many agents run on them. It never sends
-their names or addresses. kijk on a remote machine sends nothing.
+also sends the number of agents on your machine, in total and per agent type, and how many remote
+machines you saved and how many agents run on them. The count per agent type is
+`<type>_agents` for each type kijk shows, such as `claude_agents` for Claude Code and
+`codex_agents` for Codex. It never sends their names or addresses. kijk on a remote machine sends
+nothing.
 
 To turn it off, set `KIJK_NO_TELEMETRY=1` or `DO_NOT_TRACK=1`, or start kijk with `-no-telemetry`.
 

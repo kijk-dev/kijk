@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kijk-dev/kijk/internal/agentstest"
 	"github.com/kijk-dev/kijk/internal/viewer"
 )
 
@@ -224,12 +225,12 @@ func fakeForward(addr, ctl string, refused bool) int {
 	}
 }
 
-// remoteEnv keeps the remote command away from this user's kijk, Claude and Codex folders.
+// remoteEnv keeps the remote command away from this user's kijk folders and agent tool folders.
 func remoteEnv(home string) []string {
 	env := []string{"HOME=" + home}
 	for _, kv := range os.Environ() {
 		k, _, _ := strings.Cut(kv, "=")
-		if k == "HOME" || k == "CLAUDE_CONFIG_DIR" || k == "CODEX_HOME" || strings.HasPrefix(k, "XDG_") || strings.HasPrefix(k, "KIJK_") {
+		if k == "HOME" || slices.Contains(agentVars(), k) || strings.HasPrefix(k, "XDG_") || strings.HasPrefix(k, "KIJK_") {
 			continue
 		}
 		env = append(env, kv)
@@ -266,7 +267,8 @@ func newFakeMachines(t *testing.T) *fakeMachines {
 	if runtime.GOOS == "windows" {
 		t.Skip("remote machines need macOS or Linux")
 	}
-	f := &fakeMachines{t: t, dir: t.TempDir(), id: strconv.FormatInt(time.Now().UnixNano(), 36), conf: fakeSSHConfig{Targets: map[string]fakeTarget{}}}
+	// A short folder, as a remote home can hold a Codex socket.
+	f := &fakeMachines{t: t, dir: agentstest.ShortTempDir(t), id: strconv.FormatInt(time.Now().UnixNano(), 36), conf: fakeSSHConfig{Targets: map[string]fakeTarget{}}}
 	exe, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)

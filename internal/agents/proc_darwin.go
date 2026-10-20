@@ -1,4 +1,4 @@
-package main
+package agents
 
 import "golang.org/x/sys/unix"
 

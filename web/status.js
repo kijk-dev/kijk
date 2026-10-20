@@ -11,7 +11,7 @@ let loaded = null; // the version this page came from
 let last = null;
 let shown = '';
 let restartSince = 0;
-let codexError = '';
+let agentErrors = []; // the agent types kijk cannot read: [{label, reasons}]
 let undo = null;
 
 // Each notice remembers what it was closed for (a version, or the error text): closing "is out"
@@ -34,10 +34,11 @@ export function restarting() {
   return last?.busy === 'restarting' && Date.now() - restartSince < 15000;
 }
 
-// showCodexError draws the codexError fields of an /api/events message, local and remote.
-export function showCodexError(err) {
-  if ((err || '') === codexError) return;
-  codexError = err || '';
+// showAgentErrors draws the agent types kijk cannot read, local and remote, in kijk's order of
+// types: [{label, reasons}], where a remote reason starts with its machine's name.
+export function showAgentErrors(errors) {
+  if (JSON.stringify(errors) === JSON.stringify(agentErrors)) return;
+  agentErrors = errors;
   if (last) draw();
 }
 
@@ -91,9 +92,13 @@ function draw() {
     version.append(icon, `kijk ${k.version}`);
     parts.push(version);
   }
-  if (codexError) {
-    parts.unshift(news('error', ['Cannot read Codex agents ', then('· they are hidden')], 'Codex agents hidden',
-      `Cannot read Codex agents\n${codexError}\nCodex agents are hidden until kijk can read them again. Other agents still show.`));
+  if (agentErrors.length) {
+    const names = agentErrors.map(e => e.label).join(', ');
+    const many = agentErrors.length > 1;
+    const reasons = many ? agentErrors.flatMap(e => e.reasons.map(r => `${e.label}: ${r}`)) : agentErrors[0].reasons;
+    parts.unshift(news('error', [`Cannot read ${names} agents `, then('· they are hidden')],
+      many ? `${agentErrors.length} agent types hidden` : `${names} agents hidden`,
+      `Cannot read ${names} agents\n${reasons.join('\n')}\n${names} agents are hidden until kijk can read them again. Other agents still show.`));
     parts[0].classList.add('agent-error');
   }
 

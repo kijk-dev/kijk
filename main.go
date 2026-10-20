@@ -25,6 +25,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/kijk-dev/kijk/internal/agents"
 	"github.com/kijk-dev/kijk/internal/viewer"
 )
 
@@ -174,7 +175,7 @@ func main() {
 		addedNote = addedText(adds, added, false)
 	}
 	go fl.watch(h, u)
-	go watchSessions(newScanner(claudeDir(), codexHome()), h, rts, u, tel, mm, fl)
+	go watchSessions(newScanner(agents.Types, agents.NewEnv(kijkVersion)), h, rts, u, tel, mm, fl)
 
 	web, _ := fs.Sub(webFiles, "web")
 	url := uiURL(a.port, token)
@@ -357,23 +358,16 @@ func takeRestartEnv() (token string, restarted bool) {
 	return token, restarted
 }
 
-// sessionMessage is one message on /api/events. err replaces the rows in the Agents list; codexErr
-// goes to the status bar. machines is left out when none is saved, so the message stays as before.
-func sessionMessage(rows []Row, err, codexErr error, k kijkState, machines []machineView) []byte {
-	msg := struct {
-		Rows       []Row         `json:"rows"`
-		Error      string        `json:"error,omitempty"`
-		CodexError string        `json:"codexError,omitempty"`
-		Kijk       kijkState     `json:"kijk"`
-		Machines   []machineView `json:"machines,omitempty"`
-	}{Rows: rows, Kijk: k, Machines: machines}
-	if err != nil {
-		msg.Error = err.Error()
-	}
-	if codexErr != nil {
-		msg.CodexError = codexErr.Error()
-	}
-	b, _ := json.Marshal(msg)
+// sessionMessage is one message on /api/events. noneInstalled says that the tool of no agent type
+// is on this machine. Empty fields are left out.
+func sessionMessage(rows []Row, errs []typeError, noneInstalled bool, k kijkState, machines []machineView) []byte {
+	b, _ := json.Marshal(struct {
+		Rows          []Row         `json:"rows"`
+		Errors        []typeError   `json:"errors,omitempty"`
+		NoneInstalled bool          `json:"noneInstalled,omitempty"`
+		Kijk          kijkState     `json:"kijk"`
+		Machines      []machineView `json:"machines,omitempty"`
+	}{rows, errs, noneInstalled, k, machines})
 	return b
 }
 
@@ -381,7 +375,8 @@ func sessionMessage(rows []Row, err, codexErr error, k kijkState, machines []mac
 // last one closes. An update or machine state change publishes at once, with the last poll's rows.
 func watchSessions(s *scanner, h *hub, rts *viewer.Roots, u *updater, tel *telemetry, mm *machineManager, fl *folderList) {
 	var rows []Row
-	var err, codexErr error
+	var errs []typeError
+	installed := true
 	var updated, machinesChanged <-chan struct{}
 	k := kijkState{Version: kijkVersion}
 	if u != nil {
@@ -404,14 +399,14 @@ func watchSessions(s *scanner, h *hub, rts *viewer.Roots, u *updater, tel *telem
 				since, next = now, now
 			} else {
 				stopMachines()
-				rows, err, codexErr = nil, nil, nil
+				rows, errs, installed = nil, nil, true
 				rts.Set(nil)
 				h.forget(windowAgents)
 			}
 		}
 		var counts *agentCounts
 		if looking && !now.Before(next) {
-			rows, err, codexErr = s.scan()
+			rows, errs, installed = s.scan()
 			rts.Set(rowRoots(rows))
 			// Wait for remote machines to connect, so the first event counts their agents too.
 			if mm.settled() || time.Since(since) > 30*time.Second {
@@ -425,7 +420,7 @@ func watchSessions(s *scanner, h *hub, rts *viewer.Roots, u *updater, tel *telem
 			k = u.state()
 		}
 		if looking {
-			h.publish(windowAgents, sessionMessage(rows, err, codexErr, k, mm.views()))
+			h.publish(windowAgents, sessionMessage(rows, errs, !installed, k, mm.views()))
 		}
 		wait := time.Second
 		if looking {
