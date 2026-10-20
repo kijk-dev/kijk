@@ -25,7 +25,10 @@ func classOf(ts []Token, text string) string {
 
 func TestHighlightKeepsText(t *testing.T) {
 	for _, f := range []string{"../../sessions.go", "../../web/app.js", "../../web/viewer.css", "../../web/app.css"} {
-		b, _ := os.ReadFile(f)
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
 		lines := strings.Split(strings.TrimSuffix(string(b), "\n"), "\n")
 		out := Highlight(LexerFor(f), lines)
 		if len(out) != len(lines) {
