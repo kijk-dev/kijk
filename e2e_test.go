@@ -339,7 +339,7 @@ func TestBrowser(t *testing.T) {
 		for _, at := range types {
 			agentstest.StartAgent(t, home, at.Name, shop, at.Label+" agent")
 		}
-		a := openPage(t, newTab(t, tab), startKijkIn(t, exe, home, "CLAUDE_CONFIG_DIR=", "CODEX_HOME="), "/")
+		a := openPage(t, newTab(t, tab), startKijkIn(t, exe, home, homeFolders()...), "/")
 		for _, at := range types {
 			icon := fmt.Sprintf(`(s => (s.innerHTML = %s, [...document.querySelectorAll('#rows .agent')].find(i => i.innerHTML === s.innerHTML)))(document.createElement('span'))`, jsString(at.Icon))
 			a.waitFor("the icon of "+at.Label, icon)
@@ -380,8 +380,7 @@ func TestBrowser(t *testing.T) {
 	})
 
 	t.Run("no agent tools", func(t *testing.T) {
-		missing := filepath.Join(t.TempDir(), "missing")
-		n := startKijkIn(t, exe, t.TempDir(), "CLAUDE_CONFIG_DIR="+missing, "CODEX_HOME="+missing)
+		n := startKijkIn(t, exe, t.TempDir(), homeFolders()...)
 		var labels []string
 		for _, at := range listAgentTypes(t, n) {
 			labels = append(labels, at.Label)

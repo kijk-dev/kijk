@@ -11,9 +11,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/kijk-dev/kijk/internal/agents"
 )
 
 // These tests build real kijk binaries and publish them as a fake release, so they are slow and
@@ -91,6 +95,37 @@ func TestInstallScript(t *testing.T) {
 	}
 }
 
+// agentVars are the environment variables that move the tool folders of the agent types. The
+// readers name them as they look, so a new type needs no edit here.
+var agentVars = sync.OnceValue(func() []string {
+	home, err := os.MkdirTemp("", "kijk-vars")
+	if err != nil {
+		panic(err)
+	}
+	defer os.RemoveAll(home)
+	var vars []string
+	env := &agents.Env{Home: home, Getenv: func(k string) string { vars = append(vars, k); return "" }}
+	for _, at := range agents.Types {
+		at.Sessions(env)
+	}
+	return vars
+})
+
+// homeFolders points every agent type at its tool folder in kijk's home folder.
+func homeFolders() []string {
+	var env []string
+	for _, v := range agentVars() {
+		env = append(env, v+"=")
+	}
+	return env
+}
+
+func TestAgentVars(t *testing.T) {
+	if vars := agentVars(); !slices.Contains(vars, "CLAUDE_CONFIG_DIR") || !slices.Contains(vars, "CODEX_HOME") {
+		t.Fatalf("agentVars = %v, want the variables of every agent type", vars)
+	}
+}
+
 // kijkProcess is a real kijk started from a binary, with its own home folder.
 type kijkProcess struct {
 	cmd     *exec.Cmd
@@ -112,10 +147,10 @@ func startKijkIn(t *testing.T, exe, home string, env ...string) *kijkProcess {
 	ln, _ := net.Listen("tcp", "127.0.0.1:0")
 	port := ln.Addr().(*net.TCPAddr).Port
 	ln.Close()
-	k := &kijkProcess{port: port, logFile: filepath.Join(home, "kijk.log"), exited: make(chan struct{}), env: append([]string{
-		"HOME=" + home, "XDG_CONFIG_HOME=" + filepath.Join(home, ".config"), "APPDATA=" + home,
-		"CLAUDE_CONFIG_DIR=" + t.TempDir(), "CODEX_HOME=" + filepath.Join(home, "codex"), "KIJK_NO_UPDATE_CHECK=1", "KIJK_NO_TELEMETRY=1",
-	}, env...)}
+	k := &kijkProcess{port: port, logFile: filepath.Join(home, "kijk.log"), exited: make(chan struct{}), env: append(append(homeFolders(),
+		"HOME="+home, "XDG_CONFIG_HOME="+filepath.Join(home, ".config"), "APPDATA="+home,
+		"CLAUDE_CONFIG_DIR="+t.TempDir(), "CODEX_HOME="+filepath.Join(home, "codex"), "KIJK_NO_UPDATE_CHECK=1", "KIJK_NO_TELEMETRY=1",
+	), env...)}
 	out, err := os.Create(k.logFile)
 	if err != nil {
 		t.Fatal(err)
