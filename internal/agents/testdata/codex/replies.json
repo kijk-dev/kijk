@@ -10,7 +10,7 @@
     "reply": {
       "id": 1,
       "result": {
-        "userAgent": "kijk/0.163.0 (Mac OS 26.7.1; arm64) (kijk; dev)",
+        "userAgent": "kijk/0.163.0 (Mac OS; arm64) (kijk; dev)",
         "codexHome": "/home/dev/.codex",
         "platformFamily": "unix",
         "platformOs": "macos"
