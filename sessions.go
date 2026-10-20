@@ -11,7 +11,7 @@ import (
 
 	"github.com/kijk-dev/kijk/internal/viewer"
 
-	kgit "github.com/kijk-dev/kijk/internal/git"
+	"github.com/kijk-dev/kijk/internal/git"
 )
 
 type Row struct {
@@ -227,13 +227,13 @@ func isRunning(pid int, startedAt int64) bool {
 }
 
 func gitInfo(cwd string) (root, branch string) {
-	out, err := kgit.Run(cwd, "rev-parse", "--show-toplevel")
+	out, err := git.Run(cwd, "rev-parse", "--show-toplevel")
 	if err != nil {
 		return cwd, ""
 	}
 	root = filepath.FromSlash(out)
-	if branch, err = kgit.Run(cwd, "symbolic-ref", "--short", "-q", "HEAD"); err != nil {
-		branch, _ = kgit.Run(cwd, "rev-parse", "--short", "HEAD")
+	if branch, err = git.Run(cwd, "symbolic-ref", "--short", "-q", "HEAD"); err != nil {
+		branch, _ = git.Run(cwd, "rev-parse", "--short", "HEAD")
 	}
 	return root, branch
 }

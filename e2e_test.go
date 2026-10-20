@@ -10,6 +10,8 @@ import (
 
 	"github.com/chromedp/chromedp"
 	"github.com/chromedp/chromedp/kb"
+
+	"github.com/kijk-dev/kijk/internal/git"
 )
 
 // The subtests share one kijk and run in order, so a later one starts where the one before it ended.
@@ -118,7 +120,7 @@ func TestBrowser(t *testing.T) {
 		p.waitFor("one commit to push", `document.querySelector('#ahead:not([hidden])')?.textContent === '↑1'`)
 		p.click("Push", `document.querySelector('#push-btn:not([hidden]):not(:disabled)')`)
 		p.waitFor("nothing left to push", `document.querySelector('#ahead').hidden`)
-		if got, err := git(origin, "log", "-1", "--format=%s", "main"); got != "Check the user name length" {
+		if got, err := git.Run(origin, "log", "-1", "--format=%s", "main"); got != "Check the user name length" {
 			p.fail("the origin's last commit is %q, %v", got, err)
 		}
 		p.click("Branch graph", `document.querySelector('#graph .section-toggle')`)
