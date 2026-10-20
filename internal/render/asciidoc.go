@@ -1,4 +1,4 @@
-package main
+package render
 
 import (
 	"bufio"
@@ -14,8 +14,8 @@ import (
 	"unicode/utf8"
 )
 
-// isAsciiDoc reports whether a path is an AsciiDoc file; RENDERED in view.js lists them too.
-func isAsciiDoc(p string) bool {
+// IsAsciiDoc reports whether a path is an AsciiDoc file; RENDERED in view.js lists them too.
+func IsAsciiDoc(p string) bool {
 	switch strings.ToLower(path.Ext(p)) {
 	case ".adoc", ".asciidoc":
 		return true
@@ -23,16 +23,16 @@ func isAsciiDoc(p string) bool {
 	return false
 }
 
-// renderAsciiDoc renders the common parts of AsciiDoc in the shape of renderMarkdown, and names
+// AsciiDoc renders the common parts of AsciiDoc in the shape of Markdown, and names
 // the files it included. Every piece of the files' text is escaped, so a file cannot add HTML.
 // path is the file's path from the folder root; read reads another file there, or is nil.
-func renderAsciiDoc(src []byte, path string, read func(path string) ([]byte, error)) (string, []string) {
+func AsciiDoc(src []byte, path string, read func(path string) ([]byte, error)) (string, []string) {
 	raw := adocSplit(src)
 	p := &adocParser{
 		r: &adocReader{
 			files: []*adocFile{{raw: raw, path: path}},
 			attrs: adocDefaults(),
-			inc:   &adocIncludes{read: read, cache: map[string][]string{}, budget: mdMaxBytes},
+			inc:   &adocIncludes{read: read, cache: map[string][]string{}, budget: MdMaxBytes},
 		},
 		secs:   map[string]adocSection{},
 		titles: map[string]adocSection{},
@@ -1726,7 +1726,7 @@ func (c adocInline) xrefAngle(sc *adocScan, i int) (int, string) {
 func (c adocInline) xref(target, text string) string {
 	target = strings.TrimSpace(target)
 	file, id, hash := strings.Cut(target, "#")
-	if !hash && !isAsciiDoc(target) {
+	if !hash && !IsAsciiDoc(target) {
 		file, id = "", target
 	}
 	label := func(def string) string {
@@ -1865,4 +1865,9 @@ func jsSpace(r rune) bool {
 		return true
 	}
 	return r >= 0x2000 && r <= 0x200a
+}
+
+// isBinary is git's own test: a NUL byte in the first 8000 bytes.
+func isBinary(head []byte) bool {
+	return bytes.IndexByte(head[:min(len(head), 8000)], 0) >= 0
 }

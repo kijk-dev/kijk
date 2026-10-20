@@ -14,6 +14,8 @@ import (
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/kijk-dev/kijk/internal/render"
 )
 
 // cookieName carries the port: browsers share cookies across the ports of one host, so two
@@ -241,8 +243,8 @@ func (a *api) markdown(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
-	kind := diagramKind(r.URL.Query().Get("path"))
-	limit, tooLarge := int64(mdMaxBytes), "Too large to render"
+	kind := render.DiagramKind(r.URL.Query().Get("path"))
+	limit, tooLarge := int64(render.MdMaxBytes), "Too large to render"
 	if kind != "" {
 		limit, tooLarge = diagramMaxBytes(kind), diagramTooLargeText
 	}
@@ -260,15 +262,15 @@ func (a *api) markdown(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, diagramTooLargeText, http.StatusRequestEntityTooLarge)
 			return
 		}
-		reply(w, map[string]string{"html": renderDiagramFile(src, kind)})
+		reply(w, map[string]string{"html": render.DiagramFile(src, kind)})
 		return
 	}
-	if rel := r.URL.Query().Get("path"); isAsciiDoc(rel) {
-		html, includes := renderAsciiDoc(src, rel, func(inc string) ([]byte, error) { return readIncluded(root, inc) })
+	if rel := r.URL.Query().Get("path"); render.IsAsciiDoc(rel) {
+		html, includes := render.AsciiDoc(src, rel, func(inc string) ([]byte, error) { return readIncluded(root, inc) })
 		reply(w, map[string]any{"html": html, "includes": includes})
 		return
 	}
-	out, err := renderMarkdown(src)
+	out, err := render.Markdown(src)
 	if err != nil {
 		fail(w, err)
 		return
@@ -286,7 +288,7 @@ func readIncluded(root, rel string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !st.Mode().IsRegular() || st.Size() > mdMaxBytes {
+	if !st.Mode().IsRegular() || st.Size() > render.MdMaxBytes {
 		return nil, errors.New("not a file to include")
 	}
 	return os.ReadFile(p)
@@ -383,7 +385,7 @@ func (a *api) diff(w http.ResponseWriter, r *http.Request) {
 	if imageType(q.Get("path")) != "" {
 		res.Image = diffImage(root, q.Get("path"), q.Get("orig"), q.Get("mode"), q.Get("hash"))
 	}
-	if kind := diagramKind(q.Get("path")); kind != "" {
+	if kind := render.DiagramKind(q.Get("path")); kind != "" {
 		res.Diagram = diffDiagram(root, kind, q.Get("path"), q.Get("orig"), q.Get("mode"), q.Get("hash"))
 	}
 	reply(w, res)

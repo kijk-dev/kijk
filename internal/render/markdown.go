@@ -1,4 +1,5 @@
-package main
+// Package render turns text into HTML: markdown, AsciiDoc, colored code and diagram blocks.
+package render
 
 import (
 	"bytes"
@@ -17,7 +18,7 @@ import (
 	"github.com/yuin/goldmark/util"
 )
 
-const mdMaxBytes = 2 << 20 // bigger markdown files are shown as source only
+const MdMaxBytes = 2 << 20 // bigger markdown files are shown as source only
 
 // HTML inside markdown is dropped and dangerous link schemes are removed: goldmark's defaults
 // without html.WithUnsafe. A rendered file could otherwise run script with kijk's cookie.
@@ -31,9 +32,9 @@ var md = goldmark.New(
 	goldmark.WithRendererOptions(renderer.WithNodeRenderers(util.Prioritized(codeRenderer{}, 100))),
 )
 
-// renderMarkdown returns the HTML of a markdown file. Each top-level block and list item carries
+// Markdown returns the HTML of a markdown file. Each top-level block and list item carries
 // data-lines="first-last", the 1-based source lines it covers, for change marks and switching views.
-func renderMarkdown(src []byte) (string, error) {
+func Markdown(src []byte) (string, error) {
 	doc := md.Parser().Parse(text.NewReader(src))
 	starts := []int{0}
 	for i, b := range src {
@@ -132,7 +133,7 @@ func writeColored(w util.BufWriter, lang string, lines []string, attrs func()) {
 	w.WriteString("<pre")
 	attrs()
 	w.WriteString("><code>")
-	for i, toks := range highlight(lexer, lines) {
+	for i, toks := range Highlight(lexer, lines) {
 		if i > 0 {
 			w.WriteByte('\n')
 		}

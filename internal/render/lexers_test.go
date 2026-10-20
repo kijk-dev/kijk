@@ -1,4 +1,4 @@
-package main
+package render
 
 import (
 	"strings"
@@ -11,7 +11,7 @@ func TestLexersFound(t *testing.T) {
 	for file, want := range map[string]string{"docs/guide.adoc": "AsciiDoc", "README.ASCIIDOC": "AsciiDoc",
 		"login.puml": "PlantUML", "a.plantuml": "PlantUML", "a.pu": "PlantUML", "a.wsd": "PlantUML", "docs/common.iuml": "PlantUML",
 		"flow.mmd": "Mermaid", "flow.mermaid": "Mermaid", "docs/arch.excalidraw": "JSON"} {
-		if l := lexerFor(strings.ToLower(file)); l == nil || l.Config().Name != want {
+		if l := LexerFor(strings.ToLower(file)); l == nil || l.Config().Name != want {
 			t.Errorf("%s: %v", file, l)
 		}
 	}
@@ -27,7 +27,7 @@ func lexed(t *testing.T, file, src string) map[string]string {
 	t.Helper()
 	got := map[string]string{}
 	lines := strings.Split(src, "\n")
-	for i, toks := range highlight(lexerFor(file), lines) {
+	for i, toks := range Highlight(LexerFor(file), lines) {
 		if joined(toks) != lines[i] {
 			t.Fatalf("%s:%d: got %q, want %q", file, i+1, joined(toks), lines[i])
 		}

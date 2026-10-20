@@ -1,14 +1,9 @@
-package main
+package render
 
 import (
-	"encoding/json"
 	"fmt"
 	"html"
 	"io/fs"
-	"net/http"
-	"net/url"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -18,7 +13,7 @@ import (
 // adocHas renders src and checks that each want is in the HTML and no bad is.
 func adocHas(t *testing.T, src string, want []string, bad ...string) string {
 	t.Helper()
-	out, _ := renderAsciiDoc([]byte(src), "", nil)
+	out, _ := AsciiDoc([]byte(src), "", nil)
 	adocCheck(t, out, want, bad)
 	return out
 }
@@ -27,7 +22,7 @@ func adocHas(t *testing.T, src string, want []string, bad ...string) string {
 // it included.
 func adocIncluding(t *testing.T, src string, files map[string]string, want []string, bad ...string) []string {
 	t.Helper()
-	out, inc := renderAsciiDoc([]byte(src), "docs/guide.adoc", func(p string) ([]byte, error) {
+	out, inc := AsciiDoc([]byte(src), "docs/guide.adoc", func(p string) ([]byte, error) {
 		if s, ok := files[p]; ok {
 			return []byte(s), nil
 		}
@@ -153,7 +148,7 @@ func TestAsciiDocNoHTML(t *testing.T) {
 		"https://example.com[<img src=x onerror=alert(3)>] pass:[<b onclick=alert(4)>x</b>] +++<i>y</i>+++\n\n" +
 		"link:javascript:alert(5)[click] image:javascript:alert(6)[pic] xref:javascript:alert(7).adoc[go] <<x\" onclick=\"alert(8)>>\n\n" +
 		"image::x.png[\"><script>alert(9)</script>]\n\n.<b>title</b>\n----\n<script>\n----\n\n|===\n| <script> | b\n|===\n"
-	out, _ := renderAsciiDoc([]byte(src), "", nil)
+	out, _ := AsciiDoc([]byte(src), "", nil)
 	for _, bad := range []string{"<script", "<img src=x", "<b", "<i>", "javascript:", `onclick="`} {
 		if strings.Contains(out, bad) {
 			t.Errorf("%s kept in\n%s", bad, out)
@@ -194,8 +189,8 @@ func TestAsciiDocConditionals(t *testing.T) {
 	adocHas(t, src, []string{"Beta on.\nEither.\nNot nope.\nNot both.\nEval shows.\nifdef::beta[]</p>"},
 		"Both.", "Neither.", "Inside", "Never closed", "endif", "ifeval")
 
-	without, _ := renderAsciiDoc([]byte("= Doc\n\nifdef::beta[]\nBeta text.\nendif::[]\n"), "", nil)
-	with, _ := renderAsciiDoc([]byte("= Doc\n:beta:\n\nifdef::beta[]\nBeta text.\nendif::[]\n"), "", nil)
+	without, _ := AsciiDoc([]byte("= Doc\n\nifdef::beta[]\nBeta text.\nendif::[]\n"), "", nil)
+	with, _ := AsciiDoc([]byte("= Doc\n:beta:\n\nifdef::beta[]\nBeta text.\nendif::[]\n"), "", nil)
 	if strings.Contains(without, "Beta text") || !strings.Contains(with, "Beta text") {
 		t.Errorf("without :beta:\n%s\nwith it\n%s", without, with)
 	}
@@ -308,7 +303,7 @@ func TestAsciiDocIncludes(t *testing.T) {
 		t.Run(c.attrs, func(t *testing.T) {
 			src := "[source,text]\n----\ninclude::example.go[" + c.attrs + "]\n----\n"
 			adocIncluding(t, src, files, []string{"<code>" + strings.SplitN(strings.TrimPrefix(c.want, "<code>"), "\n", 2)[0]}, c.bad, "tag::main")
-			out, _ := renderAsciiDoc([]byte(src), "docs/guide.adoc", func(p string) ([]byte, error) { return []byte(files[p]), nil })
+			out, _ := AsciiDoc([]byte(src), "docs/guide.adoc", func(p string) ([]byte, error) { return []byte(files[p]), nil })
 			if !strings.Contains(html.UnescapeString(out), strings.TrimPrefix(c.want, "<code>")) {
 				t.Errorf("want %q in\n%s", c.want, out)
 			}
@@ -327,7 +322,7 @@ func TestAsciiDocIncludes(t *testing.T) {
 	if inc := adocIncluding(t, "include::d0.adoc[]\n", deep, []string{"D7.", `<a href="d8.adoc">`}, "D8."); len(inc) != 8 {
 		t.Errorf("deep includes %v", inc)
 	}
-	big := strings.Repeat("abcdefghi\n", mdMaxBytes/20+1)
+	big := strings.Repeat("abcdefghi\n", MdMaxBytes/20+1)
 	adocIncluding(t, "include::big.txt[]\n\ninclude::big.txt[]\n", map[string]string{"docs/big.txt": big}, []string{`<a href="big.txt">`})
 	if inc := adocIncluding(t, "include::missing.adoc[]\n", nil, []string{`<a href="missing.adoc">`}); !slices.Equal(inc, []string{"docs/missing.adoc"}) {
 		t.Errorf("a missing include is not watched: %v", inc)
@@ -338,40 +333,6 @@ func TestAsciiDocIncludes(t *testing.T) {
 	adocIncluding(t, "include::{snippets}/curl.adoc[]\n", nil, []string{`<p class="include" data-lines="1-1">{snippets}/curl.adoc</p>`})
 }
 
-func TestAsciiDocRoute(t *testing.T) {
-	dir := t.TempDir()
-	write(t, filepath.Join(dir, "docs", "Guide.ADOC"), "= Guide\n\nNOTE: Hi.\n")
-	write(t, filepath.Join(dir, "big.adoc"), strings.Repeat("x", mdMaxBytes+1))
-	get := imageServer(t, dir)
-	w := get("/api/markdown", url.Values{"path": {"docs/Guide.ADOC"}})
-	var res struct{ HTML string }
-	json.Unmarshal(w.Body.Bytes(), &res)
-	if w.Code != http.StatusOK || !strings.Contains(res.HTML, `<h1 data-lines="1-2">Guide</h1>`) || !strings.Contains(res.HTML, `class="admonition note"`) {
-		t.Errorf("%d %q", w.Code, res.HTML)
-	}
-	if w := get("/api/markdown", url.Values{"path": {"big.adoc"}}); w.Code != http.StatusRequestEntityTooLarge {
-		t.Errorf("too large: %d", w.Code)
-	}
-
-	outside := filepath.Join(t.TempDir(), "secret.adoc")
-	write(t, outside, "Secret.")
-	if err := os.Symlink(outside, filepath.Join(dir, "docs", "link.adoc")); err != nil {
-		t.Skip(err)
-	}
-	write(t, filepath.Join(dir, "docs", "chapters", "intro.adoc"), "The intro.")
-	write(t, filepath.Join(dir, "docs", "book.adoc"), "include::chapters/intro.adoc[]\n\ninclude::link.adoc[]\n\ninclude::chapters[]\n")
-	w = get("/api/markdown", url.Values{"path": {"docs/book.adoc"}})
-	var book struct {
-		HTML     string
-		Includes []string
-	}
-	json.Unmarshal(w.Body.Bytes(), &book)
-	if !strings.Contains(book.HTML, "The intro.") || strings.Contains(book.HTML, "Secret.") || !strings.Contains(book.HTML, `<a href="link.adoc">`) ||
-		!strings.Contains(book.HTML, `<a href="chapters">`) || !slices.Equal(book.Includes, []string{"docs/chapters/intro.adoc", "docs/link.adoc", "docs/chapters"}) {
-		t.Errorf("%d %+v", w.Code, book)
-	}
-}
-
 // Quadratic work on a 2 MB file would take minutes.
 func TestAsciiDocSpeed(t *testing.T) {
 	if testing.Short() {
@@ -380,15 +341,15 @@ func TestAsciiDocSpeed(t *testing.T) {
 	section := "== Section {n}\n\nA *bold* _word_ and `code`, https://example.com[a link] and <<_section_1>>.\n\n" +
 		"* item\n** nested\n\n[source,go]\n----\nfunc main() {}\n----\n\n|===\n| a | b\n|===\n\nTerm:: text\n\n"
 	var b strings.Builder
-	for b.Len() < mdMaxBytes/2 {
+	for b.Len() < MdMaxBytes/2 {
 		b.WriteString(section)
 	}
 	// One long paragraph of marks that never close.
-	for b.Len() < mdMaxBytes {
+	for b.Len() < MdMaxBytes {
 		b.WriteString("*a _b `c +d <<e [[f link:g image:h https://i ")
 	}
 	start := time.Now()
-	out, _ := renderAsciiDoc([]byte(b.String()), "", nil)
+	out, _ := AsciiDoc([]byte(b.String()), "", nil)
 	if took := time.Since(start); took > 3*time.Second {
 		t.Errorf("rendering 2 MB took %s", took)
 	}

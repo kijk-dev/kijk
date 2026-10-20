@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/kijk-dev/kijk/internal/render"
 )
 
 var errNoGit = errors.New("git was not found")
@@ -527,11 +529,11 @@ func network(root string, args ...string) (string, error) {
 }
 
 type diffLine struct {
-	Kind   string `json:"k"` // " ", "+" or "-"
-	Old    int    `json:"o,omitempty"`
-	New    int    `json:"n,omitempty"`
-	Text   string `json:"t"`
-	Tokens []tok  `json:"x,omitempty"`
+	Kind   string         `json:"k"` // " ", "+" or "-"
+	Old    int            `json:"o,omitempty"`
+	New    int            `json:"n,omitempty"`
+	Text   string         `json:"t"`
+	Tokens []render.Token `json:"x,omitempty"`
 }
 
 type hunk struct {
