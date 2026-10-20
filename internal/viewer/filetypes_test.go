@@ -10,15 +10,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/alecthomas/chroma/v2"
-	"github.com/alecthomas/chroma/v2/lexers"
-
 	"github.com/kijk-dev/kijk/internal/gittest"
 	"github.com/kijk-dev/kijk/internal/render"
 )
 
-// TestSamples opens each sample of testdata/filetypes as the page does and checks the way its
-// entry says it shows: picture, rendered HTML or diagram, its diff, and its colored source.
+// A new file type needs no code here: its entry and its sample in testdata/filetypes are enough.
 func TestSamples(t *testing.T) {
 	gittest.Isolate(t)
 	repo := gittest.Repo(t)
@@ -76,22 +72,17 @@ func TestSamples(t *testing.T) {
 			if info.Binary {
 				return
 			}
-			lexer := lexers.Match(name)
-			if ft.Lexer != "" {
-				lexer = lexers.Get(ft.Lexer)
-			}
-			if lexer == nil {
-				t.Fatal("no lexer colors the source")
-			}
+			// A type that chroma cannot color shows plain source, so it needs no lexer to pass.
+			lexer := render.LexerFor(name)
 			src, _ := os.ReadFile(filepath.Join(repo, name))
-			want := render.Highlight(chroma.Coalesce(lexer), strings.Split(strings.TrimSuffix(string(src), "\n"), "\n"))
+			want := render.Highlight(lexer, strings.Split(strings.TrimSuffix(string(src), "\n"), "\n"))
 			var got [][]render.Token
 			json.Unmarshal(get("/api/lines", url.Values{"path": {name}, "from": {"0"}, "to": {"1000"}}).Body.Bytes(), &got)
 			colored := slices.ContainsFunc(got, func(l []render.Token) bool {
 				return slices.ContainsFunc(l, func(tk render.Token) bool { return tk[0] != "" })
 			})
-			if !colored || !slices.EqualFunc(got, want, slices.Equal) {
-				t.Errorf("source: got %v, want %s's %v", got, lexer.Config().Name, want)
+			if colored != (lexer != nil) || !slices.EqualFunc(got, want, slices.Equal) {
+				t.Errorf("source: got %v, want %v", got, want)
 			}
 		})
 	}

@@ -2,6 +2,7 @@ package render
 
 import (
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
@@ -62,8 +63,16 @@ func TestFileTypeList(t *testing.T) {
 				t.Errorf("%s: another type has the fence %q", ft.Name, f)
 			}
 		}
-		if ft.Lexer != "" && lexers.Get(ft.Lexer) == nil {
-			t.Errorf("%s: chroma has no lexer %q", ft.Name, ft.Lexer)
+		if ft.Lexer != "" {
+			want, files := lexers.Get(ft.Lexer), slices.Clone(ft.Names)
+			for _, e := range ft.Exts {
+				files = append(files, "x"+e)
+			}
+			for _, f := range files {
+				if l := LexerFor(f); want == nil || l == nil || l.Config().Name != want.Config().Name {
+					t.Errorf("%s: the source of %s is not colored by chroma's lexer %q", ft.Name, f, ft.Lexer)
+				}
+			}
 		}
 		if ft.Diff != DiffLines && ft.Diff != DiffPictures {
 			t.Errorf("%s: diff %q", ft.Name, ft.Diff)

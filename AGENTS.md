@@ -40,7 +40,9 @@ in code, UI text and commit messages.
 ## Add a file type
 
 1. `internal/render/filetypes.go`: add an entry to `FileTypes`. Name its extensions or file names,
-   how it shows and how its diff shows. Set `Lexer` only when chroma's own match is wrong.
+   how it shows and how its diff shows. Set `Lexer` only when chroma's own match is wrong. A type
+   that chroma cannot color shows plain source: a lexer in `internal/render/lexers.go` adds colors,
+   and the tests do not need one.
 2. A type rendered in Go: write its `Renderer` in `internal/render`. Do this only when it is small
    and needs no new library.
 3. A type drawn by an engine: give the entry an `Engine` with its download files, each with its

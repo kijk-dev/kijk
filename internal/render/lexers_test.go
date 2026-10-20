@@ -7,10 +7,13 @@ import (
 	"github.com/alecthomas/chroma/v2/lexers"
 )
 
+// Every file type of today has colors. TestSamples and the browser journey check a source as
+// colored only when kijk has a lexer for it, so this keeps them checking today's types as colored.
 func TestLexersFound(t *testing.T) {
 	for file, want := range map[string]string{"docs/guide.adoc": "AsciiDoc", "README.ASCIIDOC": "AsciiDoc",
 		"login.puml": "PlantUML", "a.plantuml": "PlantUML", "a.pu": "PlantUML", "a.wsd": "PlantUML", "docs/common.iuml": "PlantUML",
-		"flow.mmd": "Mermaid", "flow.mermaid": "Mermaid", "docs/arch.excalidraw": "JSON"} {
+		"flow.mmd": "Mermaid", "flow.mermaid": "Mermaid", "docs/arch.excalidraw": "JSON", "README.md": "markdown", "a.markdown": "markdown",
+		"logo.svg": "XML"} {
 		if l := LexerFor(strings.ToLower(file)); l == nil || l.Config().Name != want {
 			t.Errorf("%s: %v", file, l)
 		}

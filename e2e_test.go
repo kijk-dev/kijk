@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -270,6 +271,10 @@ func TestBrowser(t *testing.T) {
 			write(t, filepath.Join(dir, s.Name()), string(b))
 		}
 		types := listFileTypes(t, k)
+		root, err := filepath.EvalSymlinks(dir) // as kijk keeps the folder
+		if err != nil {
+			t.Fatal(err)
+		}
 		if out := runCmd(t, k.env, exe, "-port", fmt.Sprint(k.port), "-no-open", dir); !strings.Contains(out, "Added filetypes") {
 			p.on(t).fail("kijk <folder> said:\n%s", out)
 		}
@@ -295,8 +300,12 @@ func TestBrowser(t *testing.T) {
 				continue
 			}
 			first, _, _ := strings.Cut(texts[name], "\n")
+			hl := `document.querySelector('#viewer .ln .tx span[class^="h"]')`
+			if !colored(t, k, root, name) {
+				hl = "!" + hl // a type chroma cannot color shows plain source
+			}
 			f.click("Source", byText("#viewer .mode button", "Source"))
-			f.waitFor(name+" as colored source", viewHas(first)+` && document.querySelector('#viewer .ln .tx span[class^="h"]')`)
+			f.waitFor(name+" as its source", viewHas(first)+" && "+hl)
 		}
 		f.noErrors()
 	})
@@ -321,6 +330,23 @@ func listFileTypes(t *testing.T, k *kijkProcess) []fileType {
 		t.Fatalf("/api/filetypes: %d %v", resp.StatusCode, err)
 	}
 	return types
+}
+
+// colored tells whether kijk colors a file's source, as it does when it has a lexer for the file.
+func colored(t *testing.T, k *kijkProcess, root, name string) bool {
+	t.Helper()
+	resp, err := k.request("GET", "/api/lines?"+url.Values{"root": {root}, "path": {name}, "from": {"0"}, "to": {"1000"}}.Encode())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var lines [][][2]string
+	if err := json.NewDecoder(resp.Body).Decode(&lines); err != nil {
+		t.Fatalf("/api/lines of %s: %d %v", name, resp.StatusCode, err)
+	}
+	return slices.ContainsFunc(lines, func(l [][2]string) bool {
+		return slices.ContainsFunc(l, func(tk [2]string) bool { return tk[0] != "" })
+	})
 }
 
 // typeOf finds the file type of a file name as kijk does: by its exact name, else by its extension.
