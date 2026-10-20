@@ -8,6 +8,9 @@ import (
 	"path/filepath"
 	"slices"
 	"time"
+
+	"github.com/kijk-dev/kijk/internal/git"
+	"github.com/kijk-dev/kijk/internal/viewer"
 )
 
 type Row struct {
@@ -223,13 +226,13 @@ func isRunning(pid int, startedAt int64) bool {
 }
 
 func gitInfo(cwd string) (root, branch string) {
-	out, err := git(cwd, "rev-parse", "--show-toplevel")
+	out, err := git.Run(cwd, "rev-parse", "--show-toplevel")
 	if err != nil {
 		return cwd, ""
 	}
 	root = filepath.FromSlash(out)
-	if branch, err = git(cwd, "symbolic-ref", "--short", "-q", "HEAD"); err != nil {
-		branch, _ = git(cwd, "rev-parse", "--short", "HEAD")
+	if branch, err = git.Run(cwd, "symbolic-ref", "--short", "-q", "HEAD"); err != nil {
+		branch, _ = git.Run(cwd, "rev-parse", "--short", "HEAD")
 	}
 	return root, branch
 }
@@ -270,8 +273,16 @@ func relCwd(root, cwd string) string {
 		cwd = real
 	}
 	r, err := filepath.Rel(root, cwd)
-	if err != nil || r == "." || !inside(root, cwd) {
+	if err != nil || r == "." || !viewer.Inside(root, cwd) {
 		return ""
 	}
 	return filepath.ToSlash(r)
+}
+
+func rowRoots(rows []Row) []string {
+	paths := make([]string, len(rows))
+	for i, r := range rows {
+		paths[i] = r.Root
+	}
+	return paths
 }

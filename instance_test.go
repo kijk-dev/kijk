@@ -9,6 +9,8 @@ import (
 	"runtime"
 	"testing"
 	"testing/fstest"
+
+	"github.com/kijk-dev/kijk/internal/viewer"
 )
 
 // useConfigDir points kijk's own folder at a temp folder, and the folder of the files the user
@@ -29,7 +31,7 @@ func serveKijk(t *testing.T, token string) int {
 		t.Fatal(err)
 	}
 	port := ln.Addr().(*net.TCPAddr).Port
-	srv := &http.Server{Handler: newServer(token, port, fstest.MapFS{}, newHub(), &roots{}, newUpdater("0.2.0", "", io.Discard), nil, nil)}
+	srv := &http.Server{Handler: newServer(token, port, fstest.MapFS{}, newHub(), &viewer.Roots{}, newUpdater("0.2.0", "", io.Discard), nil, nil)}
 	go srv.Serve(ln)
 	t.Cleanup(func() { srv.Close() })
 	return port

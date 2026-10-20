@@ -11,6 +11,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/kijk-dev/kijk/internal/git"
+	"github.com/kijk-dev/kijk/internal/viewer"
 )
 
 // savedFolder is one row of the folders window: its folder, and the folder given last inside it.
@@ -125,7 +128,7 @@ func checkFolder(arg, cwd string) (savedFolder, error) {
 		return savedFolder{}, fmt.Errorf("%s is too big to open. Pick a folder inside it", show)
 	}
 	row := real
-	if top, err := git(real, "rev-parse", "--show-toplevel"); err == nil && top != "" {
+	if top, err := git.Run(real, "rev-parse", "--show-toplevel"); err == nil && top != "" {
 		row = filepath.FromSlash(top)
 		if tooBig(row, home) {
 			return savedFolder{}, fmt.Errorf("%s is inside a git repository at %s, which is too big to open", show, tilde(row))
@@ -169,7 +172,7 @@ func checkFolders(args []string, cwd string) ([]savedFolder, error) {
 // folders.json while it runs.
 type folderList struct {
 	path    string
-	roots   *roots
+	roots   *viewer.Roots
 	changed chan struct{}
 
 	mu      sync.Mutex
@@ -193,16 +196,24 @@ type openRequest struct {
 	Root string `json:"root,omitempty"`
 }
 
-func newFolderList(path string, rts *roots) *folderList {
+func newFolderList(path string, rts *viewer.Roots) *folderList {
 	l := &folderList{path: path, roots: rts, changed: make(chan struct{}, 1)}
 	l.list, l.readErr = readFolders(path)
-	rts.setFolders(l.list)
+	rts.SetFolders(folderPaths(l.list))
 	return l
+}
+
+func folderPaths(list []savedFolder) []string {
+	paths := make([]string, len(list))
+	for i, f := range list {
+		paths[i] = f.Path
+	}
+	return paths
 }
 
 // changedLocked saves the list and tells the server and the windows. l.mu is held.
 func (l *folderList) changedLocked() {
-	l.roots.setFolders(l.list)
+	l.roots.SetFolders(folderPaths(l.list))
 	l.saveErr = nil
 	if l.readErr != nil && !errors.Is(l.readErr, errMovedAway) {
 		l.saveErr = errors.New("changes to the folders list are not saved, so kijk does not overwrite a file it could not read")
@@ -316,33 +327,8 @@ func folderRowOf(f savedFolder) folderRow {
 	if f.Open != "" {
 		r.Cwd = relCwd(f.Path, f.Open)
 	}
-	r.Branch, r.Add, r.Del = uncommitted(f.Path)
+	r.Branch, r.Add, r.Del = git.Uncommitted(f.Path)
 	return r
-}
-
-// uncommitted gives the branch and the lines added and removed since the last commit, with one
-// git status and one git diff. Outside git it gives nothing.
-func uncommitted(root string) (branch string, add, del int) {
-	out, err := gitRaw(root, "status", "--porcelain=v2", "-z", "--branch", "-uall")
-	if err != nil {
-		return "", 0, 0
-	}
-	var st gitStatus
-	parseStatus(out, &st)
-	branch = st.Branch
-	if branch == "" {
-		branch, _ = git(root, "rev-parse", "--short", "HEAD")
-	}
-	for _, n := range numstatOf(root, append(st.Staged, st.Changes...), "-M", "HEAD") {
-		add += n.add
-		del += n.del
-	}
-	for _, c := range st.Untracked {
-		if !strings.HasSuffix(c.Path, "/") {
-			add += countLines(filepath.Join(root, filepath.FromSlash(c.Path)))
-		}
-	}
-	return branch, add, del
 }
 
 func folderMessage(rows []folderRow, err error, open openRequest, k kijkState) []byte {

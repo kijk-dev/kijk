@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/kijk-dev/kijk/internal/viewer"
 )
 
 // machineView is one remote machine on /api/events.
@@ -469,7 +471,7 @@ func newRemoteProxy(t *http.Transport, addr string, cookie *http.Cookie) *remote
 			// Only what the UI reads passes: a remote kijk must not set local headers, or serve a
 			// type the local page could run as script.
 			ct := "text/plain; charset=utf-8"
-			if t, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type")); t == "application/json" || t == "text/event-stream" || isImageType(t) {
+			if t, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type")); t == "application/json" || t == "text/event-stream" || viewer.IsImageType(t) {
 				ct = t
 			}
 			h := http.Header{}

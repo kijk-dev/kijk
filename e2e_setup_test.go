@@ -433,3 +433,8 @@ func copyEngines(from, to string) {
 		}
 	}
 }
+
+func fileCached(p string) bool {
+	st, err := os.Stat(p)
+	return err == nil && st.Size() > 0
+}

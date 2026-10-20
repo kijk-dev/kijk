@@ -15,11 +15,13 @@ import (
 	"testing"
 	"testing/fstest"
 	"time"
+
+	"github.com/kijk-dev/kijk/internal/viewer"
 )
 
 func TestGuard(t *testing.T) {
 	web := fstest.MapFS{"index.html": {Data: []byte("hi")}}
-	srv := newServer("secret", 7717, web, newHub(), &roots{}, newUpdater("0.2.0", "", io.Discard), nil, nil)
+	srv := newServer("secret", 7717, web, newHub(), &viewer.Roots{}, newUpdater("0.2.0", "", io.Discard), nil, nil)
 	do := func(host, target string, cookie string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest("GET", target, nil)
 		r.Host = host
@@ -59,7 +61,7 @@ func TestGuard(t *testing.T) {
 	}
 	if w := do("127.0.0.1:7717", "/", "secret"); w.Code != http.StatusOK || w.Body.String() != "hi" {
 		t.Fatalf("with cookie: %d %q", w.Code, w.Body.String())
-	} else if csp := w.Header().Get("Content-Security-Policy"); !strings.Contains(csp, "default-src 'self'") {
+	} else if csp := w.Header().Get("Content-Security-Policy"); !strings.Contains(csp, "default-src 'self'") || !strings.Contains(csp, "frame-ancestors 'none'") {
 		t.Errorf("CSP = %q", csp)
 	}
 
@@ -85,7 +87,7 @@ func TestSavedFolders(t *testing.T) {
 	dir, _ := filepath.EvalSymlinks(t.TempDir())
 	os.WriteFile(filepath.Join(dir, "a.txt"), []byte("hi\n"), 0o644)
 	p, _ := foldersPath()
-	h, rts := newHub(), &roots{}
+	h, rts := newHub(), &viewer.Roots{}
 	fl := newFolderList(p, rts)
 	srv := newServer("secret", 7717, nil, h, rts, nil, nil, fl)
 	do := func(method, target, body string) (int, string) {
