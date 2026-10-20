@@ -114,7 +114,7 @@ func changeSides(root, path, orig, mode, hash string) (before, after *blobRef, e
 	case "staged":
 		args = []string{"diff", "--cached"}
 	case "commit":
-		if !git.HashRe.MatchString(hash) {
+		if !git.ValidHash(hash) {
 			return nil, nil, git.ErrBadHash
 		}
 		args = []string{"show", "--format=", "--first-parent", hash}

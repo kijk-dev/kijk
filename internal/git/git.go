@@ -461,14 +461,19 @@ func Graph(root, target string) (graphResult, error) {
 }
 
 var (
-	HashRe     = regexp.MustCompile(`^[0-9a-f]{4,64}$`)
+	hashRe     = regexp.MustCompile(`^[0-9a-f]{4,64}$`)
 	ErrBadHash = errors.New("bad commit hash")
 	ErrBadMode = errors.New("bad diff mode")
 )
 
+// ValidHash reports whether s looks like a commit hash, so it can go to git as one.
+func ValidHash(s string) bool {
+	return hashRe.MatchString(s)
+}
+
 // CommitFiles lists the files a commit changed, compared with its first parent.
 func CommitFiles(root, hash string) ([]change, error) {
-	if !HashRe.MatchString(hash) {
+	if !ValidHash(hash) {
 		return nil, ErrBadHash
 	}
 	raw, err := Raw(root, "show", "-z", "--format=", "--name-status", "-M", "--first-parent", hash)
@@ -561,7 +566,7 @@ func Diff(root, path, orig, mode, hash string, context int) (DiffResult, error) 
 	case "staged":
 		args = append(args, "--cached")
 	case "commit":
-		if !HashRe.MatchString(hash) {
+		if !ValidHash(hash) {
 			return DiffResult{}, ErrBadHash
 		}
 		args = []string{"show", "--format=", "--first-parent", "--no-color", "--no-ext-diff", "-M", "-U" + strconv.Itoa(context), hash}
