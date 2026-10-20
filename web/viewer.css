@@ -37,12 +37,9 @@
   --on-accent: #ffffff;
   --checker-a: #ffffff; /* no dark values: the checkerboard stays light */
   --checker-b: #e3e6ea;
-  --rail: 240px;
-  --side: 260px;
   --code-font: "JetBrains Mono", "Fira Code", "Cascadia Code", "SF Mono", Menlo, Consolas, ui-monospace, monospace; /* user settings can override these two */
   --code-size: 13.5px;
   --bar: 33px; /* top bars of the three areas, so their borders line up */
-  --status: 22px; /* the status bar along the bottom, one row tall */
   color-scheme: light dark;
 }
 @media (prefers-color-scheme: dark) {
@@ -89,6 +86,11 @@
 button:focus-visible { outline: 2px solid var(--busy); outline-offset: 1px; }
 [hidden] { display: none !important; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: 13px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
 aside { background: var(--panel); border-right: 1px solid var(--border); overflow: auto; }
 .icon-btn { display: flex; border: 0; background: none; color: var(--muted); cursor: pointer; padding: 2px; border-radius: 3px; }
 .icon-btn:hover { color: var(--text); background: var(--border); }
@@ -106,8 +108,8 @@ aside { background: var(--panel); border-right: 1px solid var(--border); overflo
 #git-lists { flex: 1; overflow: auto; }
 #graph { flex: 0 1 auto; max-height: 30%; overflow: auto; border-top: 1px solid var(--border); }
 ul { list-style: none; margin: 0; padding: 0; }
-#rows li.selected, .item.selected { background: var(--select); }
-#rows li:focus-visible, .item:focus-visible { outline: 2px solid var(--busy); outline-offset: -2px; }
+.item.selected { background: var(--select); }
+.item:focus-visible { outline: 2px solid var(--busy); outline-offset: -2px; }
 @keyframes fade { 50% { opacity: .35; } }
 @media (prefers-reduced-motion: reduce) { .chip .dot { animation: none; } .caret svg, .chev { transition: none; } }
 .empty { color: var(--muted); text-align: center; margin-top: 40vh; }
@@ -474,4 +476,5 @@ button.pill:hover { background: color-mix(in srgb, var(--modified) 22%, var(--se
 .offline #files .item:hover { background: none; }
 .offline #git .item input[type=checkbox], .offline #filetabs { pointer-events: none; }
 .offline #git .item input[type=checkbox] { opacity: .5; }
+@media (prefers-reduced-motion: reduce) { #stalebar { animation: none; } }
 @keyframes notice-in { from { opacity: 0; } }
