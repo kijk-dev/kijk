@@ -62,7 +62,7 @@ addEventListener('message', e => {
   }
   const draw = () => import(`./engines/${engine}.js`).then(m => m.draw(text, ctx));
   queue = queue
-    .then(() => (known ? draw() : Promise.reject(new Error(`Unknown diagram kind ${engine}`))))
+    .then(() => (known ? draw() : Promise.reject(new Error(`Unknown file type ${engine}`))))
     .then(r => ({ id, ...r, ...(r.svg && sized(r.svg)) }), err => ({ id, error: err.message }))
     .then(msg => parent.postMessage(msg, location.origin));
 });
