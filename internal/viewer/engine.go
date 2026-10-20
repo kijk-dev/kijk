@@ -10,16 +10,17 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"time"
 
 	"github.com/kijk-dev/kijk/internal/render"
 )
 
-// download is one file of an engine, with the engine's label for messages.
+// download is one file of an engine, with the name of its file type and the engine's label.
 type download struct {
 	render.Download
-	label string
+	fileType, label string
 }
 
 // downloads are the files of every engine in the list, by name.
@@ -28,11 +29,37 @@ func downloads() map[string]download {
 	for _, t := range render.FileTypes {
 		if t.Engine != nil {
 			for _, f := range t.Engine.Files {
-				m[f.Name] = download{f, t.Engine.Label}
+				m[f.Name] = download{f, t.Name, t.Engine.Label}
 			}
 		}
 	}
 	return m
+}
+
+// frameEngine is what the diagram frame gets of one engine: its label and the URLs of its files.
+type frameEngine struct {
+	Label string            `json:"label"`
+	Files map[string]string `json:"files"`
+}
+
+// frame gives the diagram frame the engines by the name of their file type, and the files not in
+// the cache yet.
+func (c *engineCache) frame() (map[string]frameEngine, []string) {
+	engines := map[string]frameEngine{}
+	var missing []string
+	for name, d := range c.files {
+		e, ok := engines[d.fileType]
+		if !ok {
+			e = frameEngine{d.label, map[string]string{}}
+			engines[d.fileType] = e
+		}
+		e.Files[name] = d.src()
+		if !c.cached(d) {
+			missing = append(missing, name)
+		}
+	}
+	slices.Sort(missing)
+	return engines, missing
 }
 
 const (
