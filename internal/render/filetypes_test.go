@@ -1,6 +1,7 @@
 package render
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -85,6 +86,31 @@ func TestFileTypeList(t *testing.T) {
 				t.Errorf("%s: engine file %+v", ft.Name, f)
 			}
 			files[f.Name] = true
+		}
+	}
+}
+
+// testdata/filetypes holds one sample per file type, for the API and browser tests.
+func TestEveryTypeHasASample(t *testing.T) {
+	files, err := os.ReadDir("../../testdata/filetypes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := map[string]string{}
+	for _, f := range files {
+		ft := TypeOf(f.Name())
+		switch {
+		case ft == nil:
+			t.Errorf("the sample %s has no file type", f.Name())
+		case found[ft.Name] != "":
+			t.Errorf("%s and %s are both samples of %s", found[ft.Name], f.Name(), ft.Name)
+		default:
+			found[ft.Name] = f.Name()
+		}
+	}
+	for _, ft := range FileTypes {
+		if found[ft.Name] == "" {
+			t.Errorf("%s has no sample in testdata/filetypes", ft.Name)
 		}
 	}
 }

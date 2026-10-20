@@ -1,9 +1,11 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -250,6 +252,89 @@ func TestBrowser(t *testing.T) {
 		r.waitFor("the remote code", activeFile("app.go")+" && "+viewHas("package app"))
 		r.noErrors()
 	})
+
+	// Every sample of testdata/filetypes shows the way its entry in /api/filetypes says.
+	t.Run("file types", func(t *testing.T) {
+		samples, err := os.ReadDir(filepath.Join("testdata", "filetypes"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		dir := filepath.Join(t.TempDir(), "filetypes")
+		texts := map[string]string{}
+		for _, s := range samples {
+			b, err := os.ReadFile(filepath.Join("testdata", "filetypes", s.Name()))
+			if err != nil {
+				t.Fatal(err)
+			}
+			texts[s.Name()] = string(b)
+			write(t, filepath.Join(dir, s.Name()), string(b))
+		}
+		types := listFileTypes(t, k)
+		if out := runCmd(t, k.env, exe, "-port", fmt.Sprint(k.port), "-no-open", dir); !strings.Contains(out, "Added filetypes") {
+			p.on(t).fail("kijk <folder> said:\n%s", out)
+		}
+		f := openPage(t, newTab(t, tab), k, "/?window=folders")
+		f.click("the filetypes row", row("filetypes"))
+		for _, s := range samples {
+			name := s.Name()
+			ft := typeOf(types, name)
+			f.click(name, treeItem(name))
+			f.waitFor(name+" open", activeFile(name))
+			switch ft.Show {
+			case "image":
+				f.waitFor(name+" as a picture", fmt.Sprintf(`(i => i?.alt === %s && i.complete && i.naturalWidth > 0)(document.querySelector('#viewer .imgview img.pic'))`, jsString(name)))
+			case "rendered":
+				f.waitFor(name+" rendered", `document.querySelector('#viewer article.md:not(.diagram-file) [data-lines]')`)
+			case "drawn":
+				// The first run on a machine downloads the engine.
+				f.waitLong(2*time.Minute, name+" drawn", fmt.Sprintf(`(i => i?.complete && i.naturalWidth > 0)(document.querySelector('#viewer .diagram img.diagram-pic.%s'))`, ft.Name))
+			default:
+				f.fail("%s: no way to show %q", name, ft.Show)
+			}
+			if ft.Show == "image" && !ft.Text {
+				continue
+			}
+			first, _, _ := strings.Cut(texts[name], "\n")
+			f.click("Source", byText("#viewer .mode button", "Source"))
+			f.waitFor(name+" as colored source", viewHas(first)+` && document.querySelector('#viewer .ln .tx span[class^="h"]')`)
+		}
+		f.noErrors()
+	})
+}
+
+type fileType struct {
+	Name, Show  string
+	Exts, Names []string
+	Text        bool
+}
+
+// listFileTypes gets the list of file types from kijk, as the page does.
+func listFileTypes(t *testing.T, k *kijkProcess) []fileType {
+	t.Helper()
+	resp, err := k.request("GET", "/api/filetypes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var types []fileType
+	if err := json.NewDecoder(resp.Body).Decode(&types); err != nil || len(types) == 0 {
+		t.Fatalf("/api/filetypes: %d %v", resp.StatusCode, err)
+	}
+	return types
+}
+
+// typeOf finds the file type of a file name as kijk does: by its exact name, else by its extension.
+func typeOf(types []fileType, name string) fileType {
+	ext := strings.ToLower(filepath.Ext(name))
+	for _, by := range []func(fileType) bool{
+		func(ft fileType) bool { return slices.Contains(ft.Names, name) },
+		func(ft fileType) bool { return slices.Contains(ft.Exts, ext) },
+	} {
+		if i := slices.IndexFunc(types, by); i >= 0 {
+			return types[i]
+		}
+	}
+	return fileType{}
 }
 
 const (

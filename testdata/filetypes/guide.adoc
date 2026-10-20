@@ -1,0 +1,5 @@
+= Shop guide
+
+== Setup
+
+Run the shop with `go run ./src`.
