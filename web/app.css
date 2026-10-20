@@ -53,11 +53,9 @@ header { display: flex; align-items: center; justify-content: space-between; hei
 .when, .repo { color: var(--muted); font-size: 12px; }
 .repo { padding-left: calc(17px * var(--icons, 1) + 3px); } /* under the names, after the agent icons */
 .where { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.agent { display: flex; width: 14px; height: 14px; flex: none; }
+.agent { display: flex; width: 14px; height: 14px; flex: none; color: var(--agent-color, var(--text)); }
 .agent svg { width: 14px; height: 14px; fill: currentColor; stroke: none; }
 .agents { display: flex; gap: 3px; flex: none; }
-.agent.claude { color: #d97757; } /* Claude's brand orange */
-.agent.codex { color: var(--text); }
 li.busy .agent.on svg { animation: zoom 1.2s ease-in-out infinite; }
 @keyframes zoom { 50% { transform: scale(.55); } }
 @media (prefers-reduced-motion: reduce) { .rail-collapsed li.busy .badge { animation: none; } li.busy .agent.on svg { animation-name: fade; } }

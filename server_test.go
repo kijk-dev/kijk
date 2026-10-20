@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -16,6 +17,7 @@ import (
 	"testing/fstest"
 	"time"
 
+	"github.com/kijk-dev/kijk/internal/agents"
 	"github.com/kijk-dev/kijk/internal/viewer"
 )
 
@@ -177,5 +179,27 @@ func TestHubWindowsAndGrace(t *testing.T) {
 	}
 	if h.wanted(windowAgents, closed.Add(61*time.Second), time.Minute) {
 		t.Error("still wanted after a minute")
+	}
+}
+
+func TestAgentTypesRoute(t *testing.T) {
+	srv := newServer("secret", 7717, nil, newHub(), &viewer.Roots{}, nil, nil, nil)
+	r := httptest.NewRequest("GET", "/api/agenttypes", nil)
+	r.Host = "127.0.0.1:7717"
+	r.AddCookie(&http.Cookie{Name: cookieName(7717), Value: "secret"})
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, r)
+	var types []map[string]string
+	if err := json.Unmarshal(w.Body.Bytes(), &types); err != nil || len(types) != len(agents.Types) {
+		t.Fatalf("%d %q: %v", w.Code, w.Body.String(), err)
+	}
+	for i, at := range agents.Types {
+		want := map[string]string{"name": at.Name, "label": at.Label, "icon": at.Icon}
+		if at.Color != "" {
+			want["color"] = at.Color
+		}
+		if !maps.Equal(types[i], want) {
+			t.Errorf("type %d = %v, want %v", i, types[i], want)
+		}
 	}
 }
