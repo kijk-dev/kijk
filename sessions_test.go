@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -96,9 +97,9 @@ func TestScan(t *testing.T) {
 	repo := gitRepo(t)
 	os.MkdirAll(filepath.Join(repo, "src"), 0o755)
 	write(t, filepath.Join(claude, "sessions", "1.json"), sessionJSON(os.Getpid(), "s1", filepath.Join(repo, "src"), "review the code", "busy", time.Now().UnixMilli()))
-	rows, err, _ := newScanner(agents.Types, testEnv(t, "CLAUDE_CONFIG_DIR", claude)).scan()
-	if err != nil {
-		t.Fatal(err)
+	rows, errs, _ := newScanner(agents.Types, testEnv(t, "CLAUDE_CONFIG_DIR", claude)).scan()
+	if errs != nil {
+		t.Fatal(errs)
 	}
 	if len(rows) != 1 {
 		t.Fatalf("got %d rows: %+v", len(rows), rows)
@@ -118,13 +119,35 @@ func TestScanClaudeAndCodexInOneFolder(t *testing.T) {
 			`"futureField"`, fmt.Sprintf(`"statusUpdatedAt":%d,"futureField"`, time.Now().Add(-time.Hour).UnixMilli()), 1))
 	codexHome, f := agentstest.CodexHome(t)
 	f.Set(agentstest.Thread("t1", repo, "active", "name", "fix the login bug"))
-	rows, err, codexErr := newScanner(agents.Types, testEnv(t, "CLAUDE_CONFIG_DIR", claude, "CODEX_HOME", codexHome)).scan()
-	if err != nil || codexErr != nil || len(rows) != 1 {
-		t.Fatalf("rows = %+v, err = %v, %v", rows, err, codexErr)
+	rows, errs, _ := newScanner(agents.Types, testEnv(t, "CLAUDE_CONFIG_DIR", claude, "CODEX_HOME", codexHome)).scan()
+	if errs != nil || len(rows) != 1 {
+		t.Fatalf("rows = %+v, errs = %v", rows, errs)
 	}
 	r := rows[0]
 	if !slices.Equal(r.Names, []string{"fix the login bug", "auth-fix"}) || !slices.Equal(r.Agents, []RowAgent{{"codex", true}, {"claude", false}}) || !r.Busy {
 		t.Fatalf("row = %+v, want the busy Codex agent first", r)
+	}
+}
+
+// fakeType is an agent type for scanner tests, with the sessions and error its reader gives.
+func fakeType(name string, err error, sessions ...agents.Session) agents.AgentType {
+	return agents.AgentType{Name: name, Label: name, Sessions: func(*agents.Env) ([]agents.Session, error) { return sessions, err }}
+}
+
+func TestScanFailingTypeHidesOnlyItsAgents(t *testing.T) {
+	now := time.Now()
+	types := []agents.AgentType{
+		fakeType("one", nil, agents.Session{Name: "a", Cwd: t.TempDir(), Last: now}),
+		fakeType("two", errors.New("unreadable")),
+		fakeType("three", nil, agents.Session{Name: "b", Cwd: t.TempDir(), Last: now}),
+		fakeType("four", errors.New("gone")),
+	}
+	rows, errs, _ := newScanner(types, testEnv(t)).scan()
+	if len(rows) != 2 || rows[0].Agents[0].Type != "one" || rows[1].Agents[0].Type != "three" {
+		t.Fatalf("rows = %+v, want the agents of one and three", rows)
+	}
+	if !slices.Equal(errs, []typeError{{"two", "unreadable"}, {"four", "gone"}}) {
+		t.Fatalf("errs = %v", errs)
 	}
 }
 
@@ -133,9 +156,44 @@ func TestScanBrokenCodexKeepsClaude(t *testing.T) {
 	write(t, filepath.Join(claude, "sessions", "1.json"), sessionJSON(os.Getpid(), "s1", t.TempDir(), "docs", "idle", time.Now().UnixMilli()))
 	codexHome, f := agentstest.CodexHome(t)
 	f.Reply(func(c *agentstest.Conn, id int, _ string) { c.Send(0x1, []byte("{oops")) })
-	rows, err, codexErr := newScanner(agents.Types, testEnv(t, "CLAUDE_CONFIG_DIR", claude, "CODEX_HOME", codexHome)).scan()
-	if err != nil || codexErr == nil || len(rows) != 1 || rows[0].Names[0] != "docs" {
-		t.Fatalf("rows = %+v, err = %v, codexErr = %v", rows, err, codexErr)
+	rows, errs, _ := newScanner(agents.Types, testEnv(t, "CLAUDE_CONFIG_DIR", claude, "CODEX_HOME", codexHome)).scan()
+	if len(errs) != 1 || errs[0].Type != "codex" || len(rows) != 1 || rows[0].Names[0] != "docs" {
+		t.Fatalf("rows = %+v, errs = %v", rows, errs)
+	}
+}
+
+func TestScanBrokenClaudeKeepsCodex(t *testing.T) {
+	claude := t.TempDir()
+	write(t, filepath.Join(claude, "sessions", "9.json"), "{broken")
+	codexHome, f := agentstest.CodexHome(t)
+	f.Set(agentstest.Thread("t1", t.TempDir(), "idle", "name", "fix the login bug"))
+	rows, errs, _ := newScanner(agents.Types, testEnv(t, "CLAUDE_CONFIG_DIR", claude, "CODEX_HOME", codexHome)).scan()
+	if len(errs) != 1 || errs[0].Type != "claude" || !strings.Contains(errs[0].Error, "9.json") {
+		t.Fatalf("errs = %v, want the Claude Code error naming the file", errs)
+	}
+	if len(rows) != 1 || rows[0].Names[0] != "fix the login bug" {
+		t.Fatalf("rows = %+v, want the Codex agent", rows)
+	}
+}
+
+// A missing tool folder is no error, and the scan says whether any tool is installed.
+func TestScanInstalled(t *testing.T) {
+	claude := t.TempDir()
+	os.Mkdir(filepath.Join(claude, "sessions"), 0o755)
+	missing := filepath.Join(t.TempDir(), "missing")
+	for _, c := range []struct {
+		name          string
+		claude, codex string
+		installed     bool
+	}{
+		{"Codex only", missing, agentstest.ShortTempDir(t), true},
+		{"Claude Code only", claude, missing, true},
+		{"neither", missing, missing, false},
+	} {
+		rows, errs, installed := newScanner(agents.Types, testEnv(t, "CLAUDE_CONFIG_DIR", c.claude, "CODEX_HOME", c.codex)).scan()
+		if len(rows) != 0 || errs != nil || installed != c.installed {
+			t.Errorf("%s: got %v, %v, installed %v", c.name, rows, errs, installed)
+		}
 	}
 }
 

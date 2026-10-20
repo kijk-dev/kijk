@@ -95,20 +95,19 @@ func TestClaudeErrors(t *testing.T) {
 	}
 }
 
-func TestCodexOnlyUser(t *testing.T) {
-	env := testEnv(t, "CODEX_HOME", t.TempDir())
-	if sessions, err := claudeSessions(env); err != nil || len(sessions) != 0 {
-		t.Fatalf("a missing Claude folder next to a Codex home is no error: %v, %v", sessions, err)
-	}
-}
-
-func TestClaudeDir(t *testing.T) {
-	if d := claudeDir(claudeEnv(t, "/custom")); d != "/custom" {
-		t.Fatal(d)
-	}
+func TestClaudeFolder(t *testing.T) {
 	env := testEnv(t)
-	if d := claudeDir(env); d != filepath.Join(env.Home, ".claude") {
-		t.Fatal(d)
+	if sessions, err := claudeSessions(env); err != nil || len(sessions) != 0 || env.Installed() {
+		t.Fatalf("no Claude folder: got %v, %v; want nothing, no error, and Claude Code not installed", sessions, err)
+	}
+	write(t, filepath.Join(env.Home, ".claude", "sessions", "1.json"), sessionJSON(os.Getpid(), "s1", "/a", "home", "idle", time.Now().UnixMilli()))
+	if sessions, err := claudeSessions(env); err != nil || len(sessions) != 1 || sessions[0].Name != "home" || !env.Installed() {
+		t.Fatalf("~/.claude: got %v, %v", sessions, err)
+	}
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, "sessions", "1.json"), sessionJSON(os.Getpid(), "s1", "/a", "custom", "idle", time.Now().UnixMilli()))
+	if sessions, err := claudeSessions(claudeEnv(t, dir)); err != nil || len(sessions) != 1 || sessions[0].Name != "custom" {
+		t.Fatalf("CLAUDE_CONFIG_DIR: got %v, %v", sessions, err)
 	}
 }
 

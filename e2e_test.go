@@ -310,6 +310,69 @@ func TestBrowser(t *testing.T) {
 		}
 		f.noErrors()
 	})
+
+	// One notice names every agent type kijk cannot read; the agents of the other types stay.
+	t.Run("agent errors", func(t *testing.T) {
+		claude := t.TempDir()
+		broken := filepath.Join(claude, "sessions", "9.json")
+		write(t, broken, "{broken")
+		codexHome, codex := agentstest.CodexHome(t)
+		codex.Set(agentstest.Thread("t1", api, "idle", "name", "Fix the login bug"))
+		e := openPage(t, newTab(t, tab), startKijkIn(t, exe, t.TempDir(), "CLAUDE_CONFIG_DIR="+claude, "CODEX_HOME="+codexHome), "/")
+		const notice = `document.querySelector('#statusbar .agent-error')`
+		says := func(text string) string { return notice + `?.querySelector('.long').textContent === ` + jsString(text) }
+		e.waitFor("the Claude Code notice", says("Cannot read Claude Code agents · they are hidden"))
+		e.waitFor("the file that failed on hover", notice+`.dataset.tip.includes('9.json')`)
+		e.waitFor("the Codex agent", rowLabelIs("Fix the login bug, Codex, api · main, Idle"))
+
+		codex.Reply(func(c *agentstest.Conn, _ int, _ string) { c.Send(0x1, []byte("{oops")) })
+		e.waitFor("one notice naming both types", says("Cannot read Claude Code, Codex agents · they are hidden"))
+		e.waitFor("no agent rows", `!document.querySelector('#rows li[role=button]')`)
+		e.emulate("light", 500)
+		e.waitFor("the short notice", notice+`.querySelector('.short').textContent === '2 agent types hidden' && getComputedStyle(`+notice+`.querySelector('.short')).display !== 'none'`)
+		e.emulate("light", 1400)
+
+		write(t, broken, sessionJSON(os.Getpid(), "s-cart", shop, "Add the cart", "idle", time.Now().UnixMilli()))
+		e.waitFor("the Codex notice", says("Cannot read Codex agents · they are hidden"))
+		e.waitFor("the Claude Code agent", rowLabelIs("Add the cart, Claude Code, shop · main, Idle"))
+		codex.Reply(nil)
+		e.waitFor("the notice gone", "!"+notice)
+		e.waitFor("the Codex agent again", row("Fix the login bug"))
+		e.noErrors()
+	})
+
+	t.Run("no agent tools", func(t *testing.T) {
+		missing := filepath.Join(t.TempDir(), "missing")
+		n := startKijkIn(t, exe, t.TempDir(), "CLAUDE_CONFIG_DIR="+missing, "CODEX_HOME="+missing)
+		var labels []string
+		for _, at := range listAgentTypes(t, n) {
+			labels = append(labels, at.Label)
+		}
+		want := "No running agents · kijk shows " + strings.Join(labels[:len(labels)-1], ", ") + " and " + labels[len(labels)-1] + " agents"
+		e := openPage(t, newTab(t, tab), n, "/")
+		e.waitFor(want, `(s => !s.hidden && !s.classList.contains('error') && s.textContent === `+jsString(want)+`)(document.querySelector('#status'))`)
+		e.waitFor("no notice", `document.querySelector('#statusbar .kijk') && !document.querySelector('#statusbar .agent-error')`)
+		e.noErrors()
+	})
+}
+
+type agentType struct {
+	Name, Label, Icon, Color string
+}
+
+// listAgentTypes gets the list of agent types from kijk, as the page does.
+func listAgentTypes(t *testing.T, k *kijkProcess) []agentType {
+	t.Helper()
+	resp, err := k.request("GET", "/api/agenttypes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var types []agentType
+	if err := json.NewDecoder(resp.Body).Decode(&types); err != nil || len(types) == 0 {
+		t.Fatalf("/api/agenttypes: %d %v", resp.StatusCode, err)
+	}
+	return types
 }
 
 type fileType struct {

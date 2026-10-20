@@ -46,6 +46,7 @@ type Env struct {
 	Getenv  func(string) string // the environment, such as CLAUDE_CONFIG_DIR
 	Version string              // kijk's version, for a tool that asks who reads it
 	states  map[string]any
+	found   map[string]bool // whether each tool folder was there when a reader last looked
 }
 
 func NewEnv(version string) *Env {
@@ -53,12 +54,29 @@ func NewEnv(version string) *Env {
 	return &Env{Home: home, Getenv: os.Getenv, Version: version}
 }
 
-// folder is a tool's folder: the one in envVar when it is set, else name in the home folder.
-func (e *Env) folder(envVar, name string) string {
-	if d := e.Getenv(envVar); d != "" {
-		return d
+// folder is a tool's folder: the one in envVar when it is set, else name in the home folder. ok is
+// false when it does not exist: the tool is not installed, so its reader has no sessions and no error.
+func (e *Env) folder(envVar, name string) (dir string, ok bool) {
+	dir = e.Getenv(envVar)
+	if dir == "" {
+		dir = filepath.Join(e.Home, name)
 	}
-	return filepath.Join(e.Home, name)
+	ok = exists(dir)
+	if e.found == nil {
+		e.found = map[string]bool{}
+	}
+	e.found[dir] = ok
+	return dir, ok
+}
+
+// Installed reports whether the tool of any agent type is installed, as its reader last found it.
+func (e *Env) Installed() bool {
+	for _, ok := range e.found {
+		if ok {
+			return true
+		}
+	}
+	return false
 }
 
 // running rejects a reused pid: that process started after the agent wrote startedAt.

@@ -3,12 +3,14 @@ import { refreshTip, tipSide } from './tip.js';
 import { openKey, openFolder, closeFolder, setMachine, setupFolder, showFetched, SERVER } from './folder.js';
 import { ago, lineCount } from './git.js';
 import { mac } from './keys.js';
-import { showKijk, showCodexError, showUndo, restarting } from './status.js';
+import { showKijk, showAgentErrors, showUndo, restarting } from './status.js';
 
 // The agent types kijk knows, in its order. They come from the local kijk, also for remote rows.
 const agentTypes = await get('agenttypes');
 // agentType finds a type by name. An unknown type shows its name and no icon.
 const agentType = name => agentTypes.find(a => a.name === name) || { label: name, icon: '' };
+// What the Agents list says when the tool of no agent type is on this machine.
+const NONE_INSTALLED = `No running agents · kijk shows ${andList(agentTypes.map(a => a.label))} agents`;
 
 // The page is the agents window, or at /?window=folders the folders window: same views, other rows.
 const params = new URLSearchParams(location.search);
@@ -19,6 +21,7 @@ let arriving = params.get('open'); // a folder kijk <folder> just added, to open
 if (arriving) history.replaceState(null, '', '/?window=folders');
 let openSeq = null; // the last open request seen; null until the first message of a connection
 let listError = '';
+let noAgents = 'No running agents'; // what the Agents list says for the local machine when it has none
 
 const rowsEl = document.getElementById('rows');
 const statusEl = document.getElementById('status');
@@ -337,7 +340,7 @@ function groupItem(m, own, open, items) {
     right.push(dots);
   }
   g.right.replaceChildren(...right);
-  const lines = open ? note(local ? { state: 'connected' } : m, own.length) : [];
+  const lines = open ? note(local ? { state: 'connected', message: noAgents } : m, own.length) : [];
   g.note.replaceChildren(...lines);
   g.note.hidden = !lines.length;
   sync(g.list, open ? items : []);
@@ -493,8 +496,8 @@ events.onmessage = e => {
   showKijk(msg.kijk);
   if (foldersMode) return showFolders(msg);
   machines = msg.machines || null;
-  showCodexError([msg.codexError, ...(machines || []).filter(m => m.codexError).map(m => `${m.name}: ${m.codexError}`)]
-    .filter(Boolean).join('\n'));
+  showAgentErrors(agentErrors(msg.errors, machines));
+  noAgents = msg.noneInstalled ? NONE_INSTALLED : 'No running agents';
   const next = (msg.rows || []).map(r => ({ ...r, key: r.root, machine: '' }));
   for (const m of machines || []) {
     for (const r of m.rows) next.push({ ...r, key: folderKey(m.name, r.root), machine: m.name, stale: m.stale });
@@ -507,13 +510,32 @@ events.onmessage = e => {
   rows = next;
   showStart();
   // With machines, an empty group says so under its own header.
-  if (msg.error) showStatus(msg.error, true);
-  else showStatus(rows.length || machines ? '' : 'No running agents');
+  showStatus(rows.length || machines ? '' : noAgents);
   followMachine();
   const last = !openKey && rows.find(r => r.key === reopen && !r.stale);
   if (last) open(last);
   else render();
 };
+
+// andList joins words as "a, b and c".
+function andList(words) {
+  return words.length > 1 ? `${words.slice(0, -1).join(', ')} and ${words.at(-1)}` : words.join('');
+}
+
+// typeRank orders agent types as kijk does; an unknown type comes last.
+function typeRank(name) {
+  const i = agentTypes.findIndex(a => a.name === name);
+  return i < 0 ? agentTypes.length : i;
+}
+
+// agentErrors groups the errors of the local and remote machines by agent type, in kijk's order.
+function agentErrors(local, machines) {
+  const all = [...(local || []).map(e => ({ type: e.type, reason: e.error })),
+    ...(machines || []).flatMap(m => (m.errors || []).map(e => ({ type: e.type, reason: `${m.name}: ${e.error}` })))];
+  return [...new Set(all.map(e => e.type))].sort((a, b) => typeRank(a) - typeRank(b))
+    .map(t => ({ label: agentType(t).label, reasons: all.filter(e => e.type === t).map(e => e.reason) }));
+}
+
 function openHint(n) {
   return n ? `${mac ? '⌃⌥' : 'Ctrl+Alt+'}${n} to open` : '';
 }

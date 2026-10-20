@@ -3,6 +3,7 @@ package agents
 import (
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -47,6 +48,25 @@ func TestRunning(t *testing.T) {
 	}
 	if env.running(deadPID(t), now) {
 		t.Error("dead process should not be running")
+	}
+}
+
+func TestFolder(t *testing.T) {
+	env := testEnv(t, "TOOL_HOME", "/custom")
+	if d, ok := env.folder("TOOL_HOME", ".tool"); d != "/custom" || ok {
+		t.Fatalf("got %q, %v; want the folder of the variable, not there", d, ok)
+	}
+	d, ok := env.folder("OTHER_HOME", ".other")
+	if d != filepath.Join(env.Home, ".other") || ok || env.Installed() {
+		t.Fatalf("got %q, %v; want the folder in the home folder, not there", d, ok)
+	}
+	os.Mkdir(d, 0o755)
+	if _, ok := env.folder("OTHER_HOME", ".other"); !ok || !env.Installed() {
+		t.Fatal("a tool folder that is there is an installed tool")
+	}
+	os.Remove(d)
+	if env.folder("OTHER_HOME", ".other"); env.Installed() {
+		t.Fatal("a tool folder removed since is no installed tool")
 	}
 }
 

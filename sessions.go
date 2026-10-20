@@ -50,26 +50,29 @@ func newScanner(types []agents.AgentType, env *agents.Env) *scanner {
 	return &scanner{types: types, env: env, git: map[string]gitEntry{}}
 }
 
-// scan returns the rows of every agent type. err is about Claude Code and replaces the rows in the
-// Agents list; codexErr is about Codex and only hides the Codex agents.
-func (s *scanner) scan() (rows []Row, err, codexErr error) {
+// typeError is an agent type whose agents kijk cannot read, and why. Its agents are hidden; the
+// agents of the other types still show.
+type typeError struct {
+	Type  string `json:"type"`
+	Error string `json:"error"`
+}
+
+// scan returns the rows of every agent type it can read, an error for each type it cannot read, and
+// whether the tool of any agent type is installed on this machine.
+func (s *scanner) scan() (rows []Row, errs []typeError, installed bool) {
 	var all []session
 	for _, t := range s.types {
-		found, terr := t.Sessions(s.env)
-		if t.Name == "codex" {
-			codexErr = terr
-		} else if terr != nil {
-			err = terr
+		found, err := t.Sessions(s.env)
+		if err != nil {
+			errs = append(errs, typeError{t.Name, err.Error()})
+			continue
 		}
 		for _, a := range found {
 			root, branch := s.gitInfo(a.Cwd)
 			all = append(all, session{Agent: t.Name, Name: a.Name, Root: root, Branch: branch, Cwd: a.Cwd, Busy: a.Busy, Last: a.Last})
 		}
 	}
-	if err != nil {
-		return nil, err, codexErr
-	}
-	return groupRows(all), nil, codexErr
+	return groupRows(all), errs, s.env.Installed()
 }
 
 func (s *scanner) gitInfo(cwd string) (string, string) {

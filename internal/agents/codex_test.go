@@ -23,20 +23,18 @@ func codexEnv(t *testing.T, home string) *Env {
 	return testEnv(t, "CODEX_HOME", home)
 }
 
-func TestCodexHome(t *testing.T) {
-	env := testEnv(t, "CODEX_HOME", "/custom")
-	if codexHome(env) != "/custom" {
-		t.Fatal(codexHome(env))
+func TestCodexFolder(t *testing.T) {
+	env := testEnv(t)
+	if sessions, err := codexSessions(env); err != nil || len(sessions) != 0 || env.Installed() {
+		t.Fatalf("no Codex home: got %v, %v; want nothing, no error, and Codex not installed", sessions, err)
 	}
-	if want := filepath.Join("/custom", "app-server-control", "app-server-control.sock"); codexSocket(codexHome(env)) != want {
-		t.Fatal(codexSocket(codexHome(env)))
-	}
-	env = testEnv(t)
-	if codexHome(env) != filepath.Join(env.Home, ".codex") {
-		t.Fatal(codexHome(env))
-	}
-	if codexSocket(codexHome(env)) != agentstest.CodexSocket(codexHome(env)) {
+	if want := filepath.Join("/custom", "app-server-control", "app-server-control.sock"); codexSocket("/custom") != want || agentstest.CodexSocket("/custom") != want {
 		t.Fatal("the fake Codex listens where kijk does not look")
+	}
+	home, f := agentstest.CodexHome(t)
+	f.Set(thread("t1", "/a", "idle"))
+	if sessions, err := codexSessions(codexEnv(t, home)); err != nil || len(sessions) != 1 {
+		t.Fatalf("CODEX_HOME: got %v, %v", sessions, err)
 	}
 }
 
@@ -182,9 +180,9 @@ func TestCodexSessions(t *testing.T) {
 }
 
 func TestNoCodexAppServer(t *testing.T) {
-	sessions, err := codexSessions(codexEnv(t, agentstest.ShortTempDir(t))) // a Codex home, but no app server listens
-	if len(sessions) != 0 || err != nil {
-		t.Fatalf("got %v, %v; want nothing and no error", sessions, err)
+	env := codexEnv(t, agentstest.ShortTempDir(t)) // a Codex home, but no app server listens
+	if sessions, err := codexSessions(env); len(sessions) != 0 || err != nil || !env.Installed() {
+		t.Fatalf("got %v, %v; want nothing, no error, and Codex installed", sessions, err)
 	}
 }
 

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -54,18 +53,14 @@ type claudeState struct {
 	transcripts map[string]transcript
 }
 
-func claudeDir(env *Env) string {
-	return env.folder("CLAUDE_CONFIG_DIR", ".claude")
-}
-
 func claudeSessions(env *Env) ([]Session, error) {
-	dir := claudeDir(env)
+	dir, ok := env.folder("CLAUDE_CONFIG_DIR", ".claude")
+	if !ok {
+		return nil, nil
+	}
 	st := state(env, "claude", func() *claudeState { return &claudeState{transcripts: map[string]transcript{}} })
 	sessDir := filepath.Join(dir, "sessions")
 	des, err := os.ReadDir(sessDir)
-	if errors.Is(err, fs.ErrNotExist) && exists(codexHome(env)) {
-		return nil, nil // a Codex-only user
-	}
 	if err != nil {
 		return nil, fmt.Errorf("cannot read Claude sessions folder %s: %w", sessDir, err)
 	}

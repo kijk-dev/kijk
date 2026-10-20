@@ -72,10 +72,6 @@ func (t codexThread) busy() bool {
 	return t.Status.Type == "active" && !slices.Contains(f, "waitingOnApproval") && !slices.Contains(f, "waitingOnUserInput")
 }
 
-func codexHome(env *Env) string {
-	return env.folder("CODEX_HOME", ".codex")
-}
-
 func codexSocket(home string) string {
 	return filepath.Join(home, "app-server-control", "app-server-control.sock")
 }
@@ -148,8 +144,12 @@ func readCodexThreads(socket string, cache codexCache, version string) ([]codexT
 }
 
 func codexSessions(env *Env) ([]Session, error) {
+	home, ok := env.folder("CODEX_HOME", ".codex")
+	if !ok {
+		return nil, nil
+	}
 	st := state(env, "codex", func() *codexState { return &codexState{cache: codexCache{}, seen: statusClock{}} })
-	threads, err := readCodexThreads(codexSocket(codexHome(env)), st.cache, env.Version)
+	threads, err := readCodexThreads(codexSocket(home), st.cache, env.Version)
 	if err != nil {
 		return nil, err
 	}
