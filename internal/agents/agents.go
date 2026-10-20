@@ -49,6 +49,7 @@ type Env struct {
 	found   map[string]bool // whether each tool folder was there when a reader last looked
 }
 
+// NewEnv is the machine kijk runs on, for kijk version.
 func NewEnv(version string) *Env {
 	home, _ := os.UserHomeDir()
 	return &Env{Home: home, Getenv: os.Getenv, Version: version}
