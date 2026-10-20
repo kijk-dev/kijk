@@ -1,10 +1,10 @@
-package main
+package viewer
 
 import (
 	"fmt"
 	"sync"
 
-	kgit "github.com/kijk-dev/kijk/internal/git"
+	"github.com/kijk-dev/kijk/internal/git"
 	"github.com/kijk-dev/kijk/internal/render"
 )
 
@@ -55,7 +55,7 @@ func (c *hlCache) lines(path string, idx *fileIndex, from, to int) ([][]render.T
 }
 
 // highlightDiff colors each hunk as one text, so strings and comments that span lines keep their color.
-func highlightDiff(path string, d *kgit.DiffResult) {
+func highlightDiff(path string, d *git.DiffResult) {
 	lexer := render.LexerFor(path)
 	for h := range d.Hunks {
 		lines := d.Hunks[h].Lines

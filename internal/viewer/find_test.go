@@ -1,4 +1,4 @@
-package main
+package viewer
 
 import (
 	"fmt"
@@ -6,12 +6,14 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/kijk-dev/kijk/internal/gittest"
 )
 
 func findIn(t *testing.T, content, q string) findResult {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), "f.txt")
-	write(t, p, content)
+	gittest.Write(t, p, content)
 	st, _ := os.Stat(p)
 	idx, err := buildIndex(p, st)
 	if err != nil {
@@ -88,23 +90,23 @@ func TestGotoFile(t *testing.T) {
 }
 
 func TestFolderFiles(t *testing.T) {
-	isolatedGit(t)
-	repo := gitRepo(t)
-	write(t, filepath.Join(repo, ".gitignore"), "build/\n")
-	write(t, filepath.Join(repo, "a.go"), "a\n")
-	write(t, filepath.Join(repo, "gone.go"), "g\n")
-	run(t, repo, "add", ".")
-	run(t, repo, "commit", "-qm", "init")
-	write(t, filepath.Join(repo, "src", "new.go"), "n\n")
-	write(t, filepath.Join(repo, "build", "out.bin"), "b\n")
+	gittest.Isolate(t)
+	repo := gittest.Repo(t)
+	gittest.Write(t, filepath.Join(repo, ".gitignore"), "build/\n")
+	gittest.Write(t, filepath.Join(repo, "a.go"), "a\n")
+	gittest.Write(t, filepath.Join(repo, "gone.go"), "g\n")
+	gittest.Run(t, repo, "add", ".")
+	gittest.Run(t, repo, "commit", "-qm", "init")
+	gittest.Write(t, filepath.Join(repo, "src", "new.go"), "n\n")
+	gittest.Write(t, filepath.Join(repo, "build", "out.bin"), "b\n")
 	os.Remove(filepath.Join(repo, "gone.go"))
 	if got := strings.Join(folderFiles(repo), ","); got != ".gitignore,a.go,src/new.go" {
 		t.Fatalf("git folder = %s", got)
 	}
 
 	plain := t.TempDir()
-	write(t, filepath.Join(plain, "x.txt"), "x\n")
-	write(t, filepath.Join(plain, "sub", "y.txt"), "y\n")
+	gittest.Write(t, filepath.Join(plain, "x.txt"), "x\n")
+	gittest.Write(t, filepath.Join(plain, "sub", "y.txt"), "y\n")
 	if got := strings.Join(folderFiles(plain), ","); got != "sub/y.txt,x.txt" {
 		t.Fatalf("plain folder = %s", got)
 	}

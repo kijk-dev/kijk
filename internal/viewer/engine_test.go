@@ -1,4 +1,4 @@
-package main
+package viewer
 
 import (
 	"crypto/sha256"
@@ -13,7 +13,12 @@ import (
 	"testing"
 	"testing/fstest"
 	"time"
+
+	"github.com/kijk-dev/kijk/internal/gittest"
 )
+
+// cacheDir is the user cache folder of the engine caches in these tests; fakeEngine sets it.
+var cacheDir func() (string, error)
 
 // fakeEngine serves body as the engine "test", pinned to the SHA-256 of pinned, with the cache
 // in a temporary folder. It returns the engine folder and the request count.
@@ -42,9 +47,9 @@ func fakeEngine(t *testing.T, body, pinned string, gate chan struct{}) (string, 
 
 func TestEngineDownload(t *testing.T) {
 	dir, n := fakeEngine(t, "draw()", "draw()", nil)
-	write(t, filepath.Join(dir, "test-1.0.0.js"), "old")
-	write(t, filepath.Join(dir, "test-themes-2.0.0.js"), "another engine")
-	c := newEngineCache()
+	gittest.Write(t, filepath.Join(dir, "test-1.0.0.js"), "old")
+	gittest.Write(t, filepath.Join(dir, "test-themes-2.0.0.js"), "another engine")
+	c := newEngineCache(cacheDir, "test")
 	p, err := c.path(engines["test"])
 	if err != nil {
 		t.Fatal(err)
@@ -61,7 +66,7 @@ func TestEngineDownload(t *testing.T) {
 	if left, _ := filepath.Glob(filepath.Join(dir, ".download-*")); len(left) > 0 {
 		t.Errorf("temp files left: %v", left)
 	}
-	if _, err := newEngineCache().path(engines["test"]); err != nil || n.Load() != 1 {
+	if _, err := newEngineCache(cacheDir, "test").path(engines["test"]); err != nil || n.Load() != 1 {
 		t.Errorf("cached engine downloaded again: %v, %d requests", err, n.Load())
 	}
 }
@@ -69,7 +74,7 @@ func TestEngineDownload(t *testing.T) {
 func TestEngineWrongSum(t *testing.T) {
 	dir, n := fakeEngine(t, "evil()", "draw()", nil)
 	now := time.Now()
-	c := newEngineCache()
+	c := newEngineCache(cacheDir, "test")
 	c.now = func() time.Time { return now }
 	if _, err := c.path(engines["test"]); err == nil {
 		t.Fatal("no error")
@@ -91,7 +96,7 @@ func TestEngineWrongSum(t *testing.T) {
 func TestEngineTooLarge(t *testing.T) {
 	big := strings.Repeat("x", engineMaxBytes+1)
 	dir, _ := fakeEngine(t, big, big, nil)
-	if _, err := newEngineCache().path(engines["test"]); err == nil || !strings.Contains(err.Error(), "larger") {
+	if _, err := newEngineCache(cacheDir, "test").path(engines["test"]); err == nil || !strings.Contains(err.Error(), "larger") {
 		t.Fatalf("err = %v", err)
 	}
 	if files, _ := os.ReadDir(dir); len(files) != 0 {
@@ -102,7 +107,7 @@ func TestEngineTooLarge(t *testing.T) {
 func TestEngineOneDownloadAtATime(t *testing.T) {
 	gate := make(chan struct{})
 	_, n := fakeEngine(t, "draw()", "draw()", gate)
-	c := newEngineCache()
+	c := newEngineCache(cacheDir, "test")
 	var wg sync.WaitGroup
 	errs := make([]error, 2)
 	for i := range errs {
@@ -118,11 +123,10 @@ func TestEngineOneDownloadAtATime(t *testing.T) {
 
 func engineServer(t *testing.T) func(target string) *httptest.ResponseRecorder {
 	web := fstest.MapFS{"index.html": {Data: []byte("hi")}, "diagram.html": {Data: []byte(`<html data-test="{{test}}" data-missing="{{missing}}">`)}}
-	srv := newServer("secret", 7717, web, newHub(), &roots{}, nil, nil, nil)
+	srv := http.NewServeMux()
+	Register(srv, &Roots{}, Options{Web: web, CacheDir: cacheDir, Version: "test"})
 	return func(target string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest("GET", target, nil)
-		r.Host = "127.0.0.1:7717"
-		r.AddCookie(&http.Cookie{Name: cookieName(7717), Value: "secret"})
 		w := httptest.NewRecorder()
 		srv.ServeHTTP(w, r)
 		return w
@@ -131,7 +135,7 @@ func engineServer(t *testing.T) func(target string) *httptest.ResponseRecorder {
 
 func TestEngineRoute(t *testing.T) {
 	dir, n := fakeEngine(t, "draw()", "draw()", nil)
-	write(t, filepath.Join(dir, "test-2.0.0.js"), "cached()")
+	gittest.Write(t, filepath.Join(dir, "test-2.0.0.js"), "cached()")
 	get := engineServer(t)
 	w := get("/api/engine/test?v=2.0.0")
 	h := w.Header()
@@ -160,7 +164,7 @@ func TestDiagramFrame(t *testing.T) {
 	if w.Code != http.StatusOK || w.Body.String() != `<html data-test="/api/engine/test?v=2.0.0" data-missing="test">` {
 		t.Fatalf("%d %q", w.Code, w.Body.String())
 	}
-	write(t, filepath.Join(dir, "test-2.0.0.js"), "cached()")
+	gittest.Write(t, filepath.Join(dir, "test-2.0.0.js"), "cached()")
 	if body := get("/diagram").Body.String(); body != `<html data-test="/api/engine/test?v=2.0.0" data-missing="">` {
 		t.Errorf("cached engine still missing: %q", body)
 	}
@@ -172,17 +176,13 @@ func TestDiagramFrame(t *testing.T) {
 			t.Errorf("frame CSP lacks %s", want)
 		}
 	}
-	if csp := get("/").Header().Get("Content-Security-Policy"); !strings.Contains(csp, "frame-ancestors 'none'") {
-		t.Errorf("page CSP = %q", csp)
-	}
 }
 
 func TestNoEnginesOnRemote(t *testing.T) {
-	srv := newServer("secret", 7717, nil, newHub(), &roots{}, nil, nil, nil)
+	srv := http.NewServeMux()
+	Register(srv, &Roots{}, Options{})
 	for _, target := range []string{"/api/engine/mermaid", "/diagram"} {
 		r := httptest.NewRequest("GET", target, nil)
-		r.Host = "127.0.0.1:7717"
-		r.AddCookie(&http.Cookie{Name: cookieName(7717), Value: "secret"})
 		w := httptest.NewRecorder()
 		srv.ServeHTTP(w, r)
 		if w.Code != http.StatusNotFound {

@@ -1,4 +1,4 @@
-package main
+package viewer
 
 import (
 	"encoding/json"
@@ -11,7 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	kgit "github.com/kijk-dev/kijk/internal/git"
+	"github.com/kijk-dev/kijk/internal/git"
+	"github.com/kijk-dev/kijk/internal/gittest"
 )
 
 func TestImageType(t *testing.T) {
@@ -55,14 +56,13 @@ func TestLFSSize(t *testing.T) {
 
 // imageServer answers GET requests for root as the window would send them.
 func imageServer(t *testing.T, root string) func(route string, q url.Values, header ...string) *httptest.ResponseRecorder {
-	rts := &roots{}
-	rts.setFolders([]savedFolder{{Path: root}})
-	srv := newServer("secret", 7717, nil, newHub(), rts, nil, nil, nil)
+	rts := &Roots{}
+	rts.SetFolders([]string{root})
+	srv := http.NewServeMux()
+	Register(srv, rts, Options{})
 	return func(route string, q url.Values, header ...string) *httptest.ResponseRecorder {
 		q.Set("root", root)
 		r := httptest.NewRequest("GET", route+"?"+q.Encode(), nil)
-		r.Host = "127.0.0.1:7717"
-		r.AddCookie(&http.Cookie{Name: cookieName(7717), Value: "secret"})
 		for i := 0; i+1 < len(header); i += 2 {
 			r.Header.Set(header[i], header[i+1])
 		}
@@ -85,12 +85,12 @@ const pngBytes = "\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR"
 
 func TestImageFromDisk(t *testing.T) {
 	root := t.TempDir()
-	write(t, filepath.Join(root, "docs", "Logo.PNG"), pngBytes)
-	write(t, filepath.Join(root, "logo.svg"), `<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>`)
-	write(t, filepath.Join(root, "report.html"), "<script>alert(1)</script>")
+	gittest.Write(t, filepath.Join(root, "docs", "Logo.PNG"), pngBytes)
+	gittest.Write(t, filepath.Join(root, "logo.svg"), `<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>`)
+	gittest.Write(t, filepath.Join(root, "report.html"), "<script>alert(1)</script>")
 	big := filepath.Join(root, "big.png")
-	write(t, big, "")
-	if err := os.Truncate(big, kgit.MaxFileSize+1); err != nil {
+	gittest.Write(t, big, "")
+	if err := os.Truncate(big, git.MaxFileSize+1); err != nil {
 		t.Fatal(err)
 	}
 	get := imageServer(t, root)
@@ -119,9 +119,9 @@ func TestImageFromDisk(t *testing.T) {
 
 func TestLFSPointerOnDisk(t *testing.T) {
 	root := t.TempDir()
-	write(t, filepath.Join(root, "hero.png"), "version https://git-lfs.github.com/spec/v1\noid sha256:ab\nsize 2400000\n")
-	write(t, filepath.Join(root, "logo.png"), pngBytes)
-	write(t, filepath.Join(root, "notes.txt"), "version https://git-lfs.github.com/spec/v1\noid sha256:ab\nsize 9\n")
+	gittest.Write(t, filepath.Join(root, "hero.png"), "version https://git-lfs.github.com/spec/v1\noid sha256:ab\nsize 2400000\n")
+	gittest.Write(t, filepath.Join(root, "logo.png"), pngBytes)
+	gittest.Write(t, filepath.Join(root, "notes.txt"), "version https://git-lfs.github.com/spec/v1\noid sha256:ab\nsize 9\n")
 	get := imageServer(t, root)
 	for p, want := range map[string]int64{"hero.png": 2400000, "logo.png": 0, "notes.txt": 0} {
 		var info struct{ LFS int64 }
@@ -145,11 +145,11 @@ func hashObject(t *testing.T, content string) string {
 }
 
 func TestChangeSides(t *testing.T) {
-	isolatedGit(t)
-	repo := gitRepo(t)
+	gittest.Isolate(t)
+	repo := gittest.Repo(t)
 	names := map[string]string{}
 	put := func(p, content string) {
-		write(t, filepath.Join(repo, p), content)
+		gittest.Write(t, filepath.Join(repo, p), content)
 		names[hashObject(t, content)] = content
 	}
 	show := func(b *blobRef) string {
@@ -172,18 +172,18 @@ func TestChangeSides(t *testing.T) {
 	put("a.png", "A1")
 	put("old.png", "R1")
 	put("gone.png", "G1")
-	run(t, repo, "add", ".")
-	run(t, repo, "commit", "-qm", "first")
+	gittest.Run(t, repo, "add", ".")
+	gittest.Run(t, repo, "commit", "-qm", "first")
 	first := strings.TrimSpace(string(must(exec.Command("git", "-C", repo, "rev-parse", "HEAD").Output())))
 	check("root commit", "a.png", "", "commit", first, "none | A1 a.png")
 
 	put("a.png", "A2")
-	run(t, repo, "add", "a.png")
+	gittest.Run(t, repo, "add", "a.png")
 	put("a.png", "A3")
-	run(t, repo, "mv", "old.png", "new.png")
-	run(t, repo, "rm", "-q", "gone.png")
+	gittest.Run(t, repo, "mv", "old.png", "new.png")
+	gittest.Run(t, repo, "rm", "-q", "gone.png")
 	put("added.png", "N1")
-	run(t, repo, "add", "added.png")
+	gittest.Run(t, repo, "add", "added.png")
 	put("icon.webp", "W1")
 
 	check("unstaged", "a.png", "", "unstaged", "", "A2 a.png | disk a.png")
@@ -193,7 +193,7 @@ func TestChangeSides(t *testing.T) {
 	check("add", "added.png", "", "staged", "", "none | N1 added.png")
 	check("untracked", "icon.webp", "", "untracked", "", "none | disk icon.webp")
 
-	run(t, repo, "commit", "-qm", "second")
+	gittest.Run(t, repo, "commit", "-qm", "second")
 	second := strings.TrimSpace(string(must(exec.Command("git", "-C", repo, "rev-parse", "HEAD").Output())))
 	check("commit", "a.png", "", "commit", second, "A1 a.png | A2 a.png")
 	check("commit rename", "new.png", "old.png", "commit", second, "R1 old.png | R1 new.png")
@@ -204,7 +204,7 @@ func TestChangeSides(t *testing.T) {
 			t.Errorf("%q %q: no error", bad.mode, bad.hash)
 		}
 	}
-	if _, _, err := changeSides(repo, "../a.png", "", "staged", ""); err != kgit.ErrOutside {
+	if _, _, err := changeSides(repo, "../a.png", "", "staged", ""); err != git.ErrOutside {
 		t.Errorf("path escape: %v", err)
 	}
 }
@@ -217,17 +217,17 @@ func must(b []byte, err error) []byte {
 }
 
 func TestImageVersions(t *testing.T) {
-	isolatedGit(t)
-	repo := gitRepo(t)
-	write(t, filepath.Join(repo, "a.png"), "A1")
-	write(t, filepath.Join(repo, "logo.svg"), "<svg>\n</svg>\n")
-	run(t, repo, "add", ".")
-	run(t, repo, "commit", "-qm", "first")
-	write(t, filepath.Join(repo, "a.png"), "A2")
-	run(t, repo, "add", "a.png")
-	write(t, filepath.Join(repo, "a.png"), "A3")
-	write(t, filepath.Join(repo, "new.png"), "N1")
-	write(t, filepath.Join(repo, "logo.svg"), "<svg>\n<g/>\n</svg>\n")
+	gittest.Isolate(t)
+	repo := gittest.Repo(t)
+	gittest.Write(t, filepath.Join(repo, "a.png"), "A1")
+	gittest.Write(t, filepath.Join(repo, "logo.svg"), "<svg>\n</svg>\n")
+	gittest.Run(t, repo, "add", ".")
+	gittest.Run(t, repo, "commit", "-qm", "first")
+	gittest.Write(t, filepath.Join(repo, "a.png"), "A2")
+	gittest.Run(t, repo, "add", "a.png")
+	gittest.Write(t, filepath.Join(repo, "a.png"), "A3")
+	gittest.Write(t, filepath.Join(repo, "new.png"), "N1")
+	gittest.Write(t, filepath.Join(repo, "logo.svg"), "<svg>\n<g/>\n</svg>\n")
 	get := imageServer(t, repo)
 	img := func(mode, side, path string, more ...string) *httptest.ResponseRecorder {
 		q := url.Values{"mode": {mode}, "side": {side}, "path": {path}}
@@ -281,17 +281,17 @@ func TestImageVersions(t *testing.T) {
 		t.Errorf("untracked diff: %+v", res.Image)
 	}
 
-	write(t, filepath.Join(repo, "hero.png"), "version https://git-lfs.github.com/spec/v1\noid sha256:ab\nsize 2400000\n")
-	run(t, repo, "add", "hero.png")
-	run(t, repo, "commit", "-qm", "lfs")
+	gittest.Write(t, filepath.Join(repo, "hero.png"), "version https://git-lfs.github.com/spec/v1\noid sha256:ab\nsize 2400000\n")
+	gittest.Run(t, repo, "add", "hero.png")
+	gittest.Run(t, repo, "commit", "-qm", "lfs")
 	head := strings.TrimSpace(string(must(exec.Command("git", "-C", repo, "rev-parse", "HEAD").Output())))
 	res = diffReply{}
 	json.Unmarshal(get("/api/diff", url.Values{"mode": {"commit"}, "hash": {head}, "path": {"hero.png"}}).Body.Bytes(), &res)
 	if res.Image == nil || res.Image.Before != nil || res.Image.After == nil || res.Image.After.LFS != 2400000 {
 		t.Errorf("lfs in a commit: %+v", res.Image)
 	}
-	write(t, filepath.Join(repo, "hero.png"), "H2")
-	run(t, repo, "commit", "-qam", "real")
+	gittest.Write(t, filepath.Join(repo, "hero.png"), "H2")
+	gittest.Run(t, repo, "commit", "-qam", "real")
 	next := strings.TrimSpace(string(must(exec.Command("git", "-C", repo, "rev-parse", "HEAD").Output())))
 	res = diffReply{}
 	json.Unmarshal(get("/api/diff", url.Values{"mode": {"commit"}, "hash": {next}, "path": {"hero.png"}}).Body.Bytes(), &res)

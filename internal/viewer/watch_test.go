@@ -1,4 +1,4 @@
-package main
+package viewer
 
 import (
 	"bufio"
@@ -12,11 +12,13 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/kijk-dev/kijk/internal/gittest"
 )
 
 // watchFolder opens the folder event stream for root and returns its messages.
 func watchFolder(t *testing.T, root string) <-chan folderChange {
-	rts := &roots{m: map[string]bool{root: true}}
+	rts := &Roots{m: map[string]bool{root: true}}
 	srv := httptest.NewServer(http.HandlerFunc((&api{roots: rts}).folderEvents))
 	t.Cleanup(srv.Close)
 	resp, err := http.Get(srv.URL + "?root=" + url.QueryEscape(root))
@@ -49,12 +51,12 @@ func next(t *testing.T, ch <-chan folderChange, within time.Duration) (folderCha
 }
 
 func TestFolderEventsBatch(t *testing.T) {
-	isolatedGit(t)
-	repo := gitRepo(t)
+	gittest.Isolate(t)
+	repo := gittest.Repo(t)
 	ch := watchFolder(t, repo)
 
 	for i := 0; i < 200; i++ {
-		write(t, filepath.Join(repo, "gen", fmt.Sprintf("f%03d.go", i)), "x")
+		gittest.Write(t, filepath.Join(repo, "gen", fmt.Sprintf("f%03d.go", i)), "x")
 	}
 	c, ok := next(t, ch, 2*time.Second)
 	if !ok {
@@ -67,9 +69,9 @@ func TestFolderEventsBatch(t *testing.T) {
 		t.Fatalf("200 writes caused a second update: %+v", extra)
 	}
 
-	write(t, filepath.Join(repo, "a.go"), "a")
-	run(t, repo, "add", "a.go")
-	run(t, repo, "commit", "-qm", "a")
+	gittest.Write(t, filepath.Join(repo, "a.go"), "a")
+	gittest.Run(t, repo, "add", "a.go")
+	gittest.Run(t, repo, "commit", "-qm", "a")
 	gitSeen := false
 	for !gitSeen {
 		c, ok := next(t, ch, 2*time.Second)
@@ -81,19 +83,19 @@ func TestFolderEventsBatch(t *testing.T) {
 }
 
 func TestFolderEventsWorktree(t *testing.T) {
-	isolatedGit(t)
-	repo := gitRepo(t)
-	write(t, filepath.Join(repo, "a.go"), "a")
-	run(t, repo, "add", ".")
-	run(t, repo, "commit", "-qm", "init")
+	gittest.Isolate(t)
+	repo := gittest.Repo(t)
+	gittest.Write(t, filepath.Join(repo, "a.go"), "a")
+	gittest.Run(t, repo, "add", ".")
+	gittest.Run(t, repo, "commit", "-qm", "init")
 	wt := filepath.Join(t.TempDir(), "wt")
-	run(t, repo, "worktree", "add", "-q", "-b", "feature", wt)
+	gittest.Run(t, repo, "worktree", "add", "-q", "-b", "feature", wt)
 	if len(outsideGitDirs(wt)) == 0 {
 		t.Fatal("worktree git folders not found")
 	}
 
 	ch := watchFolder(t, wt)
-	run(t, wt, "commit", "-q", "--allow-empty", "-m", "empty")
+	gittest.Run(t, wt, "commit", "-q", "--allow-empty", "-m", "empty")
 	for {
 		c, ok := next(t, ch, 2*time.Second)
 		if !ok {

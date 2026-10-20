@@ -21,6 +21,8 @@ import (
 	"testing"
 	"testing/fstest"
 	"time"
+
+	"github.com/kijk-dev/kijk/internal/viewer"
 )
 
 func TestClassify(t *testing.T) {
@@ -186,7 +188,7 @@ func TestMachineProxy(t *testing.T) {
 		proxy: newRemoteProxy(&http.Transport{}, addr, cookie)}
 	down := &remoteMachine{name: "other-vm", mm: mm, state: stateNeedsLogin, message: "The login to other-vm needs you. Run kijk machine login other-vm"}
 	mm.list = []*remoteMachine{connected, down}
-	srv := newServer("secret", 7717, fstest.MapFS{"index.html": {Data: []byte("hi")}}, newHub(), &roots{}, newUpdater("0.9.0", "", io.Discard), mm, nil)
+	srv := newServer("secret", 7717, fstest.MapFS{"index.html": {Data: []byte("hi")}}, newHub(), &viewer.Roots{}, newUpdater("0.9.0", "", io.Discard), mm, nil)
 	do := func(method, target string, withCookie bool) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(method, target, strings.NewReader(`{"root":"/x"}`))
 		r.Host = "127.0.0.1:7717"
@@ -293,7 +295,7 @@ func TestMachineProxyStreamsEvents(t *testing.T) {
 		t.Fatal(err)
 	}
 	port := ln.Addr().(*net.TCPAddr).Port
-	srv := &http.Server{Handler: newServer("secret", port, nil, newHub(), &roots{}, nil, mm, nil)}
+	srv := &http.Server{Handler: newServer("secret", port, nil, newHub(), &viewer.Roots{}, nil, mm, nil)}
 	go srv.Serve(ln)
 	t.Cleanup(func() { srv.Close() })
 
@@ -311,7 +313,7 @@ func TestMachineProxyStreamsEvents(t *testing.T) {
 }
 
 func TestHeadlessServerHasNoUpdateRoutes(t *testing.T) {
-	srv := newServer("secret", 7717, nil, newHub(), &roots{}, nil, nil, nil)
+	srv := newServer("secret", 7717, nil, newHub(), &viewer.Roots{}, nil, nil, nil)
 	for _, p := range []string{"/api/update", "/api/restart", "/m/azvm/api/tree"} {
 		r := httptest.NewRequest("POST", p, nil)
 		r.Host = "127.0.0.1:7717"
@@ -499,4 +501,13 @@ func TestTestsUseTheirOwnLoginFolder(t *testing.T) {
 	if real := filepath.Join("/tmp", fmt.Sprintf("kijk-%d", os.Getuid())); sshDir() == real {
 		t.Fatalf("tests use the real login folder %s", real)
 	}
+}
+
+func sandboxed(h http.Header) bool {
+	for _, v := range h.Values("Content-Security-Policy") {
+		if v == "sandbox" {
+			return h.Get("X-Content-Type-Options") == "nosniff"
+		}
+	}
+	return false
 }

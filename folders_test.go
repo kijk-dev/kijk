@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/kijk-dev/kijk/internal/viewer"
 )
 
 // abs makes a slash path absolute on this system: Windows needs a drive letter.
@@ -62,7 +64,7 @@ func TestFolderListKeepsBrokenFileErrorAfterSave(t *testing.T) {
 	p, _ := foldersPath()
 	os.MkdirAll(filepath.Dir(p), 0o700)
 	os.WriteFile(p, []byte(`{"folders": [`), 0o600)
-	l := newFolderList(p, &roots{})
+	l := newFolderList(p, &viewer.Roots{})
 	if _, err := l.add([]savedFolder{{Path: abs("/api")}}); err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +85,7 @@ func TestFolderListDoesNotOverwriteUnreadableFile(t *testing.T) {
 	writeFolders(p, []savedFolder{{Path: "/keep"}})
 	os.Chmod(p, 0)
 	t.Cleanup(func() { os.Chmod(p, 0o600) })
-	l := newFolderList(p, &roots{})
+	l := newFolderList(p, &viewer.Roots{})
 	if _, err := l.add([]savedFolder{{Path: "/api"}}); err == nil {
 		t.Error("add saved over a file it could not read")
 	}
@@ -164,10 +166,10 @@ func TestCheckFoldersAddsNothingOnError(t *testing.T) {
 func TestFolderListUndo(t *testing.T) {
 	useConfigDir(t)
 	p, _ := foldersPath()
-	rts := &roots{}
+	rts := &viewer.Roots{}
 	l := newFolderList(p, rts)
 	l.add([]savedFolder{{Path: abs("/api")}, {Path: abs("/k"), Open: abs("/k/web")}, {Path: abs("/notes")}})
-	if !l.remove(abs("/k")) || !l.remove(abs("/notes")) || rts.has(abs("/k")) {
+	if !l.remove(abs("/k")) || !l.remove(abs("/notes")) || rts.Has(abs("/k")) {
 		t.Fatal("remove")
 	}
 	if l.restore(abs("/k")) {
@@ -177,7 +179,7 @@ func TestFolderListUndo(t *testing.T) {
 		t.Error("restore the last removal once")
 	}
 	list, open, _, _ := l.snapshot()
-	if !slices.Equal(list, []savedFolder{{Path: abs("/api")}, {Path: abs("/notes")}}) || open.Root != abs("/notes") || !rts.has(abs("/notes")) {
+	if !slices.Equal(list, []savedFolder{{Path: abs("/api")}, {Path: abs("/notes")}}) || open.Root != abs("/notes") || !rts.Has(abs("/notes")) {
 		t.Fatalf("list %v open %v", list, open)
 	}
 	if saved, _ := readFolders(p); !slices.Equal(saved, list) {
@@ -220,7 +222,7 @@ func TestFolderRowRefreshWhenAsked(t *testing.T) {
 	other := t.TempDir()
 	p, _ := foldersPath()
 	h := newHub()
-	l := newFolderList(p, &roots{})
+	l := newFolderList(p, &viewer.Roots{})
 	go l.watch(h, nil)
 	srv := httptest.NewServer(http.HandlerFunc(h.serveEvents))
 	t.Cleanup(srv.Close)

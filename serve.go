@@ -12,6 +12,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/kijk-dev/kijk/internal/viewer"
 )
 
 // serveState is serve-<name>.json: how a local kijk reaches the remote kijk on this machine.
@@ -72,7 +74,7 @@ func runServe(name string) error {
 	port := ln.Addr().(*net.TCPAddr).Port
 	token := newToken()
 	h := newHub()
-	rts := &roots{}
+	rts := &viewer.Roots{}
 	go watchSessions(newScanner(claudeDir(), codexHome()), h, rts, nil, nil, nil, nil)
 	srv := &http.Server{Handler: newServer(token, port, nil, h, rts, nil, nil, nil)}
 

@@ -1,4 +1,4 @@
-package main
+package viewer
 
 import (
 	"bufio"
@@ -13,7 +13,7 @@ import (
 	"sync"
 	"unicode/utf8"
 
-	kgit "github.com/kijk-dev/kijk/internal/git"
+	"github.com/kijk-dev/kijk/internal/git"
 )
 
 const (
@@ -21,34 +21,34 @@ const (
 	indexStride = 64    // the index keeps the start of every 64th line
 )
 
-// roots are the folders the server may read: row folders of running agents and saved folders.
-type roots struct {
+// Roots are the folders the server may read: row folders of running agents and saved folders.
+type Roots struct {
 	mu      sync.RWMutex
 	m       map[string]bool
 	folders map[string]bool
 }
 
-func (r *roots) set(rows []Row) {
+func (r *Roots) Set(paths []string) {
 	m := map[string]bool{}
-	for _, row := range rows {
-		m[row.Root] = true
+	for _, p := range paths {
+		m[p] = true
 	}
 	r.mu.Lock()
 	r.m = m
 	r.mu.Unlock()
 }
 
-func (r *roots) setFolders(list []savedFolder) {
+func (r *Roots) SetFolders(paths []string) {
 	m := map[string]bool{}
-	for _, f := range list {
-		m[f.Path] = true
+	for _, p := range paths {
+		m[p] = true
 	}
 	r.mu.Lock()
 	r.folders = m
 	r.mu.Unlock()
 }
 
-func (r *roots) has(root string) bool {
+func (r *Roots) Has(root string) bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.m[root] || r.folders[root]
@@ -64,13 +64,13 @@ func resolve(root, rel string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if !inside(realRoot, p) {
-		return "", kgit.ErrOutside
+	if !Inside(realRoot, p) {
+		return "", git.ErrOutside
 	}
 	return p, nil
 }
 
-func inside(root, p string) bool {
+func Inside(root, p string) bool {
 	r, err := filepath.Rel(root, p)
 	return err == nil && r != ".." && !strings.HasPrefix(r, ".."+string(filepath.Separator))
 }
@@ -104,7 +104,7 @@ func listDir(root, rel string) ([]entry, error) {
 			if st, err := os.Stat(full); err == nil {
 				e.Dir = st.IsDir()
 			}
-			if target, err := filepath.EvalSymlinks(full); err == nil && !inside(realRoot, target) {
+			if target, err := filepath.EvalSymlinks(full); err == nil && !Inside(realRoot, target) {
 				e.Outside = true
 			}
 		}
@@ -226,7 +226,7 @@ func (c *indexCache) get(path string) (*fileIndex, error) {
 
 func buildIndex(path string, st os.FileInfo) (*fileIndex, error) {
 	idx := &fileIndex{fileInfo: fileInfo{Size: st.Size(), Mtime: st.ModTime().UnixNano()}}
-	if st.Size() > kgit.MaxFileSize {
+	if st.Size() > git.MaxFileSize {
 		idx.TooLarge = true
 		return idx, nil
 	}
@@ -238,7 +238,7 @@ func buildIndex(path string, st os.FileInfo) (*fileIndex, error) {
 
 	head := make([]byte, 8000)
 	n, _ := io.ReadFull(f, head)
-	if kgit.IsBinary(head[:n]) {
+	if git.IsBinary(head[:n]) {
 		idx.Binary = true
 		return idx, nil
 	}

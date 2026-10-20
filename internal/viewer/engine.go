@@ -1,4 +1,4 @@
-package main
+package viewer
 
 import (
 	"crypto/sha256"
@@ -75,29 +75,31 @@ type engineSlot struct {
 
 // engineCache keeps the engines in the user cache folder.
 type engineCache struct {
-	slots map[string]*engineSlot
-	now   func() time.Time
+	slots   map[string]*engineSlot
+	now     func() time.Time
+	dir     func() (string, error) // the user cache folder
+	version string                 // kijk's, for the User-Agent
 }
 
-func newEngineCache() *engineCache {
-	c := &engineCache{slots: map[string]*engineSlot{}, now: time.Now}
+func newEngineCache(dir func() (string, error), version string) *engineCache {
+	c := &engineCache{slots: map[string]*engineSlot{}, now: time.Now, dir: dir, version: version}
 	for name := range engines {
 		c.slots[name] = &engineSlot{}
 	}
 	return c
 }
 
-func engineFile(e engine) (string, error) {
-	dir, err := cacheDir()
+func (c *engineCache) file(e engine) (string, error) {
+	dir, err := c.dir()
 	if err != nil {
 		return "", err
 	}
 	return filepath.Join(dir, "kijk", "engines", e.name+"-"+e.version+".js"), nil
 }
 
-// engineCached tells whether the engine is in the cache, without downloading it.
-func engineCached(e engine) bool {
-	p, err := engineFile(e)
+// cached tells whether the engine is in the cache, without downloading it.
+func (c *engineCache) cached(e engine) bool {
+	p, err := c.file(e)
 	return err == nil && fileCached(p)
 }
 
@@ -108,7 +110,7 @@ func fileCached(p string) bool {
 
 // path gives the engine's file, downloaded and checked first when it is not in the cache.
 func (c *engineCache) path(e engine) (string, error) {
-	p, err := engineFile(e)
+	p, err := c.file(e)
 	if err != nil {
 		return "", err
 	}
@@ -122,7 +124,7 @@ func (c *engineCache) path(e engine) (string, error) {
 	if c.now().Sub(s.failed) < engineRetry {
 		return "", errors.New("the last download failed less than a minute ago")
 	}
-	if err := downloadEngine(e, dir, p); err != nil {
+	if err := downloadEngine(e, dir, p, c.version); err != nil {
 		log.Printf("could not download %s: %v", e.label, err)
 		s.failed = c.now()
 		return "", err
@@ -137,7 +139,7 @@ func (c *engineCache) path(e engine) (string, error) {
 	return p, nil
 }
 
-func downloadEngine(e engine, dir, p string) error {
+func downloadEngine(e engine, dir, p, version string) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
@@ -151,7 +153,7 @@ func downloadEngine(e engine, dir, p string) error {
 	if err != nil {
 		return err
 	}
-	req.Header.Set("User-Agent", "kijk/"+kijkVersion)
+	req.Header.Set("User-Agent", "kijk/"+version)
 	resp, err := (&http.Client{Timeout: engineTimeout}).Do(req)
 	if err != nil {
 		return err

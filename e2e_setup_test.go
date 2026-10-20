@@ -438,3 +438,8 @@ func copyEngines(from, to string) {
 
 // git is the journeys' name for kgit.Run; main imports internal/git as kgit so the name stays free.
 func git(dir string, args ...string) (string, error) { return kgit.Run(dir, args...) }
+
+func fileCached(p string) bool {
+	st, err := os.Stat(p)
+	return err == nil && st.Size() > 0
+}

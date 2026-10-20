@@ -1,10 +1,11 @@
-package main
+package viewer
 
 import (
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/kijk-dev/kijk/internal/gittest"
 	"github.com/kijk-dev/kijk/internal/render"
 )
 
@@ -25,7 +26,7 @@ func TestHighlightWindowInsideComment(t *testing.T) {
 	}
 	b.WriteString("*/\nfunc real() {}\n")
 	p := filepath.Join(t.TempDir(), "c.go")
-	write(t, p, b.String())
+	gittest.Write(t, p, b.String())
 	idx, _ := newIndexCache().get(p)
 	c := newHlCache()
 

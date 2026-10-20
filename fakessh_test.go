@@ -21,6 +21,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/kijk-dev/kijk/internal/viewer"
 )
 
 // The fake ssh is the test binary started through a link named ssh. It runs the remote command
@@ -410,7 +412,7 @@ func useCacheDir(t *testing.T) {
 // proxiedPing checks that the local server reaches the remote kijk through /m/<machine>/api/.
 func proxiedPing(t *testing.T, mm *machineManager, target string) {
 	t.Helper()
-	srv := newServer("secret", 7717, nil, newHub(), &roots{}, nil, mm, nil)
+	srv := newServer("secret", 7717, nil, newHub(), &viewer.Roots{}, nil, mm, nil)
 	r := httptest.NewRequest("GET", "/m/"+target+"/api/ping", nil)
 	r.Host = "127.0.0.1:7717"
 	r.AddCookie(&http.Cookie{Name: cookieName(7717), Value: "secret"})

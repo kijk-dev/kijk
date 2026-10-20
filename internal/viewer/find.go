@@ -1,4 +1,4 @@
-package main
+package viewer
 
 import (
 	"bufio"
@@ -12,7 +12,7 @@ import (
 	"unicode"
 	"unicode/utf16"
 
-	kgit "github.com/kijk-dev/kijk/internal/git"
+	"github.com/kijk-dev/kijk/internal/git"
 )
 
 const maxMatches = 10000
@@ -103,7 +103,7 @@ func folderFiles(root string) []string {
 		return l.paths
 	}
 	var paths []string
-	if out, err := kgit.Raw(root, "ls-files", "-z", "--cached", "--others", "--exclude-standard"); err == nil {
+	if out, err := git.Raw(root, "ls-files", "-z", "--cached", "--others", "--exclude-standard"); err == nil {
 		seen := map[string]bool{}
 		for _, p := range strings.Split(string(out), "\x00") {
 			if p == "" || seen[p] || strings.HasSuffix(p, "/") {

@@ -214,3 +214,15 @@ func TestScanIdleAge(t *testing.T) {
 		t.Fatalf("ages = %v, want a 48h (statusUpdatedAt) and b 3h (session file)", ages)
 	}
 }
+
+func TestRelCwd(t *testing.T) {
+	root := t.TempDir()
+	real, _ := filepath.EvalSymlinks(root)
+	os.MkdirAll(filepath.Join(root, "services", "api"), 0o755)
+	if got := relCwd(real, filepath.Join(root, "services", "api")); got != "services/api" {
+		t.Fatalf("got %q", got)
+	}
+	if got := relCwd(real, filepath.Dir(root)); got != "" {
+		t.Fatalf("outside: %q", got)
+	}
+}

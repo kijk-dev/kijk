@@ -1,4 +1,4 @@
-package main
+package viewer
 
 import (
 	"encoding/json"
@@ -9,13 +9,14 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kijk-dev/kijk/internal/gittest"
 	"github.com/kijk-dev/kijk/internal/render"
 )
 
 func TestDiagramFileRender(t *testing.T) {
 	dir := t.TempDir()
-	write(t, filepath.Join(dir, "docs", "FLOW.MMD"), "graph TD\nA-->B\n")
-	write(t, filepath.Join(dir, "big.mmd"), "graph TD\n"+strings.Repeat("é", diagramMaxChars))
+	gittest.Write(t, filepath.Join(dir, "docs", "FLOW.MMD"), "graph TD\nA-->B\n")
+	gittest.Write(t, filepath.Join(dir, "big.mmd"), "graph TD\n"+strings.Repeat("é", diagramMaxChars))
 	get := imageServer(t, dir)
 	w := get("/api/markdown", url.Values{"path": {"docs/FLOW.MMD"}})
 	var res struct{ HTML string }
@@ -32,8 +33,8 @@ func TestDiagramFileRender(t *testing.T) {
 func TestExcalidrawFileSize(t *testing.T) {
 	dir := t.TempDir()
 	drawing := func(n int) string { return `{"type":"excalidraw","files":{"a":"` + strings.Repeat("x", n) + `"}}` }
-	write(t, filepath.Join(dir, "shot.excalidraw"), drawing(3<<20))
-	write(t, filepath.Join(dir, "huge.excalidraw"), drawing(excalidrawMaxBytes))
+	gittest.Write(t, filepath.Join(dir, "shot.excalidraw"), drawing(3<<20))
+	gittest.Write(t, filepath.Join(dir, "huge.excalidraw"), drawing(excalidrawMaxBytes))
 	get := imageServer(t, dir)
 	if w := get("/api/markdown", url.Values{"path": {"shot.excalidraw"}}); w.Code != http.StatusOK || !strings.HasPrefix(w.Body.String(), `{"html":"\u003cpre class=\"diagram excalidraw\" data-lines=\"1-1\"`) {
 		t.Errorf("3 MB: %d %.80q", w.Code, w.Body.String())
@@ -44,24 +45,24 @@ func TestExcalidrawFileSize(t *testing.T) {
 }
 
 func TestDiagramDiff(t *testing.T) {
-	isolatedGit(t)
-	repo := gitRepo(t)
-	write(t, filepath.Join(repo, "flow.mmd"), "A1")
-	write(t, filepath.Join(repo, "gone.mmd"), "G1")
-	run(t, repo, "add", ".")
-	run(t, repo, "commit", "-qm", "first")
-	write(t, filepath.Join(repo, "flow.mmd"), "A2")
-	run(t, repo, "add", "flow.mmd")
-	run(t, repo, "rm", "-q", "gone.mmd")
-	run(t, repo, "commit", "-qm", "second")
+	gittest.Isolate(t)
+	repo := gittest.Repo(t)
+	gittest.Write(t, filepath.Join(repo, "flow.mmd"), "A1")
+	gittest.Write(t, filepath.Join(repo, "gone.mmd"), "G1")
+	gittest.Run(t, repo, "add", ".")
+	gittest.Run(t, repo, "commit", "-qm", "first")
+	gittest.Write(t, filepath.Join(repo, "flow.mmd"), "A2")
+	gittest.Run(t, repo, "add", "flow.mmd")
+	gittest.Run(t, repo, "rm", "-q", "gone.mmd")
+	gittest.Run(t, repo, "commit", "-qm", "second")
 	hash := strings.TrimSpace(string(must(exec.Command("git", "-C", repo, "rev-parse", "HEAD").Output())))
-	write(t, filepath.Join(repo, "flow.mmd"), "A3")
-	run(t, repo, "add", "flow.mmd")
-	write(t, filepath.Join(repo, "flow.mmd"), "A4")
-	write(t, filepath.Join(repo, "new.mmd"), "N1")
-	write(t, filepath.Join(repo, "big.mmd"), strings.Repeat("x", diagramMaxChars+1))
-	write(t, filepath.Join(repo, "shot.excalidraw"), strings.Repeat("x", diagramMaxChars+1))
-	write(t, filepath.Join(repo, "huge.excalidraw"), strings.Repeat("x", excalidrawMaxBytes+1))
+	gittest.Write(t, filepath.Join(repo, "flow.mmd"), "A3")
+	gittest.Run(t, repo, "add", "flow.mmd")
+	gittest.Write(t, filepath.Join(repo, "flow.mmd"), "A4")
+	gittest.Write(t, filepath.Join(repo, "new.mmd"), "N1")
+	gittest.Write(t, filepath.Join(repo, "big.mmd"), strings.Repeat("x", diagramMaxChars+1))
+	gittest.Write(t, filepath.Join(repo, "shot.excalidraw"), strings.Repeat("x", diagramMaxChars+1))
+	gittest.Write(t, filepath.Join(repo, "huge.excalidraw"), strings.Repeat("x", excalidrawMaxBytes+1))
 
 	get := imageServer(t, repo)
 	side := func(s *diagramSide) string {
@@ -98,10 +99,10 @@ func TestDiagramDiff(t *testing.T) {
 func TestFileText(t *testing.T) {
 	dir := t.TempDir()
 	outside := t.TempDir()
-	write(t, filepath.Join(dir, "docs", "styles.puml"), "skinparam x y\n")
-	write(t, filepath.Join(dir, "logo.png"), "PNG\x00\x01")
-	write(t, filepath.Join(dir, "big.puml"), strings.Repeat("x", textMaxBytes+1))
-	write(t, filepath.Join(outside, "secret"), "key")
+	gittest.Write(t, filepath.Join(dir, "docs", "styles.puml"), "skinparam x y\n")
+	gittest.Write(t, filepath.Join(dir, "logo.png"), "PNG\x00\x01")
+	gittest.Write(t, filepath.Join(dir, "big.puml"), strings.Repeat("x", textMaxBytes+1))
+	gittest.Write(t, filepath.Join(outside, "secret"), "key")
 	get := imageServer(t, dir)
 	w := get("/api/text", url.Values{"path": {"docs/styles.puml"}})
 	var res struct{ Text string }

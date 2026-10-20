@@ -1,4 +1,4 @@
-package main
+package viewer
 
 import (
 	"encoding/json"
@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	kgit "github.com/kijk-dev/kijk/internal/git"
+	"github.com/kijk-dev/kijk/internal/git"
 	"github.com/rjeczalik/notify"
 )
 
@@ -82,7 +82,7 @@ func (a *api) folderEvents(w http.ResponseWriter, r *http.Request) {
 
 // outsideGitDirs finds a worktree's git folders, which live in the main repository, not under root.
 func outsideGitDirs(root string) []string {
-	out, err := kgit.Run(root, "rev-parse", "--absolute-git-dir", "--git-common-dir")
+	out, err := git.Run(root, "rev-parse", "--absolute-git-dir", "--git-common-dir")
 	if err != nil {
 		return nil
 	}
@@ -92,7 +92,7 @@ func outsideGitDirs(root string) []string {
 		if !filepath.IsAbs(d) {
 			d = filepath.Join(root, d)
 		}
-		if real, err := filepath.EvalSymlinks(d); err == nil && !inside(root, real) && !slices.Contains(dirs, real) {
+		if real, err := filepath.EvalSymlinks(d); err == nil && !Inside(root, real) && !slices.Contains(dirs, real) {
 			dirs = append(dirs, real)
 		}
 	}
@@ -101,13 +101,13 @@ func outsideGitDirs(root string) []string {
 
 func addChange(batch *folderChange, seen map[string]bool, root string, gitDirs []string, path string) {
 	for _, d := range gitDirs {
-		if inside(d, path) {
+		if Inside(d, path) {
 			batch.Git = true
 			return
 		}
 	}
 	rel, err := filepath.Rel(root, path)
-	if err != nil || !inside(root, path) {
+	if err != nil || !Inside(root, path) {
 		return
 	}
 	rel = filepath.ToSlash(rel)

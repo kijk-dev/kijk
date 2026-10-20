@@ -12,6 +12,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/kijk-dev/kijk/internal/viewer"
+
 	kgit "github.com/kijk-dev/kijk/internal/git"
 )
 
@@ -171,7 +173,7 @@ func checkFolders(args []string, cwd string) ([]savedFolder, error) {
 // folders.json while it runs.
 type folderList struct {
 	path    string
-	roots   *roots
+	roots   *viewer.Roots
 	changed chan struct{}
 
 	mu      sync.Mutex
@@ -195,16 +197,24 @@ type openRequest struct {
 	Root string `json:"root,omitempty"`
 }
 
-func newFolderList(path string, rts *roots) *folderList {
+func newFolderList(path string, rts *viewer.Roots) *folderList {
 	l := &folderList{path: path, roots: rts, changed: make(chan struct{}, 1)}
 	l.list, l.readErr = readFolders(path)
-	rts.setFolders(l.list)
+	rts.SetFolders(folderPaths(l.list))
 	return l
+}
+
+func folderPaths(list []savedFolder) []string {
+	paths := make([]string, len(list))
+	for i, f := range list {
+		paths[i] = f.Path
+	}
+	return paths
 }
 
 // changedLocked saves the list and tells the server and the windows. l.mu is held.
 func (l *folderList) changedLocked() {
-	l.roots.setFolders(l.list)
+	l.roots.SetFolders(folderPaths(l.list))
 	l.saveErr = nil
 	if l.readErr != nil && !errors.Is(l.readErr, errMovedAway) {
 		l.saveErr = errors.New("changes to the folders list are not saved, so kijk does not overwrite a file it could not read")

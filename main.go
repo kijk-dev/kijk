@@ -24,6 +24,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/kijk-dev/kijk/internal/viewer"
 )
 
 //go:embed web
@@ -149,7 +151,7 @@ func main() {
 		}
 	}
 	h := newHub()
-	rts := &roots{}
+	rts := &viewer.Roots{}
 	var mm *machineManager
 	if runtime.GOOS != "windows" {
 		mm = newMachineManager(kijkVersion)
@@ -377,7 +379,7 @@ func sessionMessage(rows []Row, err, codexErr error, k kijkState, machines []mac
 
 // watchSessions looks for agents only while an agents window is open, and for a minute after the
 // last one closes. An update or machine state change publishes at once, with the last poll's rows.
-func watchSessions(s *scanner, h *hub, rts *roots, u *updater, tel *telemetry, mm *machineManager, fl *folderList) {
+func watchSessions(s *scanner, h *hub, rts *viewer.Roots, u *updater, tel *telemetry, mm *machineManager, fl *folderList) {
 	var rows []Row
 	var err, codexErr error
 	var updated, machinesChanged <-chan struct{}
@@ -403,14 +405,14 @@ func watchSessions(s *scanner, h *hub, rts *roots, u *updater, tel *telemetry, m
 			} else {
 				stopMachines()
 				rows, err, codexErr = nil, nil, nil
-				rts.set(nil)
+				rts.Set(nil)
 				h.forget(windowAgents)
 			}
 		}
 		var counts *agentCounts
 		if looking && !now.Before(next) {
 			rows, err, codexErr = s.scan()
-			rts.set(rows)
+			rts.Set(rowRoots(rows))
 			// Wait for remote machines to connect, so the first event counts their agents too.
 			if mm.settled() || time.Since(since) > 30*time.Second {
 				machines, remote := mm.counts()

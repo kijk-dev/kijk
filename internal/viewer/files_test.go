@@ -1,4 +1,4 @@
-package main
+package viewer
 
 import (
 	"errors"
@@ -9,7 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	kgit "github.com/kijk-dev/kijk/internal/git"
+	"github.com/kijk-dev/kijk/internal/git"
+	"github.com/kijk-dev/kijk/internal/gittest"
 )
 
 func names(es []entry) string {
@@ -25,9 +26,9 @@ func TestListDir(t *testing.T) {
 	for _, d := range []string{".git", ".github", "src", "Beta"} {
 		os.Mkdir(filepath.Join(root, d), 0o755)
 	}
-	write(t, filepath.Join(root, "README.md"), "x")
-	write(t, filepath.Join(root, "a.go"), "x")
-	write(t, filepath.Join(root, "src", "main.go"), "x")
+	gittest.Write(t, filepath.Join(root, "README.md"), "x")
+	gittest.Write(t, filepath.Join(root, "a.go"), "x")
+	gittest.Write(t, filepath.Join(root, "src", "main.go"), "x")
 
 	es, err := listDir(root, "")
 	if err != nil {
@@ -44,7 +45,7 @@ func TestListDir(t *testing.T) {
 func TestSymlinks(t *testing.T) {
 	root := t.TempDir()
 	outside := t.TempDir()
-	write(t, filepath.Join(outside, "secret"), "s")
+	gittest.Write(t, filepath.Join(outside, "secret"), "s")
 	os.Mkdir(filepath.Join(root, "src"), 0o755)
 	if err := os.Symlink(outside, filepath.Join(root, "out")); err != nil {
 		t.Skip("symlinks not available:", err)
@@ -62,10 +63,10 @@ func TestSymlinks(t *testing.T) {
 	if e := byName["in"]; !e.Link || e.Outside {
 		t.Fatalf("in = %+v", e)
 	}
-	if _, err := resolve(root, "out/secret"); !errors.Is(err, kgit.ErrOutside) {
+	if _, err := resolve(root, "out/secret"); !errors.Is(err, git.ErrOutside) {
 		t.Fatalf("link escape: %v", err)
 	}
-	if _, err := listDir(root, "out"); !errors.Is(err, kgit.ErrOutside) {
+	if _, err := listDir(root, "out"); !errors.Is(err, git.ErrOutside) {
 		t.Fatalf("list through link: %v", err)
 	}
 	if _, err := resolve(root, "in"); err != nil {
@@ -76,8 +77,8 @@ func TestSymlinks(t *testing.T) {
 func TestResolveEscape(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "repo")
 	os.Mkdir(root, 0o755)
-	write(t, filepath.Join(filepath.Dir(root), "passwd"), "x")
-	if _, err := resolve(root, "../passwd"); !errors.Is(err, kgit.ErrOutside) {
+	gittest.Write(t, filepath.Join(filepath.Dir(root), "passwd"), "x")
+	if _, err := resolve(root, "../passwd"); !errors.Is(err, git.ErrOutside) {
 		t.Fatalf("got %v", err)
 	}
 	if _, err := resolve(root, "src/../../passwd"); err == nil {
@@ -93,7 +94,7 @@ func TestIndexAndLines(t *testing.T) {
 	}
 	b.WriteString("last without newline")
 	p := filepath.Join(dir, "big.txt")
-	write(t, p, b.String())
+	gittest.Write(t, p, b.String())
 
 	c := newIndexCache()
 	idx, err := c.get(p)
@@ -112,7 +113,7 @@ func TestIndexAndLines(t *testing.T) {
 		t.Fatalf("tail %q", lines)
 	}
 
-	write(t, p, "changed\n")
+	gittest.Write(t, p, "changed\n")
 	if idx, _ := c.get(p); idx.Lines != 1 {
 		t.Fatalf("stale index: %+v", idx.fileInfo)
 	}
@@ -120,7 +121,7 @@ func TestIndexAndLines(t *testing.T) {
 
 func TestLongLineCut(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "min.js")
-	write(t, p, strings.Repeat("é", maxLineLen))
+	gittest.Write(t, p, strings.Repeat("é", maxLineLen))
 	idx, _ := newIndexCache().get(p)
 	lines, _ := readLines(p, idx, 0, 1)
 	if !strings.HasSuffix(lines[0], "…") || len(lines[0]) > maxLineLen+len("…") || idx.MaxCols != maxLineLen {
@@ -131,31 +132,19 @@ func TestLongLineCut(t *testing.T) {
 func TestBinaryAndTooLarge(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "logo.png")
-	write(t, p, "\x89PNG\x00\x00data")
+	gittest.Write(t, p, "\x89PNG\x00\x00data")
 	if idx, _ := newIndexCache().get(p); !idx.Binary || idx.Size != 10 {
 		t.Fatalf("binary: %+v", idx.fileInfo)
 	}
 	big := filepath.Join(dir, "big.bin")
 	f, _ := os.Create(big)
-	f.Truncate(kgit.MaxFileSize + 1)
+	f.Truncate(git.MaxFileSize + 1)
 	f.Close()
 	if idx, _ := newIndexCache().get(big); !idx.TooLarge {
 		t.Fatalf("too large: %+v", idx.fileInfo)
 	}
 	if _, err := newIndexCache().get(dir); err == nil {
 		t.Fatal("folder should not open as a file")
-	}
-}
-
-func TestRelCwd(t *testing.T) {
-	root := t.TempDir()
-	real, _ := filepath.EvalSymlinks(root)
-	os.MkdirAll(filepath.Join(root, "services", "api"), 0o755)
-	if got := relCwd(real, filepath.Join(root, "services", "api")); got != "services/api" {
-		t.Fatalf("got %q", got)
-	}
-	if got := relCwd(real, filepath.Dir(root)); got != "" {
-		t.Fatalf("outside: %q", got)
 	}
 }
 

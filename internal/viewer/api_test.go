@@ -1,4 +1,4 @@
-package main
+package viewer
 
 import (
 	"encoding/json"
@@ -10,13 +10,14 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kijk-dev/kijk/internal/gittest"
 	"github.com/kijk-dev/kijk/internal/render"
 )
 
 func TestAsciiDocRoute(t *testing.T) {
 	dir := t.TempDir()
-	write(t, filepath.Join(dir, "docs", "Guide.ADOC"), "= Guide\n\nNOTE: Hi.\n")
-	write(t, filepath.Join(dir, "big.adoc"), strings.Repeat("x", render.MdMaxBytes+1))
+	gittest.Write(t, filepath.Join(dir, "docs", "Guide.ADOC"), "= Guide\n\nNOTE: Hi.\n")
+	gittest.Write(t, filepath.Join(dir, "big.adoc"), strings.Repeat("x", render.MdMaxBytes+1))
 	get := imageServer(t, dir)
 	w := get("/api/markdown", url.Values{"path": {"docs/Guide.ADOC"}})
 	var res struct{ HTML string }
@@ -29,12 +30,12 @@ func TestAsciiDocRoute(t *testing.T) {
 	}
 
 	outside := filepath.Join(t.TempDir(), "secret.adoc")
-	write(t, outside, "Secret.")
+	gittest.Write(t, outside, "Secret.")
 	if err := os.Symlink(outside, filepath.Join(dir, "docs", "link.adoc")); err != nil {
 		t.Skip(err)
 	}
-	write(t, filepath.Join(dir, "docs", "chapters", "intro.adoc"), "The intro.")
-	write(t, filepath.Join(dir, "docs", "book.adoc"), "include::chapters/intro.adoc[]\n\ninclude::link.adoc[]\n\ninclude::chapters[]\n")
+	gittest.Write(t, filepath.Join(dir, "docs", "chapters", "intro.adoc"), "The intro.")
+	gittest.Write(t, filepath.Join(dir, "docs", "book.adoc"), "include::chapters/intro.adoc[]\n\ninclude::link.adoc[]\n\ninclude::chapters[]\n")
 	w = get("/api/markdown", url.Values{"path": {"docs/book.adoc"}})
 	var book struct {
 		HTML     string

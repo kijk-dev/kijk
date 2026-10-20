@@ -9,6 +9,8 @@ import (
 	"slices"
 	"time"
 
+	"github.com/kijk-dev/kijk/internal/viewer"
+
 	kgit "github.com/kijk-dev/kijk/internal/git"
 )
 
@@ -272,8 +274,16 @@ func relCwd(root, cwd string) string {
 		cwd = real
 	}
 	r, err := filepath.Rel(root, cwd)
-	if err != nil || r == "." || !inside(root, cwd) {
+	if err != nil || r == "." || !viewer.Inside(root, cwd) {
 		return ""
 	}
 	return filepath.ToSlash(r)
+}
+
+func rowRoots(rows []Row) []string {
+	paths := make([]string, len(rows))
+	for i, r := range rows {
+		paths[i] = r.Root
+	}
+	return paths
 }
