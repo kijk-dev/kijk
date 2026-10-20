@@ -62,10 +62,11 @@ func claudeSessions(env *Env) ([]Session, error) {
 	st := state(env, "claude", func() *claudeState { return &claudeState{transcripts: map[string]transcript{}} })
 	sessDir := filepath.Join(dir, "sessions")
 	des, err := os.ReadDir(sessDir)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil, nil // Claude Code has written no session file here yet
-	}
 	if err != nil {
+		// Asks Stat, as Windows reports reading a file as a folder as a missing path.
+		if _, statErr := os.Stat(sessDir); errors.Is(statErr, fs.ErrNotExist) {
+			return nil, nil // Claude Code has written no session file here yet
+		}
 		return nil, fmt.Errorf("cannot read Claude sessions folder %s: %w", sessDir, err)
 	}
 	var sessions []Session
