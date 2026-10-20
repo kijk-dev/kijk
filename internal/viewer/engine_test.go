@@ -127,7 +127,7 @@ func TestEngineOneDownloadAtATime(t *testing.T) {
 }
 
 func engineServer(t *testing.T) func(target string) *httptest.ResponseRecorder {
-	web := fstest.MapFS{"index.html": {Data: []byte("hi")}, "diagram.html": {Data: []byte(`<html data-test="{{test}}" data-missing="{{missing}}">`)}}
+	web := fstest.MapFS{"index.html": {Data: []byte("hi")}, "diagram.html": {Data: []byte(`<html data-engines="{{engines}}" data-missing="{{missing}}">`)}}
 	srv := http.NewServeMux()
 	Register(srv, &Roots{}, Options{Web: web, CacheDir: cacheDir, Version: "test"})
 	return func(target string) *httptest.ResponseRecorder {
@@ -166,11 +166,12 @@ func TestDiagramFrame(t *testing.T) {
 	dir, _ := fakeEngine(t, "", "", nil)
 	get := engineServer(t)
 	w := get("/diagram")
-	if w.Code != http.StatusOK || w.Body.String() != `<html data-test="/api/engine/test?v=2.0.0" data-missing="test">` {
+	engines := `{&#34;test&#34;:{&#34;label&#34;:&#34;Test&#34;,&#34;files&#34;:{&#34;test&#34;:&#34;/api/engine/test?v=2.0.0&#34;}}}`
+	if w.Code != http.StatusOK || w.Body.String() != `<html data-engines="`+engines+`" data-missing="test">` {
 		t.Fatalf("%d %q", w.Code, w.Body.String())
 	}
 	gittest.Write(t, filepath.Join(dir, "test-2.0.0.js"), "cached()")
-	if body := get("/diagram").Body.String(); body != `<html data-test="/api/engine/test?v=2.0.0" data-missing="">` {
+	if body := get("/diagram").Body.String(); body != `<html data-engines="`+engines+`" data-missing="">` {
 		t.Errorf("cached engine still missing: %q", body)
 	}
 	if csp := w.Header().Values("Content-Security-Policy"); len(csp) != 1 || csp[0] != frameCSP {

@@ -1,58 +1,40 @@
-// The frame that draws diagrams for the page. Its own CSP lets Mermaid's styles in, which the
-// page's CSP blocks; the page gets each diagram back as SVG text and shows it as a picture.
-const labels = { mermaid: 'Mermaid', plantuml: 'PlantUML', excalidraw: 'Excalidraw' };
-const urls = document.documentElement.dataset;
-const missing = new Set(urls.missing.split(' ').filter(Boolean)); // engines not in kijk's cache yet
-const scripts = {};
-const loading = {};
+// The frame that draws diagrams for the page. Its own CSP lets in the engines' inline styles, which
+// the page's CSP blocks; the page gets each diagram back as SVG text and shows it as a picture.
+const data = document.documentElement.dataset;
+const engines = JSON.parse(data.engines); // from filetypes.go: each engine's label and the URLs of its files
+const missing = new Set(data.missing.split(' ').filter(Boolean)); // engine files not in kijk's cache yet
+const loaded = {};
 let tries = 0;
 
-// script adds a classic script once; after a failure the next diagram adds it again.
-function script(src) {
-  scripts[src] ??= new Promise((resolve, reject) => {
-    const s = document.createElement('script');
-    s.src = src;
-    s.onload = resolve;
-    s.onerror = () => {
-      delete scripts[src];
-      s.remove();
-      reject();
-    };
-    document.head.append(s);
-  });
-  return scripts[src];
-}
-
-// Each engine's files, named as in engine.go. PlantUML needs Graphviz and its themes as globals
-// before its module loads. A failed import stays failed for its URL, so a retry asks for a new one.
-const retry = () => (tries ? `&try=${tries}` : '');
-const engines = {
-  mermaid: { files: ['mermaid'], load: () => script(urls.mermaid) },
-  plantuml: {
-    files: ['plantuml', 'graphviz', 'plantuml-themes'],
-    load: async () => {
-      await Promise.all([script(urls.graphviz), script(urls.plantumlThemes)]);
-      return import(urls.plantuml + retry());
-    },
-  },
-  excalidraw: { files: ['excalidraw'], load: () => import(urls.excalidraw + retry()) },
-};
-
-// load gets an engine once. After a failure the next diagram tries again; the server remembers
-// the failure for a minute.
-function load(kind) {
-  loading[kind] ??= engines[kind].load().then(engine => {
-    engines[kind].files.forEach(f => missing.delete(f));
-    return engine;
+// fetchFile gets one of the engines' files once, with add. After a failure the next diagram tries
+// again; the server remembers the failure for a minute.
+function fetchFile(name, add) {
+  const engine = Object.values(engines).find(e => Object.hasOwn(e.files, name));
+  loaded[name] ??= add(engine.files[name]).then(m => {
+    missing.delete(name);
+    return m;
   }, () => {
-    delete loading[kind];
+    delete loaded[name];
     tries++;
-    throw new Error(`Could not download ${labels[kind]}`);
+    throw new Error(`Could not download ${engine.label}`);
   });
-  return loading[kind];
+  return loaded[name];
 }
 
-const MAX_CHARS = 50000; // diagramMaxChars in diagram.go
+// loadScript adds an engine file as a classic script.
+const loadScript = name => fetchFile(name, src => new Promise((resolve, reject) => {
+  const s = document.createElement('script');
+  s.src = src;
+  s.onload = resolve;
+  s.onerror = () => {
+    s.remove();
+    reject();
+  };
+  document.head.append(s);
+}));
+
+// loadModule imports an engine file. A failed import stays failed for its URL, so a retry asks for a new one.
+const loadModule = name => fetchFile(name, src => import(src + (tries ? `&try=${tries}` : '')));
 
 // A %%{init}%% line in a diagram cannot change these.
 const SECURE = ['secure', 'securityLevel', 'startOnLoad', 'maxTextSize', 'suppressErrorRendering', 'maxEdges',
@@ -60,14 +42,14 @@ const SECURE = ['secure', 'securityLevel', 'startOnLoad', 'maxTextSize', 'suppre
 let theme = '';
 let n = 0;
 
-async function mermaid({ text, vars }) {
-  await load('mermaid');
+async function mermaid(text, { vars, maxChars }) {
+  await loadScript('mermaid');
   const m = globalThis.mermaid || globalThis.__esbuild_esm_mermaid_nm?.mermaid?.default;
   if (JSON.stringify(vars) !== theme) {
     theme = JSON.stringify(vars);
     m.initialize({
       startOnLoad: false, securityLevel: 'strict', htmlLabels: false, suppressErrorRendering: true,
-      maxTextSize: MAX_CHARS, secure: SECURE, theme: 'base', themeVariables: vars, fontFamily: vars.fontFamily,
+      maxTextSize: maxChars, secure: SECURE, theme: 'base', themeVariables: vars, fontFamily: vars.fontFamily,
     });
   }
   const id = `k${++n}`;
@@ -119,17 +101,19 @@ function inFolder(path, of) {
   return parts.join('/');
 }
 
-// Markdown hosts such as GitHub add @startuml and @enduml to a block that has none.
-async function plantuml({ text, base, root, path }) {
-  if ([...text].length > MAX_CHARS) return { error: 'Diagram too large to draw', includes: [] };
-  const pu = await load('plantuml');
+// Markdown hosts such as GitHub add @startuml and @enduml to a block that has none. PlantUML needs
+// Graphviz and its themes as globals before its module loads.
+async function plantuml(text, { theme, base, root, path, maxChars }) {
+  if ([...text].length > maxChars) return { error: 'Diagram too large to draw', includes: [] };
+  await Promise.all([loadScript('graphviz'), loadScript('plantuml-themes')]);
+  const pu = await loadModule('plantuml');
   const lines = text.split(/\r?\n/);
   const wrapped = !lines.some(l => /^\s*@start/.test(l));
   drawing = { base, root, path, includes: new Set(), calls: 0 };
   const includes = drawing.includes;
   const res = await new Promise(resolve => pu.renderToString(wrapped ? ['@startuml', ...lines, '@enduml'] : lines,
     svg => resolve({ svg, error: pictureError(svg, wrapped) }),
-    err => resolve({ error: thrownError(err) }), { dark: false }));
+    err => resolve({ error: thrownError(err) }), { dark: theme === 'dark' }));
   return { ...(res.error ? { error: res.error } : { svg: res.svg }), includes: [...includes] };
 }
 
@@ -155,11 +139,9 @@ function pictureError(svg, wrapped) {
   return `PlantUML: ${msg} (${line})`;
 }
 
-const MAX_EXCALIDRAW = 8 << 20; // excalidrawMaxBytes in diagram.go
-
 // excalidraw draws in kijk's light or dark colors, on no background, so the drawing sits on the page.
-async function excalidraw({ text, theme }) {
-  if (text.length > MAX_EXCALIDRAW) throw new Error('Diagram too large to draw');
+async function excalidraw(text, { theme, maxBytes }) {
+  if (text.length > maxBytes) throw new Error('Diagram too large to draw');
   let scene = null;
   try {
     scene = JSON.parse(text);
@@ -167,7 +149,7 @@ async function excalidraw({ text, theme }) {
   if (scene?.type !== 'excalidraw' || !Array.isArray(scene.elements)) throw new Error('Excalidraw: this file is not a drawing');
   const elements = scene.elements.filter(x => !x.isDeleted);
   if (!elements.length) throw new Error('Excalidraw: the drawing is empty');
-  const ex = await load('excalidraw');
+  const ex = await loadModule('excalidraw');
   try {
     const svg = await ex.exportScene({
       type: 'svg', data: { elements, appState: scene.appState, files: scene.files },
@@ -195,11 +177,12 @@ let queue = Promise.resolve(); // one diagram at a time
 
 addEventListener('message', e => {
   if (e.source !== parent || e.origin !== location.origin) return;
-  const { id, kind } = e.data;
+  const { id, engine, text, ctx } = e.data;
+  const files = Object.hasOwn(engines, engine) ? Object.keys(engines[engine].files) : [];
   // Told on arrival, so a diagram that waits behind another one also says it is downloading.
-  if (engines[kind]?.files.some(f => missing.has(f))) parent.postMessage({ id, downloading: labels[kind] }, location.origin);
+  if (files.some(f => missing.has(f))) parent.postMessage({ id, downloading: engines[engine].label }, location.origin);
   queue = queue
-    .then(() => (draw[kind] ? draw[kind](e.data) : Promise.reject(new Error(`Unknown diagram kind ${kind}`))))
+    .then(() => (Object.hasOwn(draw, engine) ? draw[engine](text, ctx) : Promise.reject(new Error(`Unknown diagram kind ${engine}`))))
     .then(r => ({ id, ...r, ...(r.svg && sized(r.svg)) }), err => ({ id, error: err.message }))
     .then(msg => parent.postMessage(msg, location.origin));
 });
