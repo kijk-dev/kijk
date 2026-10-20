@@ -5,11 +5,16 @@ in code, UI text and commit messages.
 
 ## Layout
 
-- One Go package (`main`) at the root. Platform code sits in files with a `_darwin`, `_linux`,
-  `_windows` or `_unix` suffix. Only CI runs the Linux and Windows code, so keep those files
-  small and behind the same functions as the macOS ones.
-- The UI is plain ES modules and CSS in `web/`, embedded with `go:embed`. There is no build step
-  and no npm: edit the files, rebuild, reload.
+- `main` at the root: agents, remote machines, the folders window, update, telemetry, and
+  `newServer`, which puts all routes together. Platform code sits in files with a `_darwin`,
+  `_linux`, `_windows` or `_unix` suffix. Only CI runs the Linux and Windows code, so keep those
+  files small and behind the same functions as the macOS ones.
+- `internal/viewer`: one folder's views over HTTP. `internal/render`: text in, HTML out.
+  `internal/git`: runs git. `internal/gittest`: test helpers. Imports go `main` → `viewer` →
+  `render`, and `main`, `viewer` → `git`, nothing else: viewer code cannot reach agents, machines
+  or update code.
+- The UI is plain ES modules and CSS in `web/`, embedded with `go:embed` in `main.go`. There is no
+  build step and no npm: edit the files, rebuild, reload.
 
 ## Rules
 
@@ -18,7 +23,8 @@ in code, UI text and commit messages.
   real work, as the browser tests use chromedp. For a change on a hot path (status refresh, the
   commit graph, the file watcher), measure on a large repo before and after.
 - The server answers only on `localhost`/`127.0.0.1` and checks a token in `guard`
-  (`server.go`). Add new routes to the mux in `newServer`, so `guard` covers them.
+  (`server.go`). Add new routes in `newServer`, or in `viewer.Register` for a folder view, so
+  `guard` covers them.
 - Tests that run git use a repo in `t.TempDir()`. `go test -short ./...` is the fast loop; run
   `go test ./...` before a commit.
 - A change to what the user sees adds or updates a journey in the browser tests
