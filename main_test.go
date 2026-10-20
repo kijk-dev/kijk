@@ -64,13 +64,16 @@ func TestAddedText(t *testing.T) {
 // The folder view must work on a page without the rail, so viewer files never import app files.
 func TestViewerImportsNoAppFile(t *testing.T) {
 	app := []string{"app.js", "status.js"}
-	imports := regexp.MustCompile(`(?m)^import\b.*'\./([^']+)'`)
+	imports := regexp.MustCompile(`\b(?:from|import)\s*\(?\s*['"]\./([^'"]+)['"]`)
 	files, _ := fs.Glob(webFiles, "web/*.js")
 	for _, f := range files {
 		if slices.Contains(app, path.Base(f)) {
 			continue
 		}
-		b, _ := fs.ReadFile(webFiles, f)
+		b, err := fs.ReadFile(webFiles, f)
+		if err != nil {
+			t.Fatal(err)
+		}
 		for _, m := range imports.FindAllStringSubmatch(string(b), -1) {
 			if slices.Contains(app, m[1]) {
 				t.Errorf("%s imports %s, an app file", f, m[1])

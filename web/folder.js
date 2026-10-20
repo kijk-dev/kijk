@@ -56,10 +56,10 @@ export let openKey = null; // stays open when its session ends, until the user p
 let offline = false; // the open folder's machine is not connected, so the view is frozen
 let folderEvents = null;
 let sidebar = 'files'; // the sidebar tab chosen for the open folder
-let page = null; // set by setupFolder
+let page = null;
 
 // setupFolder tells the view about the page around it: lastKey, the localStorage key that keeps the
-// open folder; start, shown when no folder is open; announce(text); and onChange, run on each live change.
+// open folder; start, shown when no folder is open; announce(text); and onFolderEvent, run on each live update of the folder.
 export function setupFolder(p) {
   page = p;
 }
@@ -85,7 +85,7 @@ function tabsChanged() {
   saveState();
 }
 
-// openFolder shows the folder of row r. again opens it anew when it is open already, for kijk <folder>.
+// openFolder shows the folder of row r. again, for kijk <folder>, opens its tree down to r.cwd.
 export function openFolder(r, again) {
   if (openKey) drafts.set(openKey, messageEl.value);
   saveState();
@@ -139,7 +139,7 @@ function followFolder() {
   folderEvents.onmessage = e => {
     if (offline) return;
     const change = JSON.parse(e.data);
-    page.onChange();
+    page.onFolderEvent();
     refreshGit();
     refreshTree(change);
     refreshView(change);
@@ -166,8 +166,7 @@ export function closeFolder() {
   selectTab('files');
 }
 
-// setMachine keeps the open remote folder in step with its machine m: frozen while the machine is
-// away, reloaded when it is back.
+// setMachine freezes the open remote folder while its machine m is away, and reloads it when m is back.
 export function setMachine(m) {
   const down = m.state !== 'connected';
   if (down !== offline) {

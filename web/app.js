@@ -36,7 +36,7 @@ const announcer = document.getElementById('announce');
 function announce(text) {
   if (text && announcer.textContent !== text) announcer.textContent = text;
 }
-setupFolder({ lastKey, start, announce, onChange: () => { if (foldersMode) refreshRow(); } });
+setupFolder({ lastKey, start, announce, onFolderEvent: () => { if (foldersMode) refreshRow(); } });
 tipSide('#rail', 'right');
 tipSide('#statusbar', 'above');
 
@@ -405,8 +405,8 @@ function closeOpen() {
   document.title = TITLE;
 }
 
-// followMachine keeps the open remote folder in step with its machine: frozen while the machine
-// is away, reloaded when it is back, closed when it is disabled or removed.
+// followMachine passes the open remote folder's machine to the view, and closes the folder when the
+// machine is disabled or removed.
 function followMachine() {
   if (!openKey || !openMachine) return;
   const m = machines?.find(x => x.name === openMachine);
