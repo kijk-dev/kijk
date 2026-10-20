@@ -57,11 +57,11 @@ A file that kijk shows as a picture, chosen by its extension: png, jpg, jpeg, gi
 _Avoid_: picture, media, asset
 
 **Diagram**:
-A picture that kijk draws from text written in Mermaid or PlantUML. It is either a whole diagram file, such as `flow.mmd` or `login.puml`, or a block inside a markdown file. A diagram that kijk cannot draw shows as its text.
+A picture that kijk draws from text written in Mermaid or PlantUML. It is either a whole diagram file, such as `flow.mmd` or `login.puml`, or a block inside a markdown or AsciiDoc file. A diagram that kijk cannot draw shows as its text.
 _Avoid_: chart, graph, image (an image is a picture file)
 
 **Rendered view**:
-How a markdown file, a diagram file or an SVG image opens: as a reader sees it, not as its text. The diff of an SVG image or a diagram file also opens this way, with the before and after pictures side by side. The user can switch each tab to the source view and back.
+How a markdown file, an AsciiDoc file, a diagram file or an SVG image opens: as a reader sees it, not as its text. The diff of an SVG image or a diagram file also opens this way, with the before and after pictures side by side. The user can switch each tab to the source view and back.
 _Avoid_: preview (a preview tab is the tab a single click opens), visual mode
 
 **Source view**:

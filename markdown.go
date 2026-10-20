@@ -50,28 +50,38 @@ func renderMarkdown(src []byte) (string, error) {
 	return out.String(), nil
 }
 
-// markLines gives a block the lines up to the next block, so blank lines and deletions between
-// blocks still belong to one of them.
+// markLines marks top-level blocks and list items with the lines of lineRanges.
 func markLines(parent ast.Node, end int, top bool, lineOf func(int) int) {
+	var kids []ast.Node
+	var firsts []int
 	for n := parent.FirstChild(); n != nil; n = n.NextSibling() {
-		if n.Type() != ast.TypeBlock || n.Pos() < 0 {
-			continue
+		if n.Type() == ast.TypeBlock && n.Pos() >= 0 {
+			kids = append(kids, n)
+			firsts = append(firsts, lineOf(n.Pos()))
 		}
-		first, last := lineOf(n.Pos()), end
-		for m := n.NextSibling(); m != nil; m = m.NextSibling() {
-			if m.Type() == ast.TypeBlock && m.Pos() >= 0 {
-				last = max(first, lineOf(m.Pos())-1)
-				break
-			}
-		}
-		kind := n.Kind()
+	}
+	for i, last := range lineRanges(firsts, end) {
+		n, kind := kids[i], kids[i].Kind()
 		if (top && kind != ast.KindList) || kind == ast.KindListItem {
-			n.SetAttributeString("data-lines", fmt.Sprintf("%d-%d", first, last))
+			n.SetAttributeString("data-lines", fmt.Sprintf("%d-%d", firsts[i], last))
 		}
 		if kind == ast.KindList || kind == ast.KindListItem || kind == ast.KindBlockquote {
 			markLines(n, last, false, lineOf)
 		}
 	}
+}
+
+// lineRanges gives each block the lines up to the next block, so blank lines and deletions
+// between blocks still belong to one of them. It returns the last line of each block.
+func lineRanges(firsts []int, end int) []int {
+	lasts := make([]int, len(firsts))
+	for i, first := range firsts {
+		lasts[i] = end
+		if i+1 < len(firsts) {
+			lasts[i] = max(first, firsts[i+1]-1)
+		}
+	}
+	return lasts
 }
 
 // codeRenderer colors code blocks with chroma, in the same classes as the file view, and marks
@@ -92,20 +102,35 @@ func renderCode(w util.BufWriter, src []byte, n ast.Node, entering bool) (ast.Wa
 		seg := n.Lines().At(i)
 		lines[i] = strings.Repeat(" ", seg.Padding) + strings.TrimRight(string(seg.Value(src)), "\r\n")
 	}
-	var lexer chroma.Lexer
+	lang := ""
 	if f, ok := n.(*ast.FencedCodeBlock); ok {
-		if lang := f.Language(src); lang != nil {
-			if kind, ok := diagramFences[string(lang)]; ok {
-				writeDiagram(w, kind, func() { html.RenderAttributes(w, n, nil) }, []byte(strings.Join(lines, "\n")))
-				return ast.WalkSkipChildren, nil
-			}
-			if l := lexers.Get(string(lang)); l != nil {
-				lexer = chroma.Coalesce(l)
-			}
+		if l := f.Language(src); l != nil {
+			lang = string(l)
+		}
+	}
+	writeCode(w, lang, lines, func() { html.RenderAttributes(w, n, nil) })
+	return ast.WalkSkipChildren, nil
+}
+
+// writeCode writes a diagram block when lang names a diagram, else the lines colored for lang.
+func writeCode(w util.BufWriter, lang string, lines []string, attrs func()) {
+	if kind, ok := diagramFences[lang]; ok {
+		writeDiagram(w, kind, attrs, []byte(strings.Join(lines, "\n")))
+		return
+	}
+	writeColored(w, lang, lines, attrs)
+}
+
+// writeColored writes a pre block colored with chroma, in the same classes as the file view.
+func writeColored(w util.BufWriter, lang string, lines []string, attrs func()) {
+	var lexer chroma.Lexer
+	if lang != "" {
+		if l := lexers.Get(lang); l != nil {
+			lexer = chroma.Coalesce(l)
 		}
 	}
 	w.WriteString("<pre")
-	html.RenderAttributes(w, n, nil)
+	attrs()
 	w.WriteString("><code>")
 	for i, toks := range highlight(lexer, lines) {
 		if i > 0 {
@@ -122,5 +147,4 @@ func renderCode(w util.BufWriter, src []byte, n ast.Node, entering bool) (ast.Wa
 		}
 	}
 	w.WriteString("</code></pre>\n")
-	return ast.WalkSkipChildren, nil
 }

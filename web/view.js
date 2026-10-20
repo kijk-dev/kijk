@@ -6,7 +6,7 @@ const IMAGE = /\.(png|jpe?g|gif|webp|svg|ico|bmp|avif)$/i;
 const SVG = /\.svg$/i;
 // The same types as diagramKinds in diagram.go.
 const DIAGRAM = /\.(mmd|mermaid|puml|plantuml|pu|wsd)$/i;
-const RENDERED = /\.(md|markdown|svg|mmd|mermaid|puml|plantuml|pu|wsd)$/i;
+const RENDERED = /\.(md|markdown|adoc|asciidoc|svg|mmd|mermaid|puml|plantuml|pu|wsd)$/i;
 const CHUNK = 500;
 const FULL = 1000000; // diff context that returns the whole file
 let current = null; // the open file or diff; a newer open makes older fetches stale
@@ -143,9 +143,9 @@ export async function openFile(viewer, root, path, keep, md) {
   // older copy, and kept across a redraw, so an image that did not change is not fetched again.
   file.versions = keep?.versions || { at: Date.now(), of: new Map() };
   // Agents touch .git all the time; a reload that changes nothing must not redraw.
-  file.reload = async () => {
+  file.reload = async (force = false) => {
     const info = await get('file', { root, path }).catch(() => null);
-    if (current !== file || (info && JSON.stringify(info) === file.json)) return;
+    if (current !== file || (!force && info && JSON.stringify(info) === file.json)) return;
     openFile(viewer, root, path, { scrollTop: file.scroll?.scrollTop ?? 0, info, image: file.image?.(), versions: file.versions }, md);
   };
   current = file;
@@ -314,6 +314,7 @@ async function openRendered(viewer, file, info, bar, keep, md) {
     return;
   }
   if (current !== file) return;
+  file.includes = res.includes || []; // the files an AsciiDoc file shows in place
   const t = document.createElement('template'); // inert: nothing loads before prepare runs
   t.innerHTML = res.html; // the server drops HTML inside the file, and the CSP blocks script as well
   const doc = el('article', 'md');
@@ -426,9 +427,9 @@ function changedBlocks(blocks, changes) {
 const external = url => /^([a-z][a-z0-9+.-]*:|\/\/)/i.test(url);
 const slug = s => s.trim().toLowerCase().replace(/[^\p{L}\p{N}\s_-]/gu, '').replace(/\s/g, '-');
 
-// What renderMarkdown makes. The HTML of a remote folder comes from that machine's kijk, so the
-// page keeps nothing else.
-const mdTags = new Set(['A', 'BLOCKQUOTE', 'BR', 'CODE', 'DEL', 'EM', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'HR',
+// What renderMarkdown and renderAsciiDoc make. The HTML of a remote folder comes from that
+// machine's kijk, so the page keeps nothing else.
+const mdTags = new Set(['A', 'BLOCKQUOTE', 'BR', 'CODE', 'DD', 'DEL', 'DL', 'DT', 'EM', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'HR',
   'IMG', 'INPUT', 'LI', 'OL', 'P', 'PRE', 'SPAN', 'STRONG', 'TABLE', 'TBODY', 'TD', 'TH', 'THEAD', 'TR', 'UL']);
 const mdAttrs = new Set(['href', 'src', 'alt', 'title', 'class', 'data-lines', 'align', 'type', 'checked', 'disabled', 'start']);
 // Browsers skip control characters in a URL, so java\tscript: is still a scheme.
@@ -837,7 +838,8 @@ export function setViewScroll(top) {
   current.render?.();
 }
 
-// refreshView reloads the open file when it or git changed (its change marks), and the open diff on any change.
+// refreshView reloads the open file when it, a file it includes, or git changed (its change marks), and
+// the open diff on any change.
 // A changed image, or a diagram's changed include, redraws on its own, so the page does not move.
 export function refreshView(change) {
   if (!current?.reload) return;
@@ -845,6 +847,7 @@ export function refreshView(change) {
   const stale = (current.diagrams || []).filter(x => x.entry?.result?.includes?.some(p => change.all || change.paths.includes(p)));
   for (const x of stale) if (drawn.get(x.entry.key) === x.entry) drawn.delete(x.entry.key);
   if (stale.length) drawDiagrams(current);
+  if (current.includes?.some(p => change.paths.includes(p))) return current.reload(true);
   if (current.kind === 'file' && !change.all && !change.git && !change.paths.includes(current.path)) return;
   current.reload();
 }
