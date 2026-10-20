@@ -334,9 +334,16 @@ A build from source shows its version as `dev`, followed by the commit. It does 
 To run the tests:
 
 ```sh
-go test -short ./...   # fast
-go test ./...          # also builds kijk and runs the install scripts
+go test -short ./...           # fast
+go test ./...                  # also builds kijk, runs the install scripts and the browser tests
+go test -run TestBrowser .     # only the browser tests
 ```
+
+The browser tests start kijk with fake agents and use it in a headless Chrome, Edge, Brave,
+Chromium or Vivaldi, the first one installed. Set `KIJK_E2E_BROWSER` to the path of another
+browser. They run on macOS and Linux. A failed test saves a screenshot, the page and kijk's log,
+and says where. With `KIJK_E2E_SHOTS=1` they also save the main views in light, dark and a narrow
+window.
 
 ## License
 
