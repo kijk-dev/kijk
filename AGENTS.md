@@ -13,11 +13,15 @@ in code, UI text and commit messages.
 
 ## Rules
 
-- kijk stays fast and light. Add a dependency only when the standard library or
-  `golang.org/x/sys` cannot do the job. For a change on a hot path (status refresh, the commit
-  graph, the file watcher), measure on a large repo before and after.
+- kijk stays fast and light. Add a dependency to kijk itself only when the standard library or
+  `golang.org/x/sys` cannot do the job. Tests may use a popular, maintained library that saves
+  real work, as the browser tests use chromedp. For a change on a hot path (status refresh, the
+  commit graph, the file watcher), measure on a large repo before and after.
 - The server answers only on `localhost`/`127.0.0.1` and checks a token in `guard`
   (`server.go`). Add new routes to the mux in `newServer`, so `guard` covers them.
 - Tests that run git use a repo in `t.TempDir()`. `go test -short ./...` is the fast loop; run
   `go test ./...` before a commit.
+- A change to what the user sees adds or updates a journey in the browser tests
+  (`e2e_test.go`). For a change to the look, also check the screenshots of
+  `KIJK_E2E_SHOTS=1 go test -run TestBrowser .`.
 - Write docs and UI text in plain, short sentences. Comments say why, in one or two lines.

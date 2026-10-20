@@ -93,25 +93,37 @@ func TestInstallScript(t *testing.T) {
 
 // kijkProcess is a real kijk started from a binary, with its own home folder.
 type kijkProcess struct {
-	cmd    *exec.Cmd
-	env    []string
-	port   int
-	token  string
-	exited chan struct{}
+	cmd     *exec.Cmd
+	env     []string
+	port    int
+	token   string
+	logFile string // gets kijk's stdout and stderr
+	exited  chan struct{}
 }
 
 func startKijk(t *testing.T, exe string) *kijkProcess {
 	t.Helper()
-	home := t.TempDir()
+	return startKijkIn(t, exe, t.TempDir())
+}
+
+// startKijkIn starts kijk with home as its home folder. env comes last, so it replaces a default.
+func startKijkIn(t *testing.T, exe, home string, env ...string) *kijkProcess {
+	t.Helper()
 	ln, _ := net.Listen("tcp", "127.0.0.1:0")
 	port := ln.Addr().(*net.TCPAddr).Port
 	ln.Close()
-	k := &kijkProcess{port: port, exited: make(chan struct{}), env: []string{
+	k := &kijkProcess{port: port, logFile: filepath.Join(home, "kijk.log"), exited: make(chan struct{}), env: append([]string{
 		"HOME=" + home, "XDG_CONFIG_HOME=" + filepath.Join(home, ".config"), "APPDATA=" + home,
 		"CLAUDE_CONFIG_DIR=" + t.TempDir(), "CODEX_HOME=" + filepath.Join(home, "codex"), "KIJK_NO_UPDATE_CHECK=1", "KIJK_NO_TELEMETRY=1",
-	}}
+	}, env...)}
+	out, err := os.Create(k.logFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { out.Close() })
 	k.cmd = exec.Command(exe, "-port", fmt.Sprint(port), "-no-open")
 	k.cmd.Env = append(os.Environ(), k.env...)
+	k.cmd.Stdout, k.cmd.Stderr = out, out
 	if err := k.cmd.Start(); err != nil {
 		t.Fatal(err)
 	}

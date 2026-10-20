@@ -45,7 +45,13 @@ func shortTempDir(t *testing.T) string {
 
 func newFakeCodex(t *testing.T) *fakeCodex {
 	t.Helper()
-	f := &fakeCodex{socket: filepath.Join(shortTempDir(t), "s.sock")}
+	return newFakeCodexAt(t, filepath.Join(shortTempDir(t), "s.sock"))
+}
+
+// newFakeCodexAt listens on socket, such as the one kijk looks for in a Codex home.
+func newFakeCodexAt(t *testing.T, socket string) *fakeCodex {
+	t.Helper()
+	f := &fakeCodex{socket: socket}
 	ln, err := net.Listen("unix", f.socket)
 	if err != nil {
 		t.Skipf("no Unix sockets here: %v", err)

@@ -15,5 +15,19 @@ jobs:
         with:
           go-version-file: go.mod
       - run: go vet ./...
+      - uses: actions/cache@v6
+        if: runner.os == 'Linux'
+        with:
+          path: ~/.cache/kijk-e2e/engines
+          key: engines-${{ hashFiles('engine.go') }}
       - run: go test ./...
+        env:
+          KIJK_E2E_OUT: ${{ runner.temp }}/kijk-e2e
+          KIJK_E2E_NO_SANDBOX: ${{ runner.os == 'Linux' && '1' || '' }}
+      - uses: actions/upload-artifact@v7
+        if: failure() && runner.os == 'Linux'
+        with:
+          name: browser-tests
+          path: ${{ runner.temp }}/kijk-e2e
+          if-no-files-found: ignore
       - run: go build .
