@@ -1,6 +1,9 @@
 package main
 
 import (
+	"io/fs"
+	"path"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -55,5 +58,26 @@ func TestAddedText(t *testing.T) {
 		if got := addedText(c.adds, c.added, c.window); got != c.want {
 			t.Errorf("got %q, want %q", got, c.want)
 		}
+	}
+}
+
+// The folder view must work on a page without the rail, so viewer files never import app files.
+func TestViewerImportsNoAppFile(t *testing.T) {
+	app := []string{"app.js", "status.js"}
+	imports := regexp.MustCompile(`(?m)^import\b.*'\./([^']+)'`)
+	files, _ := fs.Glob(webFiles, "web/*.js")
+	for _, f := range files {
+		if slices.Contains(app, path.Base(f)) {
+			continue
+		}
+		b, _ := fs.ReadFile(webFiles, f)
+		for _, m := range imports.FindAllStringSubmatch(string(b), -1) {
+			if slices.Contains(app, m[1]) {
+				t.Errorf("%s imports %s, an app file", f, m[1])
+			}
+		}
+	}
+	if len(files) < 10 {
+		t.Fatalf("found only %d JavaScript files", len(files))
 	}
 }
