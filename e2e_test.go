@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -309,6 +310,25 @@ func TestBrowser(t *testing.T) {
 			f.waitFor(name+" as its source", viewHas(first)+" && "+hl)
 		}
 		f.noErrors()
+	})
+
+	// Every agent type in the list shows its icon, in its color, and its label.
+	t.Run("agent types", func(t *testing.T) {
+		home := agentstest.ShortTempDir(t) // the Codex socket is in it
+		types := listAgentTypes(t, k)
+		for _, at := range types {
+			agentstest.StartAgent(t, home, at.Name, shop, at.Label+" agent")
+		}
+		a := openPage(t, newTab(t, tab), startKijkIn(t, exe, home, "CLAUDE_CONFIG_DIR=", "CODEX_HOME="), "/")
+		for _, at := range types {
+			icon := fmt.Sprintf(`(s => (s.innerHTML = %s, [...document.querySelectorAll('#rows .agent')].find(i => i.innerHTML === s.innerHTML)))(document.createElement('span'))`, jsString(at.Icon))
+			a.waitFor("the icon of "+at.Label, icon)
+			a.waitFor("the label "+at.Label, icon+`.closest('li').getAttribute('aria-label').includes(`+jsString(at.Label)+`)`)
+			color := cmp.Or(at.Color, "var(--text)")
+			a.waitFor("the color of "+at.Label, fmt.Sprintf(`(c => { const e = document.createElement('i'); e.style.color = c; document.body.append(e); `+
+				`const want = getComputedStyle(e).color; e.remove(); return getComputedStyle(%s).color === want; })(%s)`, icon, jsString(color)))
+		}
+		a.noErrors()
 	})
 
 	// One notice names every agent type kijk cannot read; the agents of the other types stay.

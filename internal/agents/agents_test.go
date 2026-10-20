@@ -1,6 +1,7 @@
 package agents
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kijk-dev/kijk/internal/agentstest"
 	"github.com/kijk-dev/kijk/internal/gittest"
 )
 
@@ -83,5 +85,64 @@ func TestTypeList(t *testing.T) {
 	}
 	if !slices.IsSortedFunc(Types, func(a, b AgentType) int { return strings.Compare(a.Label, b.Label) }) {
 		t.Error("Types is not in label order")
+	}
+}
+
+// live makes a copy of a test folder look like a machine where the agents run now, which a
+// recording cannot: such as this test's pid in a session file. A type that needs it adds its own.
+var live = map[string]func(t *testing.T, home string){}
+
+// Every type reads testdata/<name>/home, a home folder with its tool's folder copied from a real
+// run, and finds the agents of testdata/<name>/want.json.
+func TestTypesReadTheirTestFolders(t *testing.T) {
+	for _, at := range Types {
+		t.Run(at.Name, func(t *testing.T) {
+			dir := filepath.Join("testdata", at.Name)
+			b, err := os.ReadFile(filepath.Join(dir, "want.json"))
+			if err != nil {
+				t.Fatalf("%s has no test folder: copy its tool's folder from a real run into %s and its agents into %s: %v",
+					at.Label, filepath.Join(dir, "home"), filepath.Join(dir, "want.json"), err)
+			}
+			var want []struct {
+				Name, Cwd string
+				Busy      bool
+				Last      string // RFC 3339, or "now" for an agent whose last activity is now
+			}
+			if err := json.Unmarshal(b, &want); err != nil {
+				t.Fatal(err)
+			}
+			home := agentstest.ShortTempDir(t) // the Codex socket is in it
+			agentstest.CopyDir(t, filepath.Join(dir, "home"), home)
+			if f := live[at.Name]; f != nil {
+				f(t, home)
+			}
+			env := &Env{Home: home, Getenv: func(string) string { return "" }, Version: "dev"}
+			got, err := at.Sessions(env)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !env.Installed() {
+				t.Error("the reader found no tool folder in the test folder")
+			}
+			if len(got) != len(want) {
+				t.Fatalf("got %+v, want %+v", got, want)
+			}
+			for i, w := range want {
+				g := got[i]
+				last := g.Last.UTC().Format(time.RFC3339)
+				if w.Last == "now" && time.Since(g.Last) < time.Minute {
+					last = "now"
+				}
+				if g.Name != w.Name || g.Cwd != w.Cwd || g.Busy != w.Busy || last != w.Last {
+					t.Errorf("agent %d = %+v, last %s; want %+v", i, g, last, w)
+				}
+			}
+		})
+	}
+	dirs, _ := os.ReadDir("testdata")
+	for _, d := range dirs {
+		if !slices.ContainsFunc(Types, func(at AgentType) bool { return at.Name == d.Name() }) {
+			t.Errorf("testdata/%s is the test folder of no agent type", d.Name())
+		}
 	}
 }

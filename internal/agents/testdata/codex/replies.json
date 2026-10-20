@@ -1,0 +1,250 @@
+[
+  {
+    "method": "initialize",
+    "params": {
+      "clientInfo": {
+        "name": "kijk",
+        "version": "dev"
+      }
+    },
+    "reply": {
+      "id": 1,
+      "result": {
+        "userAgent": "kijk/0.163.0 (Mac OS 26.7.1; arm64) (kijk; dev)",
+        "codexHome": "/home/dev/.codex",
+        "platformFamily": "unix",
+        "platformOs": "macos"
+      }
+    }
+  },
+  {
+    "method": "thread/loaded/list",
+    "params": {},
+    "reply": {
+      "id": 2,
+      "result": {
+        "data": [],
+        "nextCursor": null
+      }
+    }
+  },
+  {
+    "method": "thread/list",
+    "params": {
+      "limit": 50,
+      "sortKey": "updated_at",
+      "useStateDbOnly": true
+    },
+    "reply": {
+      "id": 3,
+      "result": {
+        "data": [
+          {
+            "id": "019e0000-0000-7000-8000-000000000001",
+            "environments": null,
+            "extra": null,
+            "sessionId": "019e0000-0000-7000-8000-000000000001",
+            "forkedFromId": null,
+            "parentThreadId": null,
+            "preview": "Add the cart",
+            "ephemeral": false,
+            "section": null,
+            "sectionEnteredAt": null,
+            "projectId": null,
+            "historyMode": "paginated",
+            "modelProvider": "openai",
+            "model": "gpt-6-astra",
+            "reasoningEffort": "medium",
+            "createdAt": 1792077973,
+            "updatedAt": 1792077985,
+            "recencyAt": 1792077983,
+            "status": {
+              "type": "notLoaded"
+            },
+            "path": "/home/dev/.codex/sessions/2026/10/15/rollout-2026-10-15T17-26-13-019e0000-0000-7000-8000-000000000001.jsonl",
+            "cwd": "/home/dev/shop",
+            "cliVersion": "0.162.1",
+            "originator": "codex-tui",
+            "source": "vscode",
+            "canAcceptDirectInput": null,
+            "threadSource": null,
+            "agentNickname": null,
+            "agentRole": null,
+            "gitInfo": {
+              "sha": "0000000000000000000000000000000000000000",
+              "branch": "main",
+              "originUrl": "git@example.com:dev/shop.git"
+            },
+            "name": "Add the cart",
+            "daybreakEnabled": null,
+            "turns": []
+          },
+          {
+            "id": "019e0000-0000-7000-8000-000000000002",
+            "environments": null,
+            "extra": null,
+            "sessionId": "019e0000-0000-7000-8000-000000000002",
+            "forkedFromId": null,
+            "parentThreadId": null,
+            "preview": "Fix the login bug",
+            "ephemeral": false,
+            "section": null,
+            "sectionEnteredAt": null,
+            "projectId": null,
+            "historyMode": "paginated",
+            "modelProvider": "openai",
+            "model": "gpt-6.1-sol",
+            "reasoningEffort": "medium",
+            "createdAt": 1792077601,
+            "updatedAt": 1792077693,
+            "recencyAt": 1792077690,
+            "status": {
+              "type": "notLoaded"
+            },
+            "path": "/home/dev/.codex/sessions/2026/10/15/rollout-2026-10-15T17-26-13-019e0000-0000-7000-8000-000000000002.jsonl",
+            "cwd": "/home/dev/api",
+            "cliVersion": "0.162.1",
+            "originator": "codex-tui",
+            "source": "vscode",
+            "canAcceptDirectInput": null,
+            "threadSource": null,
+            "agentNickname": null,
+            "agentRole": null,
+            "gitInfo": {
+              "sha": "0000000000000000000000000000000000000000",
+              "branch": "main",
+              "originUrl": "git@example.com:dev/api.git"
+            },
+            "name": "Fix the login bug",
+            "daybreakEnabled": null,
+            "turns": []
+          }
+        ],
+        "readStates": {
+          "019e0000-0000-7000-8000-000000000001": {
+            "firstUnread": null,
+            "revision": "initial:019e0000-0000-7000-8000-000000000001"
+          },
+          "019e0000-0000-7000-8000-000000000002": {
+            "firstUnread": null,
+            "revision": "initial:019e0000-0000-7000-8000-000000000002"
+          }
+        },
+        "nextCursor": "2026-05-16T19:23:52.627Z",
+        "backwardsCursor": "2026-10-15T15:26:25.940Z"
+      }
+    }
+  },
+  {
+    "method": "thread/read",
+    "params": {
+      "includeTurns": false,
+      "threadId": "019e0000-0000-7000-8000-000000000001"
+    },
+    "reply": {
+      "id": 4,
+      "result": {
+        "thread": {
+          "id": "019e0000-0000-7000-8000-000000000001",
+          "environments": null,
+          "extra": null,
+          "sessionId": "019e0000-0000-7000-8000-000000000001",
+          "forkedFromId": null,
+          "parentThreadId": null,
+          "preview": "Add the cart",
+          "ephemeral": false,
+          "section": null,
+          "sectionEnteredAt": null,
+          "projectId": null,
+          "historyMode": "paginated",
+          "modelProvider": "openai",
+          "model": "gpt-6-astra",
+          "reasoningEffort": "medium",
+          "createdAt": 1792077973,
+          "updatedAt": 1792077985,
+          "recencyAt": 1792077983,
+          "status": {
+            "type": "notLoaded"
+          },
+          "path": "/home/dev/.codex/sessions/2026/10/15/rollout-2026-10-15T17-26-13-019e0000-0000-7000-8000-000000000001.jsonl",
+          "cwd": "/home/dev/shop",
+          "cliVersion": "0.162.1",
+          "originator": "codex-tui",
+          "source": "vscode",
+          "canAcceptDirectInput": null,
+          "threadSource": "user",
+          "agentNickname": null,
+          "agentRole": null,
+          "gitInfo": {
+            "sha": "0000000000000000000000000000000000000000",
+            "branch": "main",
+            "originUrl": "git@example.com:dev/shop.git"
+          },
+          "name": "Add the cart",
+          "daybreakEnabled": null,
+          "turns": []
+        },
+        "readState": {
+          "firstUnread": null,
+          "revision": "initial:019e0000-0000-7000-8000-000000000001"
+        }
+      }
+    }
+  },
+  {
+    "method": "thread/read",
+    "params": {
+      "includeTurns": false,
+      "threadId": "019e0000-0000-7000-8000-000000000002"
+    },
+    "reply": {
+      "id": 5,
+      "result": {
+        "thread": {
+          "id": "019e0000-0000-7000-8000-000000000002",
+          "environments": null,
+          "extra": null,
+          "sessionId": "019e0000-0000-7000-8000-000000000002",
+          "forkedFromId": null,
+          "parentThreadId": null,
+          "preview": "Fix the login bug",
+          "ephemeral": false,
+          "section": null,
+          "sectionEnteredAt": null,
+          "projectId": null,
+          "historyMode": "paginated",
+          "modelProvider": "openai",
+          "model": "gpt-6.1-sol",
+          "reasoningEffort": "medium",
+          "createdAt": 1792077601,
+          "updatedAt": 1792077693,
+          "recencyAt": 1792077690,
+          "status": {
+            "type": "notLoaded"
+          },
+          "path": "/home/dev/.codex/sessions/2026/10/15/rollout-2026-10-15T17-26-13-019e0000-0000-7000-8000-000000000002.jsonl",
+          "cwd": "/home/dev/api",
+          "cliVersion": "0.162.1",
+          "originator": "codex-tui",
+          "source": "vscode",
+          "canAcceptDirectInput": null,
+          "threadSource": "user",
+          "agentNickname": null,
+          "agentRole": null,
+          "gitInfo": {
+            "sha": "0000000000000000000000000000000000000000",
+            "branch": "main",
+            "originUrl": "git@example.com:dev/api.git"
+          },
+          "name": "Fix the login bug",
+          "daybreakEnabled": null,
+          "turns": []
+        },
+        "readState": {
+          "firstUnread": null,
+          "revision": "initial:019e0000-0000-7000-8000-000000000002"
+        }
+      }
+    }
+  }
+]

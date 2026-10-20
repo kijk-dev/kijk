@@ -1,4 +1,3 @@
-// Package agentstest has test helpers for the agent types of internal/agents.
 package agentstest
 
 import (
@@ -8,7 +7,9 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"maps"
 	"net"
 	"net/http"
 	"os"
@@ -19,21 +20,38 @@ import (
 	"testing"
 )
 
-// FakeCodex is a Codex app server for tests: it answers from its threads and records each request.
+// FakeCodex is a Codex app server for tests: it answers from its threads, or plays recorded
+// replies, and records each request.
 type FakeCodex struct {
 	Socket  string
 	mu      sync.Mutex
 	threads []map[string]any
 	stored  []map[string]any // stored threads this app server has not loaded, listed before its own
+	played  []Record
 	reqs    []Request
 	// reply, when set, answers instead of the normal handler. It may send nothing.
 	reply func(c *Conn, id int, method string)
+}
+
+// Record is one request to a real Codex app server and its reply, as in
+// internal/agents/testdata/codex/replies.json.
+type Record struct {
+	Method string          `json:"method"`
+	Params json.RawMessage `json:"params"`
+	Reply  json.RawMessage `json:"reply"`
 }
 
 // Request is one request the fake got.
 type Request struct {
 	Method string
 	Params json.RawMessage
+}
+
+// A Codex agent runs in an app server, so a fake one serves it.
+func init() {
+	starters["codex"] = func(t *testing.T, home, cwd, name string) {
+		NewFakeCodexAt(t, CodexSocket(filepath.Join(home, ".codex"))).Set(Thread("t1", cwd, "idle", "name", name))
+	}
 }
 
 // ShortTempDir is for socket paths, which must stay under about 104 bytes; t.TempDir() and even
@@ -106,6 +124,33 @@ func (f *FakeCodex) Store(thread map[string]any) {
 	f.stored = append(f.stored, thread)
 	f.mu.Unlock()
 }
+
+// Play answers each request with the recorded reply to the same method, and for thread/read the
+// same thread.
+func (f *FakeCodex) Play(records []Record) {
+	f.mu.Lock()
+	f.played = records
+	f.mu.Unlock()
+}
+
+// Recording is the replies of a real Codex app server in internal/agents/testdata/codex.
+func Recording() []Record {
+	recording.Do(func() {
+		b, err := os.ReadFile(filepath.Join(testdata(), "codex", "replies.json"))
+		if err == nil {
+			err = json.Unmarshal(b, &recorded)
+		}
+		if err != nil {
+			panic(fmt.Sprintf("cannot read the Codex recording: %v", err))
+		}
+	})
+	return recorded
+}
+
+var (
+	recording sync.Once
+	recorded  []Record
+)
 
 // Reply sets a handler that answers instead of the normal one; nil gives the normal answers back.
 func (f *FakeCodex) Reply(reply func(c *Conn, id int, method string)) {
@@ -247,10 +292,14 @@ func (f *FakeCodex) serve(nc net.Conn) {
 		json.Unmarshal(b, &m)
 		f.mu.Lock()
 		f.reqs = append(f.reqs, Request{m.Method, m.Params})
-		reply, threads, stored := f.reply, f.threads, f.stored
+		reply, threads, stored, played := f.reply, f.threads, f.stored, f.played
 		f.mu.Unlock()
 		if reply != nil {
 			reply(c, m.ID, m.Method)
+			continue
+		}
+		if played != nil {
+			c.JSON(playback(played, m.ID, m.Method, m.Params))
 			continue
 		}
 		switch m.Method {
@@ -292,13 +341,51 @@ func (f *FakeCodex) serve(nc net.Conn) {
 	}
 }
 
-// Thread is a loaded thread as thread/read gives it. extra holds field names and values to set.
-func Thread(id, cwd, status string, extra ...any) map[string]any {
-	t := map[string]any{
-		"id": id, "cwd": cwd, "name": nil, "preview": "prompt of " + id, "ephemeral": false,
-		"parentThreadId": nil, "updatedAt": 1791994219, "status": map[string]any{"type": status},
-		"cliVersion": "0.162.1", "futureField": map[string]any{"x": 1},
+// playback is the recorded reply to a request, with the request's id.
+func playback(records []Record, id int, method string, params json.RawMessage) map[string]any {
+	var thread struct {
+		ThreadID string `json:"threadId"`
 	}
+	json.Unmarshal(params, &thread)
+	for _, r := range records {
+		var p struct {
+			ThreadID string `json:"threadId"`
+		}
+		json.Unmarshal(r.Params, &p)
+		if r.Method != method || p.ThreadID != thread.ThreadID {
+			continue
+		}
+		var reply map[string]any
+		json.Unmarshal(r.Reply, &reply)
+		reply["id"] = id
+		return reply
+	}
+	return map[string]any{"id": id, "error": map[string]any{"code": -32601, "message": "no recorded reply"}}
+}
+
+// Thread is a loaded thread as thread/read gives it: a recorded thread with the id, folder and
+// status given, and extra field names and values to set.
+func Thread(id, cwd, status string, extra ...any) map[string]any {
+	var t map[string]any
+	for _, r := range Recording() {
+		var reply struct {
+			Result struct {
+				Thread map[string]any `json:"thread"`
+			} `json:"result"`
+		}
+		if r.Method == "thread/read" && json.Unmarshal(r.Reply, &reply) == nil && reply.Result.Thread != nil {
+			t = reply.Result.Thread
+			break
+		}
+	}
+	if t == nil {
+		panic("the Codex recording has no thread/read reply")
+	}
+	maps.Copy(t, map[string]any{
+		"id": id, "sessionId": id, "cwd": cwd, "name": nil, "preview": "prompt of " + id, "ephemeral": false,
+		"parentThreadId": nil, "updatedAt": 1791994219, "status": map[string]any{"type": status},
+		"futureField": map[string]any{"x": 1},
+	})
 	if status == "active" {
 		t["status"] = map[string]any{"type": "active", "activeFlags": []string{}}
 	}

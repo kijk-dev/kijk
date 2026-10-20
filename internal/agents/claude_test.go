@@ -1,6 +1,7 @@
 package agents
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -8,6 +9,26 @@ import (
 	"testing"
 	"time"
 )
+
+// The session file of a real run names a process that has ended: it gets this test's pid.
+func init() {
+	live["claude"] = func(t *testing.T, home string) {
+		files, _ := filepath.Glob(filepath.Join(home, ".claude", "sessions", "*.json"))
+		for _, f := range files {
+			b, err := os.ReadFile(f)
+			var s map[string]any
+			if err == nil {
+				err = json.Unmarshal(b, &s)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			s["pid"], s["startedAt"] = os.Getpid(), time.Now().UnixMilli()
+			b, _ = json.Marshal(s)
+			write(t, f, string(b))
+		}
+	}
+}
 
 func sessionJSON(pid int, id, cwd, name, status string, startedAt int64) string {
 	return fmt.Sprintf(`{"pid":%d,"sessionId":%q,"cwd":%q,"name":%q,"status":%q,"startedAt":%d,"futureField":{"x":1}}`,

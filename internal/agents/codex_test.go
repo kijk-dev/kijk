@@ -18,6 +18,13 @@ import (
 
 var thread = agentstest.Thread
 
+// The app server of a real run has stopped: a fake one plays its recorded replies.
+func init() {
+	live["codex"] = func(t *testing.T, home string) {
+		agentstest.NewFakeCodexAt(t, codexSocket(filepath.Join(home, ".codex"))).Play(agentstest.Recording())
+	}
+}
+
 // codexEnv is a machine with Codex at home and no Claude Code.
 func codexEnv(t *testing.T, home string) *Env {
 	return testEnv(t, "CODEX_HOME", home)
