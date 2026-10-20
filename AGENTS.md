@@ -48,7 +48,8 @@ in code, UI text and commit messages.
 3. A type drawn by an engine: give the entry an `Engine` with its download files, each with its
    version, URL and SHA-256. Then write `web/engines/<name>.js`. It exports `load()`, which gets the
    files with `loadScript` or `loadModule` from `diagram.js`, and `draw(text, ctx)`, which returns
-   `{svg}` or `{error}`.
+   `{svg}`, or returns `{error}` or throws when it cannot draw. An engine with `Includes` also
+   returns `includes`, the files it read.
 4. `testdata/filetypes/`: add one sample file of the type.
 5. `README.md`: say what kijk shows for the type.
 6. Run `go test ./...`. It checks the entry, opens the sample through the API, and opens it in the

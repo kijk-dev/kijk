@@ -53,7 +53,7 @@ The kijk that runs without a window on a remote machine, started by a local kijk
 _Avoid_: server, daemon, headless kijk
 
 **File type**:
-A group of files that kijk shows the same way, found by extension or exact file name, such as PNG images or Mermaid diagrams. It says whether a file opens as an image, a rendered view or a diagram, how its diff shows, and how large a file kijk renders. kijk keeps one list of file types. A file of no file type shows as source.
+A group of files that kijk shows the same way, found by extension or exact file name, such as PNG images or Mermaid diagrams. It says how a file opens: as an image, rendered by kijk, or drawn by an engine as a diagram. It also says how its diff shows and how large a file kijk renders. kijk keeps one list of file types. A file of no file type shows as source.
 _Avoid_: format, kind, language
 
 **Image**:
