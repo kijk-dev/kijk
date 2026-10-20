@@ -61,17 +61,18 @@ in code, UI text and commit messages.
 ## Add an agent type
 
 1. `internal/agents/<name>.go`: the reader, and an `init` that adds the type with `add`: its name
-   (small letters; rows and telemetry use it, as `<name>_agents`), label, icon and color. The
-   reader finds the tool's folder with `env.folder`; with no folder it returns no agents and no
-   error. `env.running` checks a pid, `state` keeps data between scans, and `lastMatch` reads the
-   end of a JSONL file. The reader returns each agent's name, folder, Busy and last activity, or an
-   error when it cannot read the tool's data.
+   (small letters and digits; rows and telemetry use it, as `<name>_agents`), label, icon and
+   color. The reader finds the tool's folder with `env.folder`; with no folder it returns no agents
+   and no error. `env.running` checks a pid, `state` keeps data between scans, and `lastMatch`
+   reads the end of a JSONL file. The reader returns each agent's name, folder, Busy and last
+   activity, or an error when it cannot read the tool's data.
 2. `internal/agents/<name>.svg`: the type's mark, embedded by the Go file. Say where it comes from
    and its license above the `go:embed`.
 3. `internal/agents/testdata/<name>/`: `home/` with a copy of the tool's folder from a real run,
    with every prompt, reply, name and path replaced by neutral text, and `want.json` with the
-   agents the reader finds in it. When the copy needs a running process or a server to look live,
-   add a step to `live` in `<name>_test.go`.
+   agents the reader finds in it. A type that asks a server keeps the server's recorded replies
+   there instead, as Codex does in `replies.json`. When the copy needs a running process or a
+   server to look live, add a step to `live` in `<name>_test.go`.
 4. `internal/agentstest/<name>.go`: only for such a type, a starter that runs one agent for the
    journey "agent types". Any other type gets the agents of its test folder.
 5. `README.md`: add the type to Supported agents, with where kijk finds its agents.

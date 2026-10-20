@@ -358,9 +358,8 @@ func takeRestartEnv() (token string, restarted bool) {
 	return token, restarted
 }
 
-// sessionMessage is one message on /api/events. errs go to the status bar, and noneInstalled says
-// that the tool of no agent type is on this machine. Those and machines are left out when empty,
-// so the message stays as before.
+// sessionMessage is one message on /api/events. noneInstalled says that the tool of no agent type
+// is on this machine. Empty fields are left out.
 func sessionMessage(rows []Row, errs []typeError, noneInstalled bool, k kijkState, machines []machineView) []byte {
 	b, _ := json.Marshal(struct {
 		Rows          []Row         `json:"rows"`
