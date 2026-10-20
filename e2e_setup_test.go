@@ -5,6 +5,7 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image"
 	"image/color"
@@ -12,11 +13,13 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/chromedp/cdproto"
 	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/emulation"
 	"github.com/chromedp/chromedp"
@@ -194,13 +197,40 @@ func evalJS[T any](p page, js string) T {
 
 func (p page) click(what, el string) {
 	p.t.Helper()
-	p.act("click "+what, chromedp.Click(chromedp.JSPath(el)))
+	p.act("click "+what, delivered(chromedp.Click(chromedp.JSPath(el))))
 }
 
 func (p page) doubleClick(what, el string) {
 	p.t.Helper()
-	p.act("double-click "+what, chromedp.DoubleClick(chromedp.JSPath(el)))
+	p.act("double-click "+what, delivered(chromedp.DoubleClick(chromedp.JSPath(el))))
 }
+
+// delivered clicks again when the page redrew the element during the click, as a Git tab refresh
+// does to its list: then its node is gone, or the browser sends no click event at all.
+func delivered(click chromedp.Action[chromedp.Void]) chromedp.Action[chromedp.Void] {
+	return chromedp.Func(func(ctx context.Context, t *chromedp.Target) error {
+		for {
+			if _, err := chromedp.Evaluate[bool](`(window.e2eClicked = false, document.addEventListener('click', () => window.e2eClicked = true, {capture: true, once: true}), true)`)(ctx, t); err != nil {
+				return err
+			}
+			_, err := click(ctx, t)
+			var e *cdproto.Error
+			if errors.As(err, &e) && slices.Contains(goneNode, e.Message) && ctx.Err() == nil {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			// A click that opened another page leaves no flag behind.
+			if lost, err := chromedp.Evaluate[bool](`window.e2eClicked === false`)(ctx, t); err != nil || !lost {
+				return err
+			}
+		}
+	})
+}
+
+// goneNode are the browser's errors for a node that left the page.
+var goneNode = []string{"Could not find node with given id", "Node is detached from document", "Node with given id does not belong to the document"}
 
 // typeText types into the element that has the focus.
 func (p page) typeText(text string) {
