@@ -10,18 +10,10 @@ import (
 )
 
 func TestTypeOf(t *testing.T) {
-	for p, want := range map[string]string{"a/flow.mmd": "mermaid", "FLOW.MMD": "mermaid", "x.Mermaid": "mermaid", "x.md": "markdown", "mmd": "",
+	typesAre(t, map[string]string{"a/flow.mmd": "mermaid", "FLOW.MMD": "mermaid", "x.Mermaid": "mermaid", "x.md": "markdown", "mmd": "",
 		"docs/Login.PUML": "plantuml", "a.plantuml": "plantuml", "a.pu": "plantuml", "a.wsd": "plantuml", "common.iuml": "",
 		"docs/Arch.EXCALIDRAW": "excalidraw", "shapes.excalidrawlib": "", "arch.excalidraw.svg": "svg", "Guide.ADOC": "asciidoc",
-		"photo.JPeG": "jpeg", "a.jpg": "jpeg", "png": "", "notes.png.txt": "", "assets.png/data.go": "", ".png": "png"} {
-		got := ""
-		if ft := TypeOf(p); ft != nil {
-			got = ft.Name
-		}
-		if got != want {
-			t.Errorf("%s: %q, want %q", p, got, want)
-		}
-	}
+		"photo.JPeG": "jpeg", "a.jpg": "jpeg", "png": "", "notes.png.txt": "", "assets.png/data.go": "", ".png": "png"})
 }
 
 func TestTypeOfName(t *testing.T) {
@@ -31,13 +23,19 @@ func TestTypeOfName(t *testing.T) {
 		delete(byName, "Dockerfile")
 		delete(byExt, ".dockerfile")
 	})
-	for p, want := range map[string]string{"build/Dockerfile": "dockerfile", "dockerfile": "", "x.Dockerfile": "other"} {
+	typesAre(t, map[string]string{"build/Dockerfile": "dockerfile", "dockerfile": "", "x.Dockerfile": "other"})
+}
+
+// typesAre checks the name of the type TypeOf gives each path; "" is no type.
+func typesAre(t *testing.T, want map[string]string) {
+	t.Helper()
+	for p, w := range want {
 		got := ""
 		if ft := TypeOf(p); ft != nil {
 			got = ft.Name
 		}
-		if got != want {
-			t.Errorf("%s: %q, want %q", p, got, want)
+		if got != w {
+			t.Errorf("%s: %q, want %q", p, got, w)
 		}
 	}
 }
