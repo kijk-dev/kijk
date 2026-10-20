@@ -233,12 +233,7 @@ func TestBrowser(t *testing.T) {
 	})
 
 	t.Run("remote machine", func(t *testing.T) {
-		m := newFakeMachines(t)
-		vm := m.add("vm", "vm", "")
-		// The real binary keeps its logins where a user's kijk does; vm is a name no one else uses.
-		t.Cleanup(func() {
-			os.Remove(filepath.Join("/tmp", fmt.Sprintf("kijk-%d", os.Getuid()), filepath.Base(newSSHClient(vm).ctl)))
-		})
+		m, vm := journeyMachine(t)
 		publish(t, "0.0.1", exe)
 		app := namedRepo(t, "app")
 		write(t, filepath.Join(app, "app.go"), "package app\n")
@@ -258,21 +253,19 @@ func TestBrowser(t *testing.T) {
 
 	// An agent type that kijk on a remote machine cannot read joins the notice, after the machine's name.
 	t.Run("remote agent error", func(t *testing.T) {
-		m := newFakeMachines(t)
-		vm := m.add("vm", "vm", "")
-		t.Cleanup(func() {
-			os.Remove(filepath.Join("/tmp", fmt.Sprintf("kijk-%d", os.Getuid()), filepath.Base(newSSHClient(vm).ctl)))
-		})
+		m, vm := journeyMachine(t)
 		publish(t, "0.0.1", exe)
-		write(t, filepath.Join(m.home(vm), ".claude", "sessions", "9.json"), "{broken")
-		home, claude := t.TempDir(), t.TempDir()
-		claudeAgent(t, claude, shop, "Add the cart", "idle")
+		app := namedRepo(t, "app")
+		claudeAgent(t, filepath.Join(m.home(vm), ".claude"), app, "Remote work", "idle")
+		codex := agentstest.NewFakeCodexAt(t, agentstest.CodexSocket(filepath.Join(m.home(vm), ".codex")))
+		codex.Reply(func(c *agentstest.Conn, _ int, _ string) { c.Send(0x1, []byte("{oops")) })
+		home := t.TempDir()
 		write(t, filepath.Join(home, ".config", "kijk", "machines.json"), fmt.Sprintf(`{"machines":[{"target":%q,"enabled":true}]}`, vm))
-		r := openPage(t, newTab(t, tab), startKijkIn(t, exe, home, "CLAUDE_CONFIG_DIR="+claude), "/")
+		r := openPage(t, newTab(t, tab), startKijkIn(t, exe, home), "/")
 		// The first connection installs kijk on the machine.
-		r.waitLong(time.Minute, "the notice", noticeSays("Cannot read Claude Code agents · they are hidden"))
-		r.waitFor("the machine's name before the reason", agentNotice+`.dataset.tip.includes(`+jsString("\n"+vm+": cannot read session file")+`)`)
-		r.waitFor("the local agent", rowLabelIs("Add the cart, Claude Code, shop · main, Idle"))
+		r.waitLong(time.Minute, "the notice", noticeSays("Cannot read Codex agents · they are hidden"))
+		r.waitFor("the machine's name before the reason", agentNotice+`.dataset.tip.split('\n')[1].startsWith(`+jsString(vm+": ")+`)`)
+		r.waitFor("the other agent on the machine", rowLabelIs("Remote work, Claude Code, app · main, Idle"))
 		r.noErrors()
 	})
 

@@ -383,6 +383,18 @@ func apiRepo(t *testing.T) (dir, origin string) {
 
 // claudeAgent writes the session file of a Claude Code agent in config, run by this test's own
 // process, so kijk sees it running.
+// journeyMachine saves one fake machine. The real binary keeps its logins where a user's kijk does,
+// so the login goes when the journey ends; its target is a name no one else uses.
+func journeyMachine(t *testing.T) (*fakeMachines, string) {
+	t.Helper()
+	m := newFakeMachines(t)
+	vm := m.add("vm", "vm", "")
+	t.Cleanup(func() {
+		os.Remove(filepath.Join("/tmp", fmt.Sprintf("kijk-%d", os.Getuid()), filepath.Base(newSSHClient(vm).ctl)))
+	})
+	return m, vm
+}
+
 func claudeAgent(t *testing.T, config, cwd, name, status string) {
 	t.Helper()
 	write(t, filepath.Join(config, "sessions", "1.json"), sessionJSON(os.Getpid(), "s-"+name, cwd, name, status, time.Now().UnixMilli()))

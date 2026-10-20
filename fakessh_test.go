@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kijk-dev/kijk/internal/agentstest"
 	"github.com/kijk-dev/kijk/internal/viewer"
 )
 
@@ -266,7 +267,8 @@ func newFakeMachines(t *testing.T) *fakeMachines {
 	if runtime.GOOS == "windows" {
 		t.Skip("remote machines need macOS or Linux")
 	}
-	f := &fakeMachines{t: t, dir: t.TempDir(), id: strconv.FormatInt(time.Now().UnixNano(), 36), conf: fakeSSHConfig{Targets: map[string]fakeTarget{}}}
+	// A short folder, as a remote home can hold a Codex socket.
+	f := &fakeMachines{t: t, dir: agentstest.ShortTempDir(t), id: strconv.FormatInt(time.Now().UnixNano(), 36), conf: fakeSSHConfig{Targets: map[string]fakeTarget{}}}
 	exe, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
