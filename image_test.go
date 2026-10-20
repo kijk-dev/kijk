@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	kgit "github.com/kijk-dev/kijk/internal/git"
 )
 
 func TestImageType(t *testing.T) {
@@ -88,7 +90,7 @@ func TestImageFromDisk(t *testing.T) {
 	write(t, filepath.Join(root, "report.html"), "<script>alert(1)</script>")
 	big := filepath.Join(root, "big.png")
 	write(t, big, "")
-	if err := os.Truncate(big, maxFileSize+1); err != nil {
+	if err := os.Truncate(big, kgit.MaxFileSize+1); err != nil {
 		t.Fatal(err)
 	}
 	get := imageServer(t, root)
@@ -202,7 +204,7 @@ func TestChangeSides(t *testing.T) {
 			t.Errorf("%q %q: no error", bad.mode, bad.hash)
 		}
 	}
-	if _, _, err := changeSides(repo, "../a.png", "", "staged", ""); err != errOutside {
+	if _, _, err := changeSides(repo, "../a.png", "", "staged", ""); err != kgit.ErrOutside {
 		t.Errorf("path escape: %v", err)
 	}
 }
@@ -266,14 +268,14 @@ func TestImageVersions(t *testing.T) {
 		t.Errorf("same version again: %d", w2.Code)
 	}
 
-	var res diffResult
+	var res diffReply
 	if err := json.Unmarshal(get("/api/diff", url.Values{"mode": {"unstaged"}, "path": {"logo.svg"}}).Body.Bytes(), &res); err != nil {
 		t.Fatal(err)
 	}
 	if res.Image == nil || res.Image.Before == nil || res.Image.Before.OID == "" || res.Image.After == nil || res.Image.After.Mtime == 0 || len(res.Hunks) == 0 {
 		t.Errorf("svg diff: %+v", res)
 	}
-	res = diffResult{}
+	res = diffReply{}
 	json.Unmarshal(get("/api/diff", url.Values{"mode": {"untracked"}, "path": {"new.png"}}).Body.Bytes(), &res)
 	if res.Image == nil || res.Image.Before != nil || res.Image.After == nil || res.Image.After.Size != 2 {
 		t.Errorf("untracked diff: %+v", res.Image)
@@ -283,7 +285,7 @@ func TestImageVersions(t *testing.T) {
 	run(t, repo, "add", "hero.png")
 	run(t, repo, "commit", "-qm", "lfs")
 	head := strings.TrimSpace(string(must(exec.Command("git", "-C", repo, "rev-parse", "HEAD").Output())))
-	res = diffResult{}
+	res = diffReply{}
 	json.Unmarshal(get("/api/diff", url.Values{"mode": {"commit"}, "hash": {head}, "path": {"hero.png"}}).Body.Bytes(), &res)
 	if res.Image == nil || res.Image.Before != nil || res.Image.After == nil || res.Image.After.LFS != 2400000 {
 		t.Errorf("lfs in a commit: %+v", res.Image)
@@ -291,7 +293,7 @@ func TestImageVersions(t *testing.T) {
 	write(t, filepath.Join(repo, "hero.png"), "H2")
 	run(t, repo, "commit", "-qam", "real")
 	next := strings.TrimSpace(string(must(exec.Command("git", "-C", repo, "rev-parse", "HEAD").Output())))
-	res = diffResult{}
+	res = diffReply{}
 	json.Unmarshal(get("/api/diff", url.Values{"mode": {"commit"}, "hash": {next}, "path": {"hero.png"}}).Body.Bytes(), &res)
 	if res.Image == nil || res.Image.Before == nil || res.Image.Before.LFS != 2400000 || res.Image.After.LFS != 0 || !strings.HasPrefix(head, res.Image.Parent) || res.Image.Parent == "" {
 		t.Errorf("commit after lfs: %+v", res.Image)

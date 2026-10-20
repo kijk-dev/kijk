@@ -11,6 +11,7 @@ import (
 const hlMaxBytes = 512 << 10 // larger windows stay plain; chroma is too slow for them
 
 // Token is one colored piece of a line: [class, text]. Class "" is plain text.
+// It is an alias, so git can hold colored diff lines without importing render.
 type Token = [2]string
 
 func LexerFor(path string) chroma.Lexer {

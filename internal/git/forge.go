@@ -1,4 +1,4 @@
-package main
+package git
 
 import (
 	"bytes"
@@ -64,7 +64,7 @@ func parseRemote(raw string) (host, path string, ok bool) {
 }
 
 func detectForge(root string) *forge {
-	raw, err := git(root, "config", "--get", "remote.origin.url") // as written, before any insteadOf rewrite
+	raw, err := Run(root, "config", "--get", "remote.origin.url") // as written, before any insteadOf rewrite
 	if err != nil {
 		return nil
 	}
@@ -132,8 +132,8 @@ func glabHostFiles() []string {
 	return files
 }
 
-// prFor looks up the pull or merge request of the branch HEAD is on.
-func prFor(root string) prStatus {
+// PRFor looks up the pull or merge request of the branch HEAD is on.
+func PRFor(root string) prStatus {
 	res := prStatus{Forge: detectForge(root)}
 	if res.Forge == nil {
 		return res
@@ -163,12 +163,12 @@ func prFor(root string) prStatus {
 
 // prBranch is the branch name on the remote: the upstream's, else the local one.
 func prBranch(root string) string {
-	if up, err := git(root, "rev-parse", "--abbrev-ref", "@{upstream}"); err == nil {
+	if up, err := Run(root, "rev-parse", "--abbrev-ref", "@{upstream}"); err == nil {
 		if remote, name, ok := strings.Cut(up, "/"); ok && remote == "origin" {
 			return name
 		}
 	}
-	b, _ := git(root, "symbolic-ref", "--short", "-q", "HEAD")
+	b, _ := Run(root, "symbolic-ref", "--short", "-q", "HEAD")
 	return b
 }
 

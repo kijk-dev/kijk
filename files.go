@@ -12,15 +12,14 @@ import (
 	"strings"
 	"sync"
 	"unicode/utf8"
+
+	kgit "github.com/kijk-dev/kijk/internal/git"
 )
 
 const (
-	maxFileSize = 50 << 20
 	maxLineLen  = 20000 // longer lines are cut, so one minified line cannot flood the page
 	indexStride = 64    // the index keeps the start of every 64th line
 )
-
-var errOutside = errors.New("path is outside this folder")
 
 // roots are the folders the server may read: row folders of running agents and saved folders.
 type roots struct {
@@ -66,7 +65,7 @@ func resolve(root, rel string) (string, error) {
 		return "", err
 	}
 	if !inside(realRoot, p) {
-		return "", errOutside
+		return "", kgit.ErrOutside
 	}
 	return p, nil
 }
@@ -225,14 +224,9 @@ func (c *indexCache) get(path string) (*fileIndex, error) {
 	return idx, nil
 }
 
-// isBinary is git's own test: a NUL byte in the first 8000 bytes.
-func isBinary(head []byte) bool {
-	return bytes.IndexByte(head[:min(len(head), 8000)], 0) >= 0
-}
-
 func buildIndex(path string, st os.FileInfo) (*fileIndex, error) {
 	idx := &fileIndex{fileInfo: fileInfo{Size: st.Size(), Mtime: st.ModTime().UnixNano()}}
-	if st.Size() > maxFileSize {
+	if st.Size() > kgit.MaxFileSize {
 		idx.TooLarge = true
 		return idx, nil
 	}
@@ -244,7 +238,7 @@ func buildIndex(path string, st os.FileInfo) (*fileIndex, error) {
 
 	head := make([]byte, 8000)
 	n, _ := io.ReadFull(f, head)
-	if isBinary(head[:n]) {
+	if kgit.IsBinary(head[:n]) {
 		idx.Binary = true
 		return idx, nil
 	}

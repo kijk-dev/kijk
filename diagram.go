@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strings"
 	"unicode/utf8"
+
+	kgit "github.com/kijk-dev/kijk/internal/git"
 )
 
 // diagramMaxChars is Mermaid's maxTextSize; diagram.js holds it too, for PlantUML.
@@ -53,7 +55,7 @@ func diffDiagram(root, kind, path, orig, mode, hash string) *diagramSides {
 	}
 	res := &diagramSides{Kind: kind, Before: diagramText(root, kind, before), After: diagramText(root, kind, after)}
 	if mode == "commit" && before != nil {
-		res.Parent, _ = git(root, "rev-parse", "--short", hash+"^")
+		res.Parent, _ = kgit.Run(root, "rev-parse", "--short", hash+"^")
 	}
 	return res
 }
@@ -86,7 +88,7 @@ func diagramText(root, kind string, b *blobRef) *diagramSide {
 		if size > diagramMaxBytes(kind) {
 			return &diagramSide{TooLarge: true}
 		}
-		if src, err = gitRaw(root, "cat-file", "blob", b.oid); err != nil {
+		if src, err = kgit.Raw(root, "cat-file", "blob", b.oid); err != nil {
 			return nil
 		}
 	}

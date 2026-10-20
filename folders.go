@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	kgit "github.com/kijk-dev/kijk/internal/git"
 )
 
 // savedFolder is one row of the folders window: its folder, and the folder given last inside it.
@@ -125,7 +127,7 @@ func checkFolder(arg, cwd string) (savedFolder, error) {
 		return savedFolder{}, fmt.Errorf("%s is too big to open. Pick a folder inside it", show)
 	}
 	row := real
-	if top, err := git(real, "rev-parse", "--show-toplevel"); err == nil && top != "" {
+	if top, err := kgit.Run(real, "rev-parse", "--show-toplevel"); err == nil && top != "" {
 		row = filepath.FromSlash(top)
 		if tooBig(row, home) {
 			return savedFolder{}, fmt.Errorf("%s is inside a git repository at %s, which is too big to open", show, tilde(row))
@@ -323,23 +325,23 @@ func folderRowOf(f savedFolder) folderRow {
 // uncommitted gives the branch and the lines added and removed since the last commit, with one
 // git status and one git diff. Outside git it gives nothing.
 func uncommitted(root string) (branch string, add, del int) {
-	out, err := gitRaw(root, "status", "--porcelain=v2", "-z", "--branch", "-uall")
+	out, err := kgit.Raw(root, "status", "--porcelain=v2", "-z", "--branch", "-uall")
 	if err != nil {
 		return "", 0, 0
 	}
-	var st gitStatus
-	parseStatus(out, &st)
+	var st kgit.Status
+	kgit.ParseStatus(out, &st)
 	branch = st.Branch
 	if branch == "" {
-		branch, _ = git(root, "rev-parse", "--short", "HEAD")
+		branch, _ = kgit.Run(root, "rev-parse", "--short", "HEAD")
 	}
-	for _, n := range numstatOf(root, append(st.Staged, st.Changes...), "-M", "HEAD") {
-		add += n.add
-		del += n.del
+	for _, n := range kgit.NumstatOf(root, append(st.Staged, st.Changes...), "-M", "HEAD") {
+		add += n.Add
+		del += n.Del
 	}
 	for _, c := range st.Untracked {
 		if !strings.HasSuffix(c.Path, "/") {
-			add += countLines(filepath.Join(root, filepath.FromSlash(c.Path)))
+			add += kgit.CountLines(filepath.Join(root, filepath.FromSlash(c.Path)))
 		}
 	}
 	return branch, add, del

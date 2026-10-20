@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	kgit "github.com/kijk-dev/kijk/internal/git"
 	"github.com/kijk-dev/kijk/internal/render"
 )
 
@@ -49,14 +50,14 @@ func newServer(token string, port int, web fs.FS, h *hub, rts *roots, u *updater
 	mux.HandleFunc("GET /api/status", a.status)
 	mux.HandleFunc("GET /api/diff", a.diff)
 	mux.HandleFunc("GET /api/folder-events", a.folderEvents)
-	mux.HandleFunc("POST /api/stage", a.gitAction(func(req actionRequest) (string, error) { return stage(req.Root, req.Paths) }))
-	mux.HandleFunc("POST /api/unstage", a.gitAction(func(req actionRequest) (string, error) { return unstage(req.Root, req.Paths) }))
+	mux.HandleFunc("POST /api/stage", a.gitAction(func(req actionRequest) (string, error) { return kgit.Stage(req.Root, req.Paths) }))
+	mux.HandleFunc("POST /api/unstage", a.gitAction(func(req actionRequest) (string, error) { return kgit.Unstage(req.Root, req.Paths) }))
 	mux.HandleFunc("GET /api/graph", a.graph)
 	mux.HandleFunc("GET /api/pr", a.pr)
 	mux.HandleFunc("GET /api/commit-files", a.commitFiles)
-	mux.HandleFunc("POST /api/fetch", a.gitAction(func(req actionRequest) (string, error) { return fetch(req.Root) }))
-	mux.HandleFunc("POST /api/push", a.gitAction(func(req actionRequest) (string, error) { return push(req.Root) }))
-	mux.HandleFunc("POST /api/commit", a.gitAction(func(req actionRequest) (string, error) { return commit(req.Root, req.Message) }))
+	mux.HandleFunc("POST /api/fetch", a.gitAction(func(req actionRequest) (string, error) { return kgit.Fetch(req.Root) }))
+	mux.HandleFunc("POST /api/push", a.gitAction(func(req actionRequest) (string, error) { return kgit.Push(req.Root) }))
+	mux.HandleFunc("POST /api/commit", a.gitAction(func(req actionRequest) (string, error) { return kgit.Commit(req.Root, req.Message) }))
 	if fl != nil {
 		mux.HandleFunc("GET /api/folders", func(w http.ResponseWriter, r *http.Request) {
 			reply(w, foldersReply{Window: h.count(windowFolders) > 0})
@@ -123,11 +124,11 @@ func (a *api) target(w http.ResponseWriter, r *http.Request) (root, path string,
 
 func fail(w http.ResponseWriter, err error) {
 	switch {
-	case errors.Is(err, errOutside):
+	case errors.Is(err, kgit.ErrOutside):
 		http.Error(w, "Path is outside this folder", http.StatusForbidden)
 	case errors.Is(err, fs.ErrNotExist):
 		http.Error(w, "Not found", http.StatusNotFound)
-	case errors.Is(err, errBadHash), errors.Is(err, errBadMode):
+	case errors.Is(err, kgit.ErrBadHash), errors.Is(err, kgit.ErrBadMode):
 		http.Error(w, err.Error(), http.StatusBadRequest)
 	default:
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -170,9 +171,9 @@ func (a *api) file(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rel := r.URL.Query().Get("path")
-	changes, err := lineChanges(root, rel)
+	changes, err := kgit.LineChanges(root, rel)
 	if err != nil {
-		changes = []lineChange{} // no marks outside git or before the first commit
+		changes = []kgit.LineChange{} // no marks outside git or before the first commit
 	}
 	var lfs int64
 	if imageType(rel) != "" {
@@ -180,8 +181,8 @@ func (a *api) file(w http.ResponseWriter, r *http.Request) {
 	}
 	reply(w, struct {
 		fileInfo
-		LFS     int64        `json:"lfs,omitempty"`
-		Changes []lineChange `json:"changes"`
+		LFS     int64             `json:"lfs,omitempty"`
+		Changes []kgit.LineChange `json:"changes"`
 	}{idx.fileInfo, lfs, changes})
 }
 
@@ -320,7 +321,7 @@ func (a *api) text(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
-	if isBinary(src) {
+	if kgit.IsBinary(src) {
 		http.Error(w, "Binary file", http.StatusUnsupportedMediaType)
 		return
 	}
@@ -329,7 +330,7 @@ func (a *api) text(w http.ResponseWriter, r *http.Request) {
 
 func (a *api) status(w http.ResponseWriter, r *http.Request) {
 	if root, _, ok := a.target(w, r); ok {
-		reply(w, statusFor(root, r.URL.Query().Get("target")))
+		reply(w, kgit.StatusFor(root, r.URL.Query().Get("target")))
 	}
 }
 
@@ -338,7 +339,7 @@ func (a *api) graph(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	g, err := graph(root, r.URL.Query().Get("target"))
+	g, err := kgit.Graph(root, r.URL.Query().Get("target"))
 	if err != nil {
 		fail(w, err)
 		return
@@ -348,7 +349,7 @@ func (a *api) graph(w http.ResponseWriter, r *http.Request) {
 
 func (a *api) pr(w http.ResponseWriter, r *http.Request) {
 	if root, _, ok := a.target(w, r); ok {
-		reply(w, prFor(root))
+		reply(w, kgit.PRFor(root))
 	}
 }
 
@@ -357,7 +358,7 @@ func (a *api) commitFiles(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	files, err := commitFiles(root, r.URL.Query().Get("hash"))
+	files, err := kgit.CommitFiles(root, r.URL.Query().Get("hash"))
 	if err != nil {
 		fail(w, err)
 		return
@@ -382,13 +383,14 @@ func (a *api) diff(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	highlightDiff(q.Get("path"), &res)
+	out := diffReply{DiffResult: res}
 	if imageType(q.Get("path")) != "" {
-		res.Image = diffImage(root, q.Get("path"), q.Get("orig"), q.Get("mode"), q.Get("hash"))
+		out.Image = diffImage(root, q.Get("path"), q.Get("orig"), q.Get("mode"), q.Get("hash"))
 	}
 	if kind := render.DiagramKind(q.Get("path")); kind != "" {
-		res.Diagram = diffDiagram(root, kind, q.Get("path"), q.Get("orig"), q.Get("mode"), q.Get("hash"))
+		out.Diagram = diffDiagram(root, kind, q.Get("path"), q.Get("orig"), q.Get("mode"), q.Get("hash"))
 	}
-	reply(w, res)
+	reply(w, out)
 }
 
 type actionRequest struct {

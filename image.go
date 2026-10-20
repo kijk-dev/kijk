@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	kgit "github.com/kijk-dev/kijk/internal/git"
 )
 
 // imageTypes are the files kijk shows as pictures. The type comes from the extension, never from
@@ -101,7 +103,7 @@ func parseRaw(out []byte) []rawChange {
 // changeSides finds the two versions a diff of path compares. A nil side does not exist.
 func changeSides(root, path, orig, mode, hash string) (before, after *blobRef, err error) {
 	if !filepath.IsLocal(filepath.FromSlash(path)) || (orig != "" && !filepath.IsLocal(filepath.FromSlash(orig))) {
-		return nil, nil, errOutside
+		return nil, nil, kgit.ErrOutside
 	}
 	var args []string
 	switch mode {
@@ -112,18 +114,18 @@ func changeSides(root, path, orig, mode, hash string) (before, after *blobRef, e
 	case "staged":
 		args = []string{"diff", "--cached"}
 	case "commit":
-		if !hashRe.MatchString(hash) {
-			return nil, nil, errBadHash
+		if !kgit.HashRe.MatchString(hash) {
+			return nil, nil, kgit.ErrBadHash
 		}
 		args = []string{"show", "--format=", "--first-parent", hash}
 	default:
-		return nil, nil, errBadMode
+		return nil, nil, kgit.ErrBadMode
 	}
 	args = append(args, "--raw", "-z", "--no-abbrev", "-M", "--")
 	if orig != "" {
 		args = append(args, orig)
 	}
-	out, err := gitRaw(root, append(args, path)...)
+	out, err := kgit.Raw(root, append(args, path)...)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -175,7 +177,7 @@ func diffImage(root, path, orig, mode, hash string) *imageSides {
 	}
 	res := &imageSides{Before: sideInfo(root, before), After: sideInfo(root, after)}
 	if mode == "commit" && before != nil {
-		res.Parent, _ = git(root, "rev-parse", "--short", hash+"^")
+		res.Parent, _ = kgit.Run(root, "rev-parse", "--short", hash+"^")
 	}
 	return res
 }
@@ -201,7 +203,7 @@ func sideInfo(root string, b *blobRef) *imageSide {
 	}
 	s := &imageSide{OID: b.oid, Size: size}
 	if size < lfsMaxPointer {
-		if out, err := gitRaw(root, "cat-file", "blob", b.oid); err == nil {
+		if out, err := kgit.Raw(root, "cat-file", "blob", b.oid); err == nil {
 			s.LFS = lfsSize(out)
 		}
 	}
@@ -209,7 +211,7 @@ func sideInfo(root string, b *blobRef) *imageSide {
 }
 
 func blobSize(root, oid string) (int64, error) {
-	out, err := git(root, "cat-file", "-s", oid)
+	out, err := kgit.Run(root, "cat-file", "-s", oid)
 	if err != nil {
 		return 0, err
 	}
@@ -287,7 +289,7 @@ func (a *api) imageVersion(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
-	if size > maxFileSize {
+	if size > kgit.MaxFileSize {
 		http.Error(w, "Image too large", http.StatusRequestEntityTooLarge)
 		return
 	}
@@ -299,7 +301,7 @@ func (a *api) imageVersion(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", ct)
 	w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
-	cmd := gitCmd(r.Context(), root, "cat-file", "blob", b.oid)
+	cmd := kgit.Command(r.Context(), root, "cat-file", "blob", b.oid)
 	cmd.Stdout = w
 	cmd.Run() // the headers are sent; a failure here can only cut the answer short
 }
@@ -320,7 +322,7 @@ func serveImageFile(w http.ResponseWriter, r *http.Request, p, ct string) {
 		http.Error(w, "Not found", http.StatusNotFound)
 		return
 	}
-	if st.Size() > maxFileSize {
+	if st.Size() > kgit.MaxFileSize {
 		http.Error(w, "Image too large", http.StatusRequestEntityTooLarge)
 		return
 	}

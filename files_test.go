@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	kgit "github.com/kijk-dev/kijk/internal/git"
 )
 
 func names(es []entry) string {
@@ -60,10 +62,10 @@ func TestSymlinks(t *testing.T) {
 	if e := byName["in"]; !e.Link || e.Outside {
 		t.Fatalf("in = %+v", e)
 	}
-	if _, err := resolve(root, "out/secret"); !errors.Is(err, errOutside) {
+	if _, err := resolve(root, "out/secret"); !errors.Is(err, kgit.ErrOutside) {
 		t.Fatalf("link escape: %v", err)
 	}
-	if _, err := listDir(root, "out"); !errors.Is(err, errOutside) {
+	if _, err := listDir(root, "out"); !errors.Is(err, kgit.ErrOutside) {
 		t.Fatalf("list through link: %v", err)
 	}
 	if _, err := resolve(root, "in"); err != nil {
@@ -75,7 +77,7 @@ func TestResolveEscape(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "repo")
 	os.Mkdir(root, 0o755)
 	write(t, filepath.Join(filepath.Dir(root), "passwd"), "x")
-	if _, err := resolve(root, "../passwd"); !errors.Is(err, errOutside) {
+	if _, err := resolve(root, "../passwd"); !errors.Is(err, kgit.ErrOutside) {
 		t.Fatalf("got %v", err)
 	}
 	if _, err := resolve(root, "src/../../passwd"); err == nil {
@@ -135,7 +137,7 @@ func TestBinaryAndTooLarge(t *testing.T) {
 	}
 	big := filepath.Join(dir, "big.bin")
 	f, _ := os.Create(big)
-	f.Truncate(maxFileSize + 1)
+	f.Truncate(kgit.MaxFileSize + 1)
 	f.Close()
 	if idx, _ := newIndexCache().get(big); !idx.TooLarge {
 		t.Fatalf("too large: %+v", idx.fileInfo)

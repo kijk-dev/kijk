@@ -17,6 +17,8 @@ import (
 	"testing"
 	"time"
 
+	kgit "github.com/kijk-dev/kijk/internal/git"
+
 	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/emulation"
 	"github.com/chromedp/chromedp"
@@ -433,3 +435,6 @@ func copyEngines(from, to string) {
 		}
 	}
 }
+
+// git is the journeys' name for kgit.Run; main imports internal/git as kgit so the name stays free.
+func git(dir string, args ...string) (string, error) { return kgit.Run(dir, args...) }

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	kgit "github.com/kijk-dev/kijk/internal/git"
 	"github.com/rjeczalik/notify"
 )
 
@@ -81,7 +82,7 @@ func (a *api) folderEvents(w http.ResponseWriter, r *http.Request) {
 
 // outsideGitDirs finds a worktree's git folders, which live in the main repository, not under root.
 func outsideGitDirs(root string) []string {
-	out, err := git(root, "rev-parse", "--absolute-git-dir", "--git-common-dir")
+	out, err := kgit.Run(root, "rev-parse", "--absolute-git-dir", "--git-common-dir")
 	if err != nil {
 		return nil
 	}

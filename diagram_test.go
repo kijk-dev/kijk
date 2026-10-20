@@ -84,7 +84,7 @@ func TestDiagramDiff(t *testing.T) {
 		{"gone.mmd", "commit", hash, "G1 | none"},
 	} {
 		w := get("/api/diff", url.Values{"path": {c.path}, "mode": {c.mode}, "hash": {c.hash}})
-		var res diffResult
+		var res diffReply
 		if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil || res.Diagram == nil {
 			t.Errorf("%s %s: %d %s", c.path, c.mode, w.Code, w.Body.String())
 			continue

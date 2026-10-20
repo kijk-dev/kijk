@@ -9,16 +9,23 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/kijk-dev/kijk/internal/gittest"
 )
 
+// The tests and the journeys call the gittest helpers by these names.
 func write(t *testing.T, path, content string) {
 	t.Helper()
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	gittest.Write(t, path, content)
+}
+
+func gitRepo(t *testing.T) string { return gittest.Repo(t) }
+
+func isolatedGit(t *testing.T) { gittest.Isolate(t) }
+
+func run(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	gittest.Run(t, dir, args...)
 }
 
 func sessionJSON(pid int, id, cwd, name, status string, startedAt int64) string {
@@ -46,14 +53,6 @@ func samePath(t *testing.T, got, want string) {
 	if g != w {
 		t.Fatalf("path = %q, want %q", got, want)
 	}
-}
-
-func gitRepo(t *testing.T) string {
-	dir := t.TempDir()
-	if out, err := exec.Command("git", "init", "-b", "main", dir).CombinedOutput(); err != nil {
-		t.Fatalf("git init: %v %s", err, out)
-	}
-	return dir
 }
 
 func TestReadSessionFile(t *testing.T) {

@@ -1,4 +1,4 @@
-package main
+package git
 
 import (
 	"bytes"
@@ -9,12 +9,15 @@ import (
 	"sync"
 )
 
-type lineCount struct{ add, del int }
+// MaxFileSize is the largest file kijk reads; a larger file is not shown or counted.
+const MaxFileSize = 50 << 20
+
+type LineCount struct{ Add, Del int }
 
 // parseNumstat reads `git diff --numstat -z` into counts by path. A rename is keyed by its new
 // path. Binary files show "-", which counts as zero.
-func parseNumstat(out []byte) map[string]lineCount {
-	m := map[string]lineCount{}
+func parseNumstat(out []byte) map[string]LineCount {
+	m := map[string]LineCount{}
 	f := strings.Split(string(out), "\x00")
 	for i := 0; i < len(f); i++ {
 		parts := strings.SplitN(strings.TrimLeft(f[i], "\n"), "\t", 3)
@@ -28,23 +31,23 @@ func parseNumstat(out []byte) map[string]lineCount {
 		}
 		a, _ := strconv.Atoi(parts[0])
 		d, _ := strconv.Atoi(parts[1])
-		m[path] = lineCount{a, d}
+		m[path] = LineCount{a, d}
 	}
 	return m
 }
 
-func numstat(root string, args ...string) map[string]lineCount {
-	out, err := gitRaw(root, append([]string{"diff", "--no-ext-diff", "--numstat", "-z"}, args...)...)
+func numstat(root string, args ...string) map[string]LineCount {
+	out, err := Raw(root, append([]string{"diff", "--no-ext-diff", "--numstat", "-z"}, args...)...)
 	if err != nil {
-		return map[string]lineCount{}
+		return map[string]LineCount{}
 	}
 	return parseNumstat(out)
 }
 
-// numstatOf diffs only the files git status listed, so git does not look at every file on disk.
-func numstatOf(root string, cs []change, args ...string) map[string]lineCount {
+// NumstatOf diffs only the files git status listed, so git does not look at every file on disk.
+func NumstatOf(root string, cs []change, args ...string) map[string]LineCount {
 	if len(cs) == 0 {
-		return map[string]lineCount{}
+		return map[string]LineCount{}
 	}
 	if len(cs) <= 500 { // beyond that a full diff is cheaper than a huge argument list
 		args = append(args, "--")
@@ -58,10 +61,10 @@ func numstatOf(root string, cs []change, args ...string) map[string]lineCount {
 	return numstat(root, args...)
 }
 
-func setCounts(cs []change, m map[string]lineCount) {
+func setCounts(cs []change, m map[string]LineCount) {
 	for i := range cs {
 		n := m[cs[i].Path]
-		cs[i].Add, cs[i].Del = n.add, n.del
+		cs[i].Add, cs[i].Del = n.Add, n.Del
 	}
 }
 
@@ -75,11 +78,11 @@ var lineCache = struct {
 	m map[string]lineCacheEntry
 }{m: map[string]lineCacheEntry{}}
 
-// countLines counts a new file's lines the way git does: a last line without a newline counts.
-// Binary files, files over maxFileSize and folders count zero.
-func countLines(path string) int {
+// CountLines counts a new file's lines the way git does: a last line without a newline counts.
+// Binary files, files over MaxFileSize and folders count zero.
+func CountLines(path string) int {
 	st, err := os.Stat(path)
-	if err != nil || !st.Mode().IsRegular() || st.Size() > maxFileSize {
+	if err != nil || !st.Mode().IsRegular() || st.Size() > MaxFileSize {
 		return 0
 	}
 	lineCache.Lock()
@@ -108,7 +111,7 @@ func lineTotal(path string) int {
 	n, last, first := 0, byte('\n'), true
 	for {
 		k, err := f.Read(buf)
-		if first && isBinary(buf[:k]) {
+		if first && IsBinary(buf[:k]) {
 			return 0
 		}
 		first = false
@@ -142,7 +145,7 @@ var splitCache = struct {
 }{m: map[string]string{}}
 
 func splitPoint(root, base string) string {
-	key, err := git(root, "rev-parse", "HEAD", base)
+	key, err := Run(root, "rev-parse", "HEAD", base)
 	if err != nil {
 		return ""
 	}
@@ -152,7 +155,7 @@ func splitPoint(root, base string) string {
 	if ok {
 		return fork
 	}
-	fork, _ = git(root, "merge-base", "HEAD", base)
+	fork, _ = Run(root, "merge-base", "HEAD", base)
 	splitCache.Lock()
 	if len(splitCache.m) > 100 {
 		clear(splitCache.m)
@@ -185,8 +188,8 @@ func startTotal(root, target string) func(branch string, untracked []change) *br
 		}
 		t = &branchTotal{Base: base}
 		for _, n := range numstat(root, "-M", fork) {
-			t.Add += n.add
-			t.Del += n.del
+			t.Add += n.Add
+			t.Del += n.Del
 		}
 	}()
 	return func(branch string, untracked []change) *branchTotal {
@@ -199,4 +202,9 @@ func startTotal(root, target string) func(branch string, untracked []change) *br
 		}
 		return t
 	}
+}
+
+// IsBinary is git's own test: a NUL byte in the first 8000 bytes.
+func IsBinary(head []byte) bool {
+	return bytes.IndexByte(head[:min(len(head), 8000)], 0) >= 0
 }
