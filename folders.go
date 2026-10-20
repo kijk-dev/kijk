@@ -12,9 +12,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/kijk-dev/kijk/internal/viewer"
-
 	"github.com/kijk-dev/kijk/internal/git"
+	"github.com/kijk-dev/kijk/internal/viewer"
 )
 
 // savedFolder is one row of the folders window: its folder, and the folder given last inside it.
@@ -328,33 +327,8 @@ func folderRowOf(f savedFolder) folderRow {
 	if f.Open != "" {
 		r.Cwd = relCwd(f.Path, f.Open)
 	}
-	r.Branch, r.Add, r.Del = uncommitted(f.Path)
+	r.Branch, r.Add, r.Del = git.Uncommitted(f.Path)
 	return r
-}
-
-// uncommitted gives the branch and the lines added and removed since the last commit, with one
-// git status and one git diff. Outside git it gives nothing.
-func uncommitted(root string) (branch string, add, del int) {
-	out, err := git.Raw(root, "status", "--porcelain=v2", "-z", "--branch", "-uall")
-	if err != nil {
-		return "", 0, 0
-	}
-	var st git.Status
-	git.ParseStatus(out, &st)
-	branch = st.Branch
-	if branch == "" {
-		branch, _ = git.Run(root, "rev-parse", "--short", "HEAD")
-	}
-	for _, n := range git.NumstatOf(root, append(st.Staged, st.Changes...), "-M", "HEAD") {
-		add += n.Add
-		del += n.Del
-	}
-	for _, c := range st.Untracked {
-		if !strings.HasSuffix(c.Path, "/") {
-			add += git.CountLines(filepath.Join(root, filepath.FromSlash(c.Path)))
-		}
-	}
-	return branch, add, del
 }
 
 func folderMessage(rows []folderRow, err error, open openRequest, k kijkState) []byte {

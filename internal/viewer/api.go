@@ -187,7 +187,7 @@ func (a *api) markdown(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	kind := render.DiagramKind(r.URL.Query().Get("path"))
-	limit, tooLarge := int64(render.MdMaxBytes), "Too large to render"
+	limit, tooLarge := int64(render.MaxSourceBytes), "Too large to render"
 	if kind != "" {
 		limit, tooLarge = diagramMaxBytes(kind), diagramTooLargeText
 	}
@@ -231,7 +231,7 @@ func readIncluded(root, rel string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !st.Mode().IsRegular() || st.Size() > render.MdMaxBytes {
+	if !st.Mode().IsRegular() || st.Size() > render.MaxSourceBytes {
 		return nil, errors.New("not a file to include")
 	}
 	return os.ReadFile(p)

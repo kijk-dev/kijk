@@ -152,15 +152,15 @@ func StatusFor(root, target string) Status {
 		return st
 	}
 	st.Git = true
-	ParseStatus(out, &st)
+	parseStatus(out, &st)
 	var wg sync.WaitGroup
 	var unstagedN, stagedN map[string]lineCount
 	wg.Add(2)
-	go func() { defer wg.Done(); unstagedN = NumstatOf(root, st.Changes) }()
-	go func() { defer wg.Done(); stagedN = NumstatOf(root, st.Staged, "--cached", "-M") }()
+	go func() { defer wg.Done(); unstagedN = numstatOf(root, st.Changes) }()
+	go func() { defer wg.Done(); stagedN = numstatOf(root, st.Staged, "--cached", "-M") }()
 	for i, c := range st.Untracked {
 		if !strings.HasSuffix(c.Path, "/") {
-			st.Untracked[i].Add = CountLines(filepath.Join(root, filepath.FromSlash(c.Path)))
+			st.Untracked[i].Add = countLines(filepath.Join(root, filepath.FromSlash(c.Path)))
 		}
 	}
 	st.Remote = hasOrigin(root)
@@ -212,7 +212,7 @@ func StatusFor(root, target string) Status {
 	return st
 }
 
-func ParseStatus(out []byte, st *Status) {
+func parseStatus(out []byte, st *Status) {
 	fields := strings.Split(string(out), "\x00")
 	for i := 0; i < len(fields); i++ {
 		f := fields[i]

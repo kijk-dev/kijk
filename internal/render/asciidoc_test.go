@@ -322,7 +322,7 @@ func TestAsciiDocIncludes(t *testing.T) {
 	if inc := adocIncluding(t, "include::d0.adoc[]\n", deep, []string{"D7.", `<a href="d8.adoc">`}, "D8."); len(inc) != 8 {
 		t.Errorf("deep includes %v", inc)
 	}
-	big := strings.Repeat("abcdefghi\n", MdMaxBytes/20+1)
+	big := strings.Repeat("abcdefghi\n", MaxSourceBytes/20+1)
 	adocIncluding(t, "include::big.txt[]\n\ninclude::big.txt[]\n", map[string]string{"docs/big.txt": big}, []string{`<a href="big.txt">`})
 	if inc := adocIncluding(t, "include::missing.adoc[]\n", nil, []string{`<a href="missing.adoc">`}); !slices.Equal(inc, []string{"docs/missing.adoc"}) {
 		t.Errorf("a missing include is not watched: %v", inc)
@@ -341,11 +341,11 @@ func TestAsciiDocSpeed(t *testing.T) {
 	section := "== Section {n}\n\nA *bold* _word_ and `code`, https://example.com[a link] and <<_section_1>>.\n\n" +
 		"* item\n** nested\n\n[source,go]\n----\nfunc main() {}\n----\n\n|===\n| a | b\n|===\n\nTerm:: text\n\n"
 	var b strings.Builder
-	for b.Len() < MdMaxBytes/2 {
+	for b.Len() < MaxSourceBytes/2 {
 		b.WriteString(section)
 	}
 	// One long paragraph of marks that never close.
-	for b.Len() < MdMaxBytes {
+	for b.Len() < MaxSourceBytes {
 		b.WriteString("*a _b `c +d <<e [[f link:g image:h https://i ")
 	}
 	start := time.Now()

@@ -32,7 +32,7 @@ func AsciiDoc(src []byte, path string, read func(path string) ([]byte, error)) (
 		r: &adocReader{
 			files: []*adocFile{{raw: raw, path: path}},
 			attrs: adocDefaults(),
-			inc:   &adocIncludes{read: read, cache: map[string][]string{}, budget: MdMaxBytes},
+			inc:   &adocIncludes{read: read, cache: map[string][]string{}, budget: MaxSourceBytes},
 		},
 		secs:   map[string]adocSection{},
 		titles: map[string]adocSection{},
@@ -1867,7 +1867,8 @@ func jsSpace(r rune) bool {
 	return r >= 0x2000 && r <= 0x200a
 }
 
-// isBinary is git's own test: a NUL byte in the first 8000 bytes.
+// isBinary is git's own test: a NUL byte in the first 8000 bytes. A copy of git.IsBinary,
+// as render imports no other kijk package.
 func isBinary(head []byte) bool {
 	return bytes.IndexByte(head[:min(len(head), 8000)], 0) >= 0
 }

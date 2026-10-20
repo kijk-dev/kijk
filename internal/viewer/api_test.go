@@ -17,7 +17,7 @@ import (
 func TestAsciiDocRoute(t *testing.T) {
 	dir := t.TempDir()
 	gittest.Write(t, filepath.Join(dir, "docs", "Guide.ADOC"), "= Guide\n\nNOTE: Hi.\n")
-	gittest.Write(t, filepath.Join(dir, "big.adoc"), strings.Repeat("x", render.MdMaxBytes+1))
+	gittest.Write(t, filepath.Join(dir, "big.adoc"), strings.Repeat("x", render.MaxSourceBytes+1))
 	get := imageServer(t, dir)
 	w := get("/api/markdown", url.Values{"path": {"docs/Guide.ADOC"}})
 	var res struct{ HTML string }

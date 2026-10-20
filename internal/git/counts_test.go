@@ -92,12 +92,33 @@ func TestCountLines(t *testing.T) {
 	} {
 		p := filepath.Join(dir, name)
 		gittest.Write(t, p, c.content)
-		if got := CountLines(p); got != c.want {
+		if got := countLines(p); got != c.want {
 			t.Errorf("%s: %d lines, want %d", name, got, c.want)
 		}
 	}
-	if got := CountLines(dir); got != 0 {
+	if got := countLines(dir); got != 0 {
 		t.Errorf("a folder counts %d lines", got)
+	}
+}
+
+func TestUncommitted(t *testing.T) {
+	gittest.Isolate(t)
+	dir := gittest.Repo(t)
+	gittest.Write(t, filepath.Join(dir, "a.txt"), "1\n2\n3\n")
+	gittest.Run(t, dir, "add", ".")
+	gittest.Run(t, dir, "commit", "-q", "-m", "one")
+	if b, a, d := Uncommitted(dir); b != "main" || a != 0 || d != 0 {
+		t.Fatalf("clean: %s +%d -%d", b, a, d)
+	}
+	gittest.Write(t, filepath.Join(dir, "a.txt"), "1\nx\n")
+	gittest.Write(t, filepath.Join(dir, "new.txt"), "n\nn\n")
+	gittest.Write(t, filepath.Join(dir, "staged.txt"), "s\n")
+	gittest.Run(t, dir, "add", "staged.txt")
+	if _, a, d := Uncommitted(dir); a != 4 || d != 2 {
+		t.Fatalf("got +%d -%d, want +4 -2", a, d)
+	}
+	if b, a, d := Uncommitted(t.TempDir()); b != "" || a != 0 || d != 0 {
+		t.Fatal("outside git")
 	}
 }
 

@@ -9,9 +9,8 @@ import (
 	"slices"
 	"time"
 
-	"github.com/kijk-dev/kijk/internal/viewer"
-
 	"github.com/kijk-dev/kijk/internal/git"
+	"github.com/kijk-dev/kijk/internal/viewer"
 )
 
 type Row struct {

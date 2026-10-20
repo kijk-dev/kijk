@@ -187,26 +187,7 @@ func TestFolderListUndo(t *testing.T) {
 	}
 }
 
-func TestUncommitted(t *testing.T) {
-	isolatedGit(t)
-	dir := t.TempDir()
-	run(t, dir, "init", "-q", "-b", "main")
-	os.WriteFile(filepath.Join(dir, "a.txt"), []byte("1\n2\n3\n"), 0o644)
-	run(t, dir, "add", ".")
-	run(t, dir, "commit", "-q", "-m", "one")
-	if b, a, d := uncommitted(dir); b != "main" || a != 0 || d != 0 {
-		t.Fatalf("clean: %s +%d -%d", b, a, d)
-	}
-	os.WriteFile(filepath.Join(dir, "a.txt"), []byte("1\nx\n"), 0o644)
-	os.WriteFile(filepath.Join(dir, "new.txt"), []byte("n\nn\n"), 0o644)
-	os.WriteFile(filepath.Join(dir, "staged.txt"), []byte("s\n"), 0o644)
-	run(t, dir, "add", "staged.txt")
-	if _, a, d := uncommitted(dir); a != 4 || d != 2 {
-		t.Fatalf("got +%d -%d, want +4 -2", a, d)
-	}
-	if b, a, d := uncommitted(t.TempDir()); b != "" || a != 0 || d != 0 {
-		t.Fatal("outside git")
-	}
+func TestFolderRowMissing(t *testing.T) {
 	gone := filepath.Join(t.TempDir(), "gone")
 	if r := folderRowOf(savedFolder{Path: gone}); !r.Missing || r.Repo != "gone" {
 		t.Fatalf("missing row %+v", r)

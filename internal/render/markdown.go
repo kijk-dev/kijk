@@ -18,7 +18,7 @@ import (
 	"github.com/yuin/goldmark/util"
 )
 
-const MdMaxBytes = 2 << 20 // bigger markdown files are shown as source only
+const MaxSourceBytes = 2 << 20 // bigger markdown and AsciiDoc files are shown as source only
 
 // HTML inside markdown is dropped and dangerous link schemes are removed: goldmark's defaults
 // without html.WithUnsafe. A rendered file could otherwise run script with kijk's cookie.

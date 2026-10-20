@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -12,7 +13,7 @@ import (
 // MaxFileSize is the largest file kijk reads; a larger file is not shown or counted.
 const MaxFileSize = 50 << 20
 
-type lineCount struct{ Add, Del int }
+type lineCount struct{ add, del int }
 
 // parseNumstat reads `git diff --numstat -z` into counts by path. A rename is keyed by its new
 // path. Binary files show "-", which counts as zero.
@@ -44,8 +45,8 @@ func numstat(root string, args ...string) map[string]lineCount {
 	return parseNumstat(out)
 }
 
-// NumstatOf diffs only the files git status listed, so git does not look at every file on disk.
-func NumstatOf(root string, cs []change, args ...string) map[string]lineCount {
+// numstatOf diffs only the files git status listed, so git does not look at every file on disk.
+func numstatOf(root string, cs []change, args ...string) map[string]lineCount {
 	if len(cs) == 0 {
 		return map[string]lineCount{}
 	}
@@ -64,8 +65,33 @@ func NumstatOf(root string, cs []change, args ...string) map[string]lineCount {
 func setCounts(cs []change, m map[string]lineCount) {
 	for i := range cs {
 		n := m[cs[i].Path]
-		cs[i].Add, cs[i].Del = n.Add, n.Del
+		cs[i].Add, cs[i].Del = n.add, n.del
 	}
+}
+
+// Uncommitted gives the branch and the lines added and removed since the last commit, with one
+// git status and one git diff. Outside git it gives nothing.
+func Uncommitted(root string) (branch string, add, del int) {
+	out, err := Raw(root, "status", "--porcelain=v2", "-z", "--branch", "-uall")
+	if err != nil {
+		return "", 0, 0
+	}
+	var st Status
+	parseStatus(out, &st)
+	branch = st.Branch
+	if branch == "" {
+		branch, _ = Run(root, "rev-parse", "--short", "HEAD")
+	}
+	for _, n := range numstatOf(root, append(st.Staged, st.Changes...), "-M", "HEAD") {
+		add += n.add
+		del += n.del
+	}
+	for _, c := range st.Untracked {
+		if !strings.HasSuffix(c.Path, "/") {
+			add += countLines(filepath.Join(root, filepath.FromSlash(c.Path)))
+		}
+	}
+	return branch, add, del
 }
 
 type lineCacheEntry struct {
@@ -78,9 +104,9 @@ var lineCache = struct {
 	m map[string]lineCacheEntry
 }{m: map[string]lineCacheEntry{}}
 
-// CountLines counts a new file's lines the way git does: a last line without a newline counts.
+// countLines counts a new file's lines the way git does: a last line without a newline counts.
 // Binary files, files over MaxFileSize and folders count zero.
-func CountLines(path string) int {
+func countLines(path string) int {
 	st, err := os.Stat(path)
 	if err != nil || !st.Mode().IsRegular() || st.Size() > MaxFileSize {
 		return 0
@@ -188,8 +214,8 @@ func startTotal(root, target string) func(branch string, untracked []change) *br
 		}
 		t = &branchTotal{Base: base}
 		for _, n := range numstat(root, "-M", fork) {
-			t.Add += n.Add
-			t.Del += n.Del
+			t.Add += n.add
+			t.Del += n.del
 		}
 	}()
 	return func(branch string, untracked []change) *branchTotal {
