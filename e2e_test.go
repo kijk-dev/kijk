@@ -12,9 +12,7 @@ import (
 	"github.com/chromedp/chromedp/kb"
 )
 
-// TestBrowser runs the main journeys through kijk in a real browser, against a real kijk binary
-// with fake agents. The subtests run in order and share one kijk, so a later one starts where the
-// one before it ended.
+// The subtests share one kijk and run in order, so a later one starts where the one before it ended.
 func TestBrowser(t *testing.T) {
 	browser := needBrowser(t)
 	isolatedGit(t)
@@ -41,8 +39,7 @@ func TestBrowser(t *testing.T) {
 
 	t.Run("tree", func(t *testing.T) {
 		p := p.on(t)
-		p.click("the shop row", row("Add the cart"))
-		p.waitFor("the folder name", folderName("shop"))
+		p.selectAgent("Add the cart", "shop")
 		for _, name := range []string{"docs", "src", "README.md", "logo.png", "notes.txt"} {
 			p.waitFor(name+" in the tree", treeItem(name))
 		}
@@ -105,15 +102,15 @@ func TestBrowser(t *testing.T) {
 
 	t.Run("git", func(t *testing.T) {
 		p := p.on(t)
-		p.click("the api row", row("Fix the login bug"))
-		p.waitFor("the folder name", folderName("api"))
+		p.selectAgent("Fix the login bug", "api")
 		p.click("the Git tab", gitTab)
 		p.waitFor("handler.go not staged", inList("Unstaged", "handler.go"))
-		p.click("the box of handler.go", changeRow("handler.go")+`?.querySelector('input')`)
+		box := changeRow("handler.go") + `?.querySelector('input')`
+		p.click("the box of handler.go", box)
 		p.waitFor("handler.go staged", inList("Staged", "handler.go"))
-		p.click("the box of handler.go", changeRow("handler.go")+`?.querySelector('input')`)
+		p.click("the box of handler.go", box)
 		p.waitFor("handler.go not staged again", inList("Unstaged", "handler.go")+" && !"+inList("Staged", "handler.go"))
-		p.click("the box of handler.go", changeRow("handler.go")+`?.querySelector('input')`)
+		p.click("the box of handler.go", box)
 		p.waitFor("handler.go staged again", inList("Staged", "handler.go"))
 		p.click("the commit message", `document.querySelector('#message')`)
 		p.typeText("Check the user name length")
@@ -122,7 +119,7 @@ func TestBrowser(t *testing.T) {
 		p.click("Push", `document.querySelector('#push-btn:not([hidden]):not(:disabled)')`)
 		p.waitFor("nothing left to push", `document.querySelector('#ahead').hidden`)
 		if got, err := git(origin, "log", "-1", "--format=%s", "main"); got != "Check the user name length" {
-			t.Fatalf("the origin's last commit is %q, %v", got, err)
+			p.fail("the origin's last commit is %q, %v", got, err)
 		}
 		p.click("Branch graph", `document.querySelector('#graph .section-toggle')`)
 		p.waitFor("the commit in the graph", byText("#graph .item.commit .name", "Check the user name length"))
@@ -131,8 +128,7 @@ func TestBrowser(t *testing.T) {
 
 	t.Run("find", func(t *testing.T) {
 		p := p.on(t)
-		p.click("the shop row", row("Add the cart"))
-		p.waitFor("the folder name", folderName("shop"))
+		p.selectAgent("Add the cart", "shop")
 		p.press("gotoFile")
 		p.waitFor("the go to file popup", `document.querySelector('dialog.goto')?.open`)
 		p.typeText("main.go")
@@ -176,7 +172,7 @@ func TestBrowser(t *testing.T) {
 			t.Skip("set KIJK_E2E_SHOTS=1 to save the main views in light, dark and a narrow window")
 		}
 		p := p.on(t)
-		dir := e2eOut(t, "")
+		dir := e2eOut(t)
 		views := []struct {
 			name string
 			open func()
@@ -208,6 +204,7 @@ func TestBrowser(t *testing.T) {
 			}
 			p.emulate("light", 1400)
 		}
+		p.noErrors()
 		t.Logf("screenshots in %s", dir)
 	})
 
@@ -215,7 +212,7 @@ func TestBrowser(t *testing.T) {
 		notes := filepath.Join(t.TempDir(), "notes")
 		write(t, filepath.Join(notes, "todo.md"), "# Todo\n")
 		if out := runCmd(t, k.env, exe, "-port", fmt.Sprint(k.port), "-no-open", notes); !strings.Contains(out, "Added notes") {
-			t.Fatalf("kijk <folder> said:\n%s", out)
+			p.on(t).fail("kijk <folder> said:\n%s", out)
 		}
 		f := openPage(t, newTab(t, tab), k, "/?window=folders")
 		f.click("the notes row", row("notes"))
@@ -258,17 +255,14 @@ const (
 	filesTab = `document.querySelector('#tabs button[data-tab=files]')`
 )
 
-// row is JavaScript for the agent or folder row whose label starts with label.
+const agentRows = `[...document.querySelectorAll('#rows li[role=button]')]`
+
 func row(label string) string {
-	return fmt.Sprintf(`[...document.querySelectorAll('#rows li[role=button]')].find(e => e.getAttribute('aria-label').startsWith(%s))`, jsString(label))
+	return fmt.Sprintf(`%s.find(e => e.getAttribute('aria-label').startsWith(%s))`, agentRows, jsString(label))
 }
 
 func rowLabelIs(label string) string {
-	return fmt.Sprintf(`[...document.querySelectorAll('#rows li[role=button]')].some(e => e.getAttribute('aria-label') === %s)`, jsString(label))
-}
-
-func folderName(name string) string {
-	return fmt.Sprintf(`document.querySelector('#folder-name')?.textContent === %s`, jsString(name))
+	return fmt.Sprintf(`%s.some(e => e.getAttribute('aria-label') === %s)`, agentRows, jsString(label))
 }
 
 // activeFile is true when the active tab shows the file name, not a diff of it.
@@ -285,7 +279,6 @@ func diffRow(kind, text string) string {
 	return fmt.Sprintf(`[...document.querySelectorAll('#viewer .ln.%s .tx')].some(e => e.textContent === %s)`, kind, jsString(text))
 }
 
-// changeRow is JavaScript for the row of a changed file in the Git tab.
 func changeRow(name string) string {
 	return fmt.Sprintf(`[...document.querySelectorAll('#changes li.item')].find(e => e.querySelector('.name')?.textContent === %s)`, jsString(name))
 }

@@ -93,12 +93,12 @@ func TestInstallScript(t *testing.T) {
 
 // kijkProcess is a real kijk started from a binary, with its own home folder.
 type kijkProcess struct {
-	cmd    *exec.Cmd
-	env    []string
-	port   int
-	token  string
-	log    string // what kijk wrote to stdout and stderr
-	exited chan struct{}
+	cmd     *exec.Cmd
+	env     []string
+	port    int
+	token   string
+	logFile string // gets kijk's stdout and stderr
+	exited  chan struct{}
 }
 
 func startKijk(t *testing.T, exe string) *kijkProcess {
@@ -112,11 +112,11 @@ func startKijkIn(t *testing.T, exe, home string, env ...string) *kijkProcess {
 	ln, _ := net.Listen("tcp", "127.0.0.1:0")
 	port := ln.Addr().(*net.TCPAddr).Port
 	ln.Close()
-	k := &kijkProcess{port: port, log: filepath.Join(home, "kijk.log"), exited: make(chan struct{}), env: append([]string{
+	k := &kijkProcess{port: port, logFile: filepath.Join(home, "kijk.log"), exited: make(chan struct{}), env: append([]string{
 		"HOME=" + home, "XDG_CONFIG_HOME=" + filepath.Join(home, ".config"), "APPDATA=" + home,
 		"CLAUDE_CONFIG_DIR=" + t.TempDir(), "CODEX_HOME=" + filepath.Join(home, "codex"), "KIJK_NO_UPDATE_CHECK=1", "KIJK_NO_TELEMETRY=1",
 	}, env...)}
-	out, err := os.Create(k.log)
+	out, err := os.Create(k.logFile)
 	if err != nil {
 		t.Fatal(err)
 	}

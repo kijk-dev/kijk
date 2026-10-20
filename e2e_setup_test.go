@@ -23,9 +23,6 @@ import (
 	"github.com/chromedp/chromedp/kb"
 )
 
-// What the browser tests in e2e_test.go share: a headless browser, a page with steps that wait,
-// and the folders the agents work in.
-
 const stepTimeout = 15 * time.Second
 
 // needBrowser skips the test where the browser tests do not run, and gives the browser to drive.
@@ -69,9 +66,9 @@ func e2eBrowser() string {
 
 // e2eOut is a folder that outlives the test, for its screenshots: $KIJK_E2E_OUT, else kijk-e2e in
 // the temp folder, with a folder per test.
-func e2eOut(t *testing.T, sub string) string {
+func e2eOut(t *testing.T) string {
 	dir := filepath.Join(cmp.Or(os.Getenv("KIJK_E2E_OUT"), filepath.Join(os.TempDir(), "kijk-e2e")),
-		strings.ReplaceAll(t.Name(), "/", "-"), sub)
+		strings.ReplaceAll(t.Name(), "/", "-"))
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +135,6 @@ func openPage(t *testing.T, tab context.Context, k *kijkProcess, path string) pa
 	return p
 }
 
-// newTab opens another tab in the browser of tab.
 func newTab(t *testing.T, tab context.Context) context.Context {
 	ctx, cancel := chromedp.NewContext(tab)
 	t.Cleanup(cancel)
@@ -158,6 +154,13 @@ func (p page) act(what string, a chromedp.Action[chromedp.Void]) {
 	if err := chromedp.Do(ctx, a); err != nil {
 		p.fail("%s: %v", what, err)
 	}
+}
+
+// selectAgent shows the folder of the agent whose row label starts with label.
+func (p page) selectAgent(label, folder string) {
+	p.t.Helper()
+	p.click("the "+folder+" row", row(label))
+	p.waitFor("the folder name", fmt.Sprintf(`document.querySelector('#folder-name')?.textContent === %s`, jsString(folder)))
 }
 
 // waitFor waits until the JavaScript expression js is true. what says what the test waits for.
@@ -187,7 +190,6 @@ func evalJS[T any](p page, js string) T {
 	return v
 }
 
-// click clicks the element that the JavaScript expression el gives, once it shows.
 func (p page) click(what, el string) {
 	p.t.Helper()
 	p.act("click "+what, chromedp.Click(chromedp.JSPath(el)))
@@ -250,7 +252,6 @@ func (p page) emulate(scheme string, width int64) {
 		`innerWidth === %d && document.body.classList.contains('rail-collapsed') === matchMedia('(max-width: 900px)').matches`, width))
 }
 
-// screenshot saves the visible page as name.png in dir.
 func (p page) screenshot(dir, name string) {
 	p.t.Helper()
 	ctx, cancel := context.WithTimeout(p.ctx, stepTimeout)
@@ -284,7 +285,7 @@ func (p page) noErrors() {
 // fail saves a screenshot, the page, the console and kijk's log, then stops the test.
 func (p page) fail(format string, args ...any) {
 	p.t.Helper()
-	dir := e2eOut(p.t, "")
+	dir := e2eOut(p.t)
 	ctx, cancel := context.WithTimeout(p.ctx, 10*time.Second)
 	defer cancel()
 	if b, err := chromedp.Run(ctx, chromedp.CaptureScreenshot()); err == nil {
@@ -300,13 +301,12 @@ func (p page) fail(format string, args ...any) {
 	}
 	p.log.mu.Unlock()
 	os.WriteFile(filepath.Join(dir, "console.txt"), []byte(console.String()), 0o644)
-	if b, err := os.ReadFile(p.k.log); err == nil {
+	if b, err := os.ReadFile(p.k.logFile); err == nil {
 		os.WriteFile(filepath.Join(dir, "kijk.log"), b, 0o644)
 	}
 	p.t.Fatalf(format+"\nThe screenshot, page, console and kijk log are in %s", append(args, dir)...)
 }
 
-// jsString quotes s for JavaScript.
 func jsString(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)
@@ -317,7 +317,6 @@ func byText(css, text string) string {
 	return fmt.Sprintf(`[...document.querySelectorAll(%s)].find(e => e.textContent.trim() === %s)`, jsString(css), jsString(text))
 }
 
-// treeItem is JavaScript for the row of the file tree that has the name.
 func treeItem(name string) string {
 	return byText("#files .tree .item", name)
 }
