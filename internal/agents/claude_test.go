@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/kijk-dev/kijk/internal/agentstest"
 )
 
 // The session file of a real run names a process that has ended: it gets this test's pid.
@@ -30,10 +32,7 @@ func init() {
 	}
 }
 
-func sessionJSON(pid int, id, cwd, name, status string, startedAt int64) string {
-	return fmt.Sprintf(`{"pid":%d,"sessionId":%q,"cwd":%q,"name":%q,"status":%q,"startedAt":%d,"futureField":{"x":1}}`,
-		pid, id, cwd, name, status, startedAt)
-}
+var sessionJSON = agentstest.SessionJSON
 
 // claudeEnv is a machine with Claude Code's folder at dir and no Codex.
 func claudeEnv(t *testing.T, dir string) *Env {

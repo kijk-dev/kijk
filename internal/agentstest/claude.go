@@ -12,7 +12,7 @@ import (
 func init() {
 	starters["claude"] = func(t *testing.T, home, cwd, name string) {
 		f := filepath.Join(home, ".claude", "sessions", "1.json")
-		b := fmt.Sprintf(`{"pid":%d,"sessionId":"s1","cwd":%q,"name":%q,"status":"idle","startedAt":%d}`, os.Getpid(), cwd, name, time.Now().UnixMilli())
+		b := SessionJSON(os.Getpid(), "s1", cwd, name, "idle", time.Now().UnixMilli())
 		if err := os.MkdirAll(filepath.Dir(f), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -20,4 +20,10 @@ func init() {
 			t.Fatal(err)
 		}
 	}
+}
+
+// SessionJSON is a Claude Code session file, with a field kijk does not know.
+func SessionJSON(pid int, id, cwd, name, status string, startedAt int64) string {
+	return fmt.Sprintf(`{"pid":%d,"sessionId":%q,"cwd":%q,"name":%q,"status":%q,"startedAt":%d,"futureField":{"x":1}}`,
+		pid, id, cwd, name, status, startedAt)
 }

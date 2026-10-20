@@ -30,11 +30,6 @@ func run(t *testing.T, dir string, args ...string) {
 	gittest.Run(t, dir, args...)
 }
 
-func sessionJSON(pid int, id, cwd, name, status string, startedAt int64) string {
-	return fmt.Sprintf(`{"pid":%d,"sessionId":%q,"cwd":%q,"name":%q,"status":%q,"startedAt":%d,"futureField":{"x":1}}`,
-		pid, id, cwd, name, status, startedAt)
-}
-
 // testEnv is a machine with an empty home folder and only the environment variables in kv.
 func testEnv(t *testing.T, kv ...string) *agents.Env {
 	vars := map[string]string{}
@@ -96,7 +91,7 @@ func TestScan(t *testing.T) {
 	claude := t.TempDir()
 	repo := gitRepo(t)
 	os.MkdirAll(filepath.Join(repo, "src"), 0o755)
-	write(t, filepath.Join(claude, "sessions", "1.json"), sessionJSON(os.Getpid(), "s1", filepath.Join(repo, "src"), "review the code", "busy", time.Now().UnixMilli()))
+	write(t, filepath.Join(claude, "sessions", "1.json"), agentstest.SessionJSON(os.Getpid(), "s1", filepath.Join(repo, "src"), "review the code", "busy", time.Now().UnixMilli()))
 	rows, errs, _ := newScanner(agents.Types, testEnv(t, "CLAUDE_CONFIG_DIR", claude)).scan()
 	if errs != nil {
 		t.Fatal(errs)
@@ -115,7 +110,7 @@ func TestScanClaudeAndCodexInOneFolder(t *testing.T) {
 	claude := t.TempDir()
 	repo := gitRepo(t)
 	write(t, filepath.Join(claude, "sessions", "1.json"),
-		strings.Replace(sessionJSON(os.Getpid(), "s1", repo, "auth-fix", "idle", time.Now().UnixMilli()),
+		strings.Replace(agentstest.SessionJSON(os.Getpid(), "s1", repo, "auth-fix", "idle", time.Now().UnixMilli()),
 			`"futureField"`, fmt.Sprintf(`"statusUpdatedAt":%d,"futureField"`, time.Now().Add(-time.Hour).UnixMilli()), 1))
 	codexHome, f := agentstest.CodexHome(t)
 	f.Set(agentstest.Thread("t1", repo, "active", "name", "fix the login bug"))
@@ -153,7 +148,7 @@ func TestScanFailingTypeHidesOnlyItsAgents(t *testing.T) {
 
 func TestScanBrokenCodexKeepsClaude(t *testing.T) {
 	claude := t.TempDir()
-	write(t, filepath.Join(claude, "sessions", "1.json"), sessionJSON(os.Getpid(), "s1", t.TempDir(), "docs", "idle", time.Now().UnixMilli()))
+	write(t, filepath.Join(claude, "sessions", "1.json"), agentstest.SessionJSON(os.Getpid(), "s1", t.TempDir(), "docs", "idle", time.Now().UnixMilli()))
 	codexHome, f := agentstest.CodexHome(t)
 	f.Reply(func(c *agentstest.Conn, id int, _ string) { c.Send(0x1, []byte("{oops")) })
 	rows, errs, _ := newScanner(agents.Types, testEnv(t, "CLAUDE_CONFIG_DIR", claude, "CODEX_HOME", codexHome)).scan()

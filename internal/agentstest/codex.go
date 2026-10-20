@@ -70,6 +70,7 @@ func ShortTempDir(t *testing.T) string {
 	return dir
 }
 
+// NewFakeCodex is a fake app server on a socket of its own.
 func NewFakeCodex(t *testing.T) *FakeCodex {
 	t.Helper()
 	return NewFakeCodexAt(t, filepath.Join(ShortTempDir(t), "s.sock"))
@@ -157,17 +158,6 @@ func (f *FakeCodex) Reply(reply func(c *Conn, id int, method string)) {
 	f.mu.Lock()
 	f.reply = reply
 	f.mu.Unlock()
-}
-
-// Seen gives the methods of the requests so far.
-func (f *FakeCodex) Seen() []string {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	var methods []string
-	for _, r := range f.reqs {
-		methods = append(methods, r.Method)
-	}
-	return methods
 }
 
 // Take gives the requests so far and forgets them.

@@ -15,6 +15,7 @@ import (
 	"github.com/chromedp/chromedp"
 	"github.com/chromedp/chromedp/kb"
 
+	"github.com/kijk-dev/kijk/internal/agents"
 	"github.com/kijk-dev/kijk/internal/agentstest"
 	"github.com/kijk-dev/kijk/internal/git"
 )
@@ -363,7 +364,7 @@ func TestBrowser(t *testing.T) {
 		e.waitFor("the short notice", agentNotice+`.querySelector('.short').textContent === '2 agent types hidden' && getComputedStyle(`+agentNotice+`.querySelector('.short')).display !== 'none'`)
 		e.emulate("light", 1400)
 
-		write(t, broken, sessionJSON(os.Getpid(), "s-cart", shop, "Add the cart", "idle", time.Now().UnixMilli()))
+		write(t, broken, agentstest.SessionJSON(os.Getpid(), "s-cart", shop, "Add the cart", "idle", time.Now().UnixMilli()))
 		e.waitFor("the Codex notice", noticeSays("Cannot read Codex agents · they are hidden"))
 		e.waitFor("the Claude Code agent", rowLabelIs("Add the cart, Claude Code, shop · main, Idle"))
 		codex.Reply(nil)
@@ -386,19 +387,15 @@ func TestBrowser(t *testing.T) {
 	})
 }
 
-type agentType struct {
-	Name, Label, Icon, Color string
-}
-
 // listAgentTypes gets the list of agent types from kijk, as the page does.
-func listAgentTypes(t *testing.T, k *kijkProcess) []agentType {
+func listAgentTypes(t *testing.T, k *kijkProcess) []agents.AgentType {
 	t.Helper()
 	resp, err := k.request("GET", "/api/agenttypes")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
-	var types []agentType
+	var types []agents.AgentType
 	if err := json.NewDecoder(resp.Body).Decode(&types); err != nil || len(types) == 0 {
 		t.Fatalf("/api/agenttypes: %d %v", resp.StatusCode, err)
 	}

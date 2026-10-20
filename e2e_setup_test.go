@@ -21,6 +21,8 @@ import (
 	"github.com/chromedp/cdproto/emulation"
 	"github.com/chromedp/chromedp"
 	"github.com/chromedp/chromedp/kb"
+
+	"github.com/kijk-dev/kijk/internal/agentstest"
 )
 
 const stepTimeout = 15 * time.Second
@@ -397,7 +399,7 @@ func journeyMachine(t *testing.T) (*fakeMachines, string) {
 
 func claudeAgent(t *testing.T, config, cwd, name, status string) {
 	t.Helper()
-	write(t, filepath.Join(config, "sessions", "1.json"), sessionJSON(os.Getpid(), "s-"+name, cwd, name, status, time.Now().UnixMilli()))
+	write(t, filepath.Join(config, "sessions", "1.json"), agentstest.SessionJSON(os.Getpid(), "s-"+name, cwd, name, status, time.Now().UnixMilli()))
 }
 
 // keepEngines lets the diagram engines that kijk downloads into home outlive the test, so a
