@@ -256,6 +256,26 @@ func TestBrowser(t *testing.T) {
 		r.noErrors()
 	})
 
+	// An agent type that kijk on a remote machine cannot read joins the notice, after the machine's name.
+	t.Run("remote agent error", func(t *testing.T) {
+		m := newFakeMachines(t)
+		vm := m.add("vm", "vm", "")
+		t.Cleanup(func() {
+			os.Remove(filepath.Join("/tmp", fmt.Sprintf("kijk-%d", os.Getuid()), filepath.Base(newSSHClient(vm).ctl)))
+		})
+		publish(t, "0.0.1", exe)
+		write(t, filepath.Join(m.home(vm), ".claude", "sessions", "9.json"), "{broken")
+		home, claude := t.TempDir(), t.TempDir()
+		claudeAgent(t, claude, shop, "Add the cart", "idle")
+		write(t, filepath.Join(home, ".config", "kijk", "machines.json"), fmt.Sprintf(`{"machines":[{"target":%q,"enabled":true}]}`, vm))
+		r := openPage(t, newTab(t, tab), startKijkIn(t, exe, home, "CLAUDE_CONFIG_DIR="+claude), "/")
+		// The first connection installs kijk on the machine.
+		r.waitLong(time.Minute, "the notice", noticeSays("Cannot read Claude Code agents · they are hidden"))
+		r.waitFor("the machine's name before the reason", agentNotice+`.dataset.tip.includes(`+jsString("\n"+vm+": cannot read session file")+`)`)
+		r.waitFor("the local agent", rowLabelIs("Add the cart, Claude Code, shop · main, Idle"))
+		r.noErrors()
+	})
+
 	// Every sample of testdata/filetypes shows the way its entry in /api/filetypes says.
 	t.Run("file types", func(t *testing.T) {
 		samples, err := os.ReadDir(filepath.Join("testdata", "filetypes"))
@@ -339,24 +359,22 @@ func TestBrowser(t *testing.T) {
 		codexHome, codex := agentstest.CodexHome(t)
 		codex.Set(agentstest.Thread("t1", api, "idle", "name", "Fix the login bug"))
 		e := openPage(t, newTab(t, tab), startKijkIn(t, exe, t.TempDir(), "CLAUDE_CONFIG_DIR="+claude, "CODEX_HOME="+codexHome), "/")
-		const notice = `document.querySelector('#statusbar .agent-error')`
-		says := func(text string) string { return notice + `?.querySelector('.long').textContent === ` + jsString(text) }
-		e.waitFor("the Claude Code notice", says("Cannot read Claude Code agents · they are hidden"))
-		e.waitFor("the file that failed on hover", notice+`.dataset.tip.includes('9.json')`)
+		e.waitFor("the Claude Code notice", noticeSays("Cannot read Claude Code agents · they are hidden"))
+		e.waitFor("the file that failed on hover", agentNotice+`.dataset.tip.includes('9.json')`)
 		e.waitFor("the Codex agent", rowLabelIs("Fix the login bug, Codex, api · main, Idle"))
 
 		codex.Reply(func(c *agentstest.Conn, _ int, _ string) { c.Send(0x1, []byte("{oops")) })
-		e.waitFor("one notice naming both types", says("Cannot read Claude Code, Codex agents · they are hidden"))
+		e.waitFor("one notice naming both types", noticeSays("Cannot read Claude Code, Codex agents · they are hidden"))
 		e.waitFor("no agent rows", `!document.querySelector('#rows li[role=button]')`)
 		e.emulate("light", 500)
-		e.waitFor("the short notice", notice+`.querySelector('.short').textContent === '2 agent types hidden' && getComputedStyle(`+notice+`.querySelector('.short')).display !== 'none'`)
+		e.waitFor("the short notice", agentNotice+`.querySelector('.short').textContent === '2 agent types hidden' && getComputedStyle(`+agentNotice+`.querySelector('.short')).display !== 'none'`)
 		e.emulate("light", 1400)
 
 		write(t, broken, sessionJSON(os.Getpid(), "s-cart", shop, "Add the cart", "idle", time.Now().UnixMilli()))
-		e.waitFor("the Codex notice", says("Cannot read Codex agents · they are hidden"))
+		e.waitFor("the Codex notice", noticeSays("Cannot read Codex agents · they are hidden"))
 		e.waitFor("the Claude Code agent", rowLabelIs("Add the cart, Claude Code, shop · main, Idle"))
 		codex.Reply(nil)
-		e.waitFor("the notice gone", "!"+notice)
+		e.waitFor("the notice gone", "!"+agentNotice)
 		e.waitFor("the Codex agent again", row("Fix the login bug"))
 		e.noErrors()
 	})
@@ -453,6 +471,13 @@ const (
 )
 
 const agentRows = `[...document.querySelectorAll('#rows li[role=button]')]`
+
+// agentNotice is the status bar's notice of the agent types kijk cannot read.
+const agentNotice = `document.querySelector('#statusbar .agent-error')`
+
+func noticeSays(text string) string {
+	return agentNotice + `?.querySelector('.long').textContent === ` + jsString(text)
+}
 
 func row(label string) string {
 	return fmt.Sprintf(`%s.find(e => e.getAttribute('aria-label').startsWith(%s))`, agentRows, jsString(label))
