@@ -1367,9 +1367,13 @@ func TestBrowser(t *testing.T) {
 		}
 		commit(retry, retryGo+"\n// backoff grows with each attempt.\n", "Say how backoff grows")
 		push(false)
+		// The first question about what changed fails; the next answer about #477 asks again.
+		b.evalJS(`window.e2eFail = 1; { const f = window.fetch; window.fetch = (u, o) => String(u).includes('/api/pr/since') && window.e2eFail-- > 0 ? Promise.resolve(new Response('git failed', {status: 500})) : f(u, o); }`)
 		b.press("refreshPrs")
 		since := byText("#prs-pr .prmode.since .mode button", "Since your review")
 		all := byText("#prs-pr .prmode.since .mode button", "All changes")
+		b.waitFor("the switch, with no count", since+` && window.e2eFail === 0 && !`+since+`.dataset.tip.includes('new commit')`)
+		b.press("refreshPrs")
 		b.waitFor("the switch after a push", sw+` && `+sw+`.querySelector('.mode').getAttribute('aria-label') === 'Which changes' && `+all+`?.getAttribute('aria-pressed') === 'true' && `+
 			since+`?.getAttribute('aria-pressed') === 'false' && `+since+`.dataset.tip.startsWith('Only what changed since your review\nReviewed ') && `+since+`.dataset.tip.endsWith(' ago · 1 new commit')`)
 
