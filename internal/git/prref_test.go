@@ -104,6 +104,10 @@ func TestFetchPRGitlab(t *testing.T) {
 	if got := rev(t, clone, "refs/kijk/pr/3"); got != head {
 		t.Errorf("refs/kijk/pr/3 = %q, want %q", got, head)
 	}
+	// GitLab's base is never fetched, so a base the repo lacks must not fetch again and again.
+	if fetched, err := FetchPR(clone, "gitlab", 3, head, strings.Repeat("b", 40), ""); err != nil || fetched {
+		t.Errorf("second fetch with an unknown base: %v %v", fetched, err)
+	}
 }
 
 func TestFetchPRMissing(t *testing.T) {
