@@ -111,7 +111,7 @@ export function outdatedBar(key, threads, opts) {
   };
   bar.append(svg(ICON.msg), text, show);
   if (!shown.has(key)) return [bar];
-  return [bar, ...threads.map(t => threadEl({ ...t, resolved: false, outdated: true }, { ...opts, line: t.line || t.origLine }))];
+  return [bar, ...threads.map(t => threadEl({ ...t, outdated: true }, { ...opts, line: t.line || t.origLine }))];
 }
 
 // placeForge puts threads under their rows: by new line, or by old line for a removed one. What
