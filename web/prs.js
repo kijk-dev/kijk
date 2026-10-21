@@ -418,7 +418,8 @@ export function branchHead() {
   const out = { before: [], after: [], note: '' };
   if (maybeList()) out.before.push(backButton());
   if (ownNumber() && hasList()) out.after.push(modeSwitch('local'));
-  if (line?.forge && list?.note) out.note = list.note;
+  // Without a list, the tab says why: the tool is missing or not logged in.
+  if (line?.forge) out.note = list?.note || (!maybeList() ? line.note : '') || '';
   return out;
 }
 
