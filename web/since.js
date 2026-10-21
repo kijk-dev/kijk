@@ -1,7 +1,7 @@
 import { el, get } from './api.js';
 import { loadView, age } from './prdata.js';
 import { plural } from './boxes.js';
-import { reviewOf } from './viewed.js';
+import { reviewOf, moveReview } from './viewed.js';
 import { FORGE } from './pr.js';
 
 // Since your review: what changed in a pull request from the head of your last review to the head
@@ -22,7 +22,7 @@ const key = (root, n) => `${root}\n${n}`;
 export const onSince = fn => listeners.add(fn);
 const tell = (root, n) => { for (const fn of listeners) fn(root, n); };
 
-function ask(root, n, from, at, k) {
+function ask(root, n, from, at, k, forge) {
   if (answers.size > 100) answers.clear();
   const call = get('pr/since', { root, n, from }).catch(async err => {
     if (err.status !== 409 || retried.has(k)) return { error: err.message, files: [] };
@@ -35,6 +35,7 @@ function ask(root, n, from, at, k) {
   call.then(res => {
     if (!res || answers.get(k) !== call) return;
     answers.set(k, res);
+    if (!why(res) && !res.files.length) moveReview(root, n, forge, from, at);
     tell(root, n);
   });
 }
@@ -48,7 +49,7 @@ export function sinceOf(root, n, res) {
     return null;
   }
   const k = `${key(root, n)}\n${r.head}\n${res.at}`;
-  if (!answers.has(k)) ask(root, n, r.head, res.at, k);
+  if (!answers.has(k)) ask(root, n, r.head, res.at, k, res.forge);
   const a = answers.get(k);
   return { on: on.has(key(root, n)), from: r.head, time: r.time, answer: a?.then ? null : a || null };
 }
@@ -61,7 +62,7 @@ export function shown(root, n, res) {
   if (!since?.on) return { files: all, since: null, from: '' };
   const a = since.answer;
   if (!a) return { files: null, since, from: '' };
-  if (why(a)) return { files: all, since, from: '' };
+  if (why(a) || !a.files.length) return { files: all, since, from: '' };
   return { files: a.files, since, from: since.from };
 }
 
