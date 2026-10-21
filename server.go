@@ -36,6 +36,7 @@ func newServer(token string, port int, web fs.FS, h *hub, rts *viewer.Roots, u *
 	mux.HandleFunc("GET /api/ping", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("kijk")) })
 	mux.HandleFunc("GET /api/agenttypes", func(w http.ResponseWriter, r *http.Request) { reply(w, agents.Types) })
 	mux.HandleFunc("GET /api/events", h.serveEvents)
+	mux.HandleFunc("POST /api/count", countUse)
 	if fl != nil {
 		mux.HandleFunc("GET /api/folders", func(w http.ResponseWriter, r *http.Request) {
 			reply(w, foldersReply{Window: h.count(windowFolders) > 0})

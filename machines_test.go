@@ -260,7 +260,8 @@ func TestMachineProxy(t *testing.T) {
 	}
 	remote.mu.Unlock()
 
-	for _, p := range []string{"/m/azvm/api/update", "/m/azvm/api/restart", "/m/nope/api/tree"} {
+	// Copy for agent counts on the local kijk, also for a remote folder.
+	for _, p := range []string{"/m/azvm/api/update", "/m/azvm/api/restart", "/m/azvm/api/count?name=agent-copy", "/m/nope/api/tree"} {
 		if w := do("POST", p, true); w.Code != http.StatusNotFound {
 			t.Errorf("%s: %d", p, w.Code)
 		}
