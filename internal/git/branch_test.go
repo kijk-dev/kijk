@@ -44,7 +44,7 @@ func hunkText(d DiffResult) string {
 	return strings.Join(s, "|")
 }
 
-func TestBranchDiff(t *testing.T) {
+func TestBranchChangesDiff(t *testing.T) {
 	repo := featureRepo(t)
 	gittest.Write(t, filepath.Join(repo, "keep.go"), "one\nTWO\nthree\n")
 	gittest.Run(t, repo, "commit", "-qam", "commit only")
@@ -84,7 +84,7 @@ func TestBranchDiff(t *testing.T) {
 }
 
 // A PR that merges into another branch than main is compared with that branch.
-func TestBranchDiffAgainstTarget(t *testing.T) {
+func TestBranchChangesAgainstTarget(t *testing.T) {
 	repo := featureRepo(t)
 	gittest.Run(t, repo, "checkout", "-qb", "release")
 	gittest.Write(t, filepath.Join(repo, "keep.go"), "one\ntwo\nthree\nrelease\n")
@@ -227,5 +227,16 @@ func TestBranchPathsAreLiteral(t *testing.T) {
 	gittest.Write(t, filepath.Join(repo, "docs", "r.md"), "r.md\nnot pushed\n")
 	if got, err := NotPushed(repo, "docs/[draft].md"); err != nil || fmt.Sprint(got) != "[]" {
 		t.Fatalf("not pushed: %v, %v", got, err)
+	}
+}
+
+func TestTracked(t *testing.T) {
+	gittest.Isolate(t)
+	repo := gittest.Repo(t)
+	gittest.Write(t, filepath.Join(repo, "[a].go"), "a\n")
+	gittest.Write(t, filepath.Join(repo, "a.go"), "a\n")
+	gittest.Run(t, repo, "add", "a.go")
+	if !Tracked(repo, "a.go") || Tracked(repo, "[a].go") {
+		t.Fatalf("a.go %v, [a].go %v", Tracked(repo, "a.go"), Tracked(repo, "[a].go"))
 	}
 }

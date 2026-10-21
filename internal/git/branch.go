@@ -145,7 +145,7 @@ func NotPushed(root, path string) ([][2]int, error) {
 		return nil, err
 	}
 	if len(out) == 0 {
-		if tracked, _ := Run(root, "ls-files", "--", ":(literal)"+path); tracked == "" {
+		if !Tracked(root, path) {
 			return all(), nil
 		}
 	}
@@ -156,4 +156,10 @@ func NotPushed(root, path string) ([][2]int, error) {
 		}
 	}
 	return ranges, nil
+}
+
+// Tracked tells whether git knows the file: it is committed or staged.
+func Tracked(root, path string) bool {
+	out, _ := Run(root, "ls-files", "--", ":(literal)"+path)
+	return out != ""
 }

@@ -60,11 +60,11 @@ func TestBranchRoute(t *testing.T) {
 		t.Fatalf("on main: %d %s", w.Code, w.Body.String())
 	}
 	if w := get("/api/diff", url.Values{"path": {"a.go"}, "mode": {"branch"}}); w.Code != http.StatusNotFound {
-		t.Fatalf("a branch diff on main: %d %s", w.Code, w.Body.String())
+		t.Fatalf("the diff of a file on main in mode branch: %d %s", w.Code, w.Body.String())
 	}
 }
 
-func TestBranchDiffRoute(t *testing.T) {
+func TestBranchChangesDiffRoute(t *testing.T) {
 	repo := branchRepo(t)
 	get := imageServer(t, repo)
 	type reply struct {

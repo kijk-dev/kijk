@@ -2,7 +2,7 @@ import { el, get, post, base, splitKey, storeKey } from './api.js';
 import { showTree, paint, refreshTree, openFolders, selectFile } from './tree.js';
 import { refreshView, jumpChange, showMessage } from './view.js';
 import { setTabs, tabState, openTab, activeTab, recentFiles, closeActive, goPlace } from './tabs.js';
-import { showPR, forgeWords } from './pr.js';
+import { showPR, FORGE } from './pr.js';
 import { setupReview, setBranchFolder, refreshBranch, showBranchPanel, focusBranchList } from './review.js';
 import { marks, showChanges, showGraph, revealHead, reviewKey, ago, lineCount } from './git.js';
 import { openFind, findAgain, openGotoLine, openGotoFile, openRecent } from './find.js';
@@ -417,7 +417,8 @@ const shownTab = () => (sidebar === 'prs' && prsBtn.hidden ? 'git' : sidebar);
 
 // The PRs tab is named for the forge: pull requests on GitHub, merge requests on GitLab.
 function showPrsTab() {
-  const word = { github: 'PRs', gitlab: 'MRs' }[pr?.forge?.kind] || 'Branch';
+  const kind = pr?.forge?.kind;
+  const word = FORGE[kind] ? `${FORGE[kind].short}s` : 'Branch';
   prsBtn.dataset.tip = `${word}\n${keyLabel('prsTab')}`;
   prsBtn.setAttribute('aria-label', word);
 }

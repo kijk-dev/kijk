@@ -24,7 +24,7 @@ func diff(root, path, orig, mode, hash string, context int) (git.DiffResult, err
 		if err != nil || mode != "branch" || len(res.Hunks) > 0 || res.Binary {
 			return res, err
 		}
-		if tracked, _ := git.Run(root, "ls-files", "--", ":(literal)"+path); tracked != "" {
+		if git.Tracked(root, path) {
 			return res, nil
 		}
 	}

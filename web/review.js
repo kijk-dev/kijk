@@ -1,7 +1,7 @@
 import { el, get, storeKey } from './api.js';
 import { line, setView, isCurrent, LINE_HEIGHT } from './view.js';
-import { lineCount, ago } from './git.js';
-import { hostMark, forgeWords } from './pr.js';
+import { lineCount, ago, kind, fileRow } from './git.js';
+import { forgeMark, FORGE } from './pr.js';
 import { onKey, keyLabel, mac } from './keys.js';
 
 // The PRs tab for the folder's own branch: the panel in the sidebar, the Branch changes view, agent
@@ -20,8 +20,6 @@ const ICON = {
   trash: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>',
 };
 
-const KIND = { A: 'added', D: 'deleted', '?': 'untracked', U: 'conflict' };
-const kind = status => KIND[status] || 'modified';
 const num = n => n.toLocaleString('en-US');
 const plural = (n, word) => `${num(n)} ${word}${n === 1 ? '' : 's'}`;
 
@@ -184,8 +182,8 @@ function header() {
   const top = el('div', 'pr-top');
   const f = prStatus?.forge;
   const p = prStatus?.pr || data.pr;
-  const words = forgeWords(f?.kind || 'github');
-  if (f) top.append(hostMark(f.kind));
+  const words = FORGE[f?.kind || 'github'];
+  if (f) top.append(forgeMark(f.kind));
   if (p) {
     const title = el(p.url ? 'a' : 'span', 'pr-title', p.title);
     if (p.url) Object.assign(title, { href: p.url, target: '_blank', rel: 'noopener', title: `Open on ${words.name}` });
@@ -259,22 +257,12 @@ function fileList() {
   const ul = el('ul');
   ul.setAttribute('aria-label', 'Branch changes');
   for (const f of data.files) {
-    const row = el('li', 'item');
+    const row = fileRow(f, () => goTo(f.path));
     row.dataset.path = f.path;
-    row.tabIndex = -1;
-    row.title = f.orig ? `${f.orig} → ${f.path}` : f.path;
-    const slash = f.path.lastIndexOf('/');
-    row.append(
-      el('span', `letter ${kind(f.status)}`, f.status),
-      el('span', `name ${kind(f.status)}`, f.path.slice(slash + 1)),
-      el('span', 'dir', slash > 0 ? f.path.slice(0, slash) : ''),
-    );
-    if (f.notPushed) row.append(dashed(NOT_PUSHED));
+    const counts = row.querySelector('.lc');
+    if (f.notPushed) row.insertBefore(dashed(NOT_PUSHED), counts);
     const n = notesOn(f.path).length;
-    if (n) row.append(noteCount(n));
-    const c = lineCount(f.add, f.del);
-    if (c) row.append(c);
-    row.onclick = () => goTo(f.path);
+    if (n) row.insertBefore(noteCount(n), counts);
     if (f.path === selected) mark(row, true);
     ul.append(row);
   }
@@ -931,7 +919,7 @@ onKey('prevNote', noteKey(-1));
 function prompt(picked) {
   const f = prStatus?.forge;
   const p = prStatus?.pr || data.pr;
-  const words = forgeWords(f?.kind || 'github');
+  const words = FORGE[f?.kind || 'github'];
   const pr = p ? ` (${words.short} ${words.num}${p.number})` : '';
   const out = [`Review notes for branch ${data.branch}${pr}.`, 'Fix each one, then say what you changed.'];
   for (const n of picked) {
