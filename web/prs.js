@@ -7,6 +7,7 @@ import { iconButton } from './boxes.js';
 import { avatar, threadCount } from './threads.js';
 import { goToChange, setupChanges } from './changes.js';
 import { setupOverview } from './overview.js';
+import { setupDrafts } from './drafts.js';
 import { setBranchThreads, redrawBranchPanel, wakeBranch } from './review.js';
 
 // The PRs tab: the list of open pull requests, one pull request opened in the sidebar, the count
@@ -50,6 +51,7 @@ const failed = new Map(); // pull request number: why kijk could not read it
 export function setupPrs(p) {
   page = p;
   setupChanges({ onTop: (n, path) => selectFile(path), openFile: p.openFile });
+  setupDrafts({ announce: p.announce });
   setupOverview({
     branch: () => ({ branch: st?.branch, base: st?.total?.base?.replace(/^origin\//, ''), ahead: st?.ahead, forge: line?.forge?.kind, create: line?.create }),
     own: n => n === ownNumber() && onBranch(),

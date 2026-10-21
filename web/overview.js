@@ -118,7 +118,7 @@ function draw(v, res) {
   parts.push(talk);
   if (res.comments.length) {
     const box = el('div', 'thr conv');
-    box.append(...res.comments.map(comment));
+    box.append(...res.comments.map(c => comment(c)));
     parts.push(box);
   }
   column(v, ...parts);

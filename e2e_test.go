@@ -519,13 +519,13 @@ func TestBrowser(t *testing.T) {
 		// Threads: open under its line, resolved folded to one line, outdated in the bar.
 		const retry = "internal/webhook/retry.go"
 		open := boxRow(retry, "\t\tif !retryable(err) {") + `.nextElementSibling`
-		b.waitFor("the open thread", open+`?.matches('.thr') && `+open+`.querySelector('.thead').textContent === 'Open thread · line 15· 3 comments' && `+open+`.querySelectorAll('.c').length === 3`)
+		b.waitFor("the open thread", open+`?.matches('.thr') && `+open+`.querySelector('.thead').textContent === 'Open thread · line 15· 3 commentsResolve' && `+open+`.querySelectorAll('.c').length === 3`)
 		b.waitFor("its comments as markdown", open+`.querySelector('.c .cbody p')?.textContent === 'Should a 429 count as retryable?'`)
 		resolved := boxRow(retry, "\t\tselect {") + `.nextElementSibling`
 		b.waitFor("the resolved thread folded", resolved+`?.matches('.thr.folded') && `+resolved+`.textContent === 'Resolved · priya: Check ctx before the first sleep? · 2 replies'`)
 		b.click("the resolved thread", resolved)
 		b.waitFor("the resolved thread open", resolved+`?.matches('.thr.resolved') && `+resolved+`.querySelectorAll('.c').length === 3`)
-		b.click("Fold", resolved+`.querySelector('.thead button')`)
+		b.click("Fold", resolved+`.querySelector('.thead button.all')`)
 		b.waitFor("folded again", resolved+`?.matches('.thr.folded')`)
 		b.waitFor("the outdated bar", fileBox(retry)+`.querySelector('.obar')?.textContent.startsWith('2 outdated threads · their lines changed after they were written')`)
 		b.click("retry.go in the list", prsRow("retry.go"))
@@ -701,6 +701,137 @@ func TestBrowser(t *testing.T) {
 			t.Fatalf("a link to a repo kijk has no clone of: %v\n%s", err, out)
 		}
 		f.noErrors()
+	})
+
+	t.Run("reviews", func(t *testing.T) {
+		repo, origin := reviewRepo(t)
+		forge := newFakeForge(t)
+		reviewForge(t, forge, repo, origin, false)
+		theirs := gitOut(t, origin, "rev-parse", "refs/pull/477/head")
+		main := gitOut(t, repo, "rev-parse", "origin/main")
+		const retry = "internal/webhook/retry.go"
+		errAt := lineOf(retryGo, "\tvar err error")
+		// What GitHub holds: a draft written on the website, and after each write what it did.
+		web := ghThread("T7", "README.md", 5, 0, false, false, "", ghDraft("C40", "Say how long it waits too."))
+		answer := func(edit func([]obj) []obj) obj {
+			return pr477(theirs, main, func(ts []obj) []obj { return edit(append(ts, web)) })
+		}
+		same := func(ts []obj) []obj { return ts }
+		mine := func(body string) obj { return ghThread("T8", retry, errAt, 0, false, false, "", ghDraft("C50", body)) }
+		target := func(head, review string) obj {
+			nodes := []obj{}
+			if review != "" {
+				nodes = []obj{{"id": review, "viewerDidAuthor": true}}
+			}
+			return ghData(obj{"repository": obj{"pullRequest": obj{"id": "PR_477", "headRefOid": head, "reviews": obj{"nodes": nodes}}}})
+		}
+		forge.set(t, "gh-pr-477.json", answer(same))
+		forge.set(t, "gh-target.json", target(theirs, ""))
+		forge.set(t, "gh-review.json", ghData(obj{"addPullRequestReview": obj{"pullRequestReview": obj{"id": "PRR_1"}}}))
+		forge.set(t, "gh-thread.json", ghData(obj{"addPullRequestReviewThread": obj{"thread": obj{"id": "T8", "comments": obj{"nodes": []obj{{"id": "C50"}}}}}}))
+		forge.set(t, "gh-reply.json", ghData(obj{"addPullRequestReviewThreadReply": obj{"comment": obj{"id": "C51"}}}))
+		for _, m := range []string{"edit", "delete", "resolve", "unresolve", "submit"} {
+			forge.set(t, "gh-"+m+".json", ghData(obj{}))
+		}
+		claude := t.TempDir()
+		claudeAgent(t, claude, repo, "Fix the login", "idle")
+		k := startKijkIn(t, exe, t.TempDir(), "CLAUDE_CONFIG_DIR="+claude, forge.env())
+		b := openPage(t, newTab(t, tab), k, "/")
+		b.selectAgent("Fix the login", "review")
+		b.waitFor("the PRs tab", prsTab+`.querySelector('.tabcount')?.textContent === '2'`)
+		b.press("prsTab")
+		b.click("#477", prRow(477))
+		open := boxRow(retry, "\t\tif !retryable(err) {") + `?.nextElementSibling`
+		b.waitFor("Resolve and a reply strip on the open thread", open+`?.querySelector('.thead button')?.textContent === 'Resolve' && `+open+`.querySelector('.foot input')?.placeholder === 'Reply…'`)
+
+		// A draft written on the website shows as yours, marked.
+		readme := boxRow("README.md", "Webhooks retry five times.") + `?.nextElementSibling`
+		b.waitFor("the draft from GitHub", readme+`?.matches('.thr.draftonly') && `+readme+`.querySelector('.thead').textContent === 'New comment · line 5' && `+
+			readme+`.querySelector('.c.mine .chip.draft') && `+readme+`.querySelector('.c.mine .who').textContent.includes('· written on GitHub')`)
+		b.waitFor("drafts counted with threads", prsRow("README.md")+`.querySelector('.tc')?.dataset.tip === '1 draft'`)
+
+		// + on a line opens the editor; the comment goes into a new pending review at the head kijk showed.
+		row := boxRow(retry, "\tvar err error")
+		b.hover("a line", row)
+		b.click("+", row+`.querySelector('.addc')`)
+		editor := row + `?.nextElementSibling`
+		b.waitFor("the editor", editor+`?.matches('.thr.draftonly.editing') && `+editor+`.querySelector('.thead').textContent === 'New comment · line 10' && document.activeElement === `+editor+`.querySelector('textarea')`)
+		forge.after(t, "review", "gh-target.json", target(theirs, "PRR_1"))
+		forge.after(t, "thread", "gh-pr-477.json", answer(func(ts []obj) []obj { return append(ts, mine("Name the error.")) }))
+		n := forge.settle()
+		b.typeText("Name the error.")
+		b.press("submitNote")
+		b.waitFor("the draft under its line", editor+`?.matches('.thr.draftonly:not(.editing)') && `+editor+`.querySelector('.cbody')?.textContent.trim() === 'Name the error.' && !`+editor+`.querySelector('.who').textContent.includes('written on')`)
+		calls := strings.Join(forge.calls()[n:], "\n")
+		if !strings.Contains(calls, "-f commit="+theirs+" -f pr=PR_477") || !strings.Contains(calls, "-f body=Name the error. -F line=10 -f path="+retry+" -f review=PRR_1 -f side=RIGHT") {
+			t.Fatalf("the comment's calls:\n%s", calls)
+		}
+
+		// A reply goes into the pending review too.
+		forge.after(t, "reply", "gh-pr-477.json", answer(func(ts []obj) []obj {
+			c := ts[0]["comments"].(obj)
+			c["nodes"] = append(c["nodes"].([]obj), ghDraft("C51", "Cap Retry-After at MaxDelay too."))
+			return append(ts, mine("Name the error."))
+		}))
+		b.click("the reply strip", open+`.querySelector('.foot input')`)
+		b.typeText("Cap Retry-After at MaxDelay too.")
+		b.key("Enter", "\r")
+		forge.waitFor(t, n, "-f review=PRR_1 -f thread=T1")
+		b.waitFor("the reply as a draft", `(c => c?.matches('.c.mine') && c.querySelector('.chip.draft') && c.querySelector('.cbody').textContent.trim() === 'Cap Retry-After at MaxDelay too.')([...`+open+`.querySelectorAll('.c')].at(-1))`)
+		b.waitFor("the strip empty", open+`.querySelector('.foot input').value === ''`)
+
+		// Edit a draft, and delete the one from the website.
+		forge.after(t, "edit", "gh-pr-477.json", answer(func(ts []obj) []obj { return append(ts, mine("Name the error: ev.ID.")) }))
+		b.evalJS(editor + `.scrollIntoView({block: 'center'})`) // not under the sticky file header
+		b.click("Edit", editor+`.querySelector('[aria-label=Edit]')`)
+		b.waitFor("the draft in a text box", `document.activeElement?.matches('.thr textarea') && document.activeElement.value === 'Name the error.'`)
+		b.evalJS(`document.activeElement.select()`)
+		b.typeText("Name the error: ev.ID.")
+		b.press("submitNote")
+		forge.waitFor(t, n, "-f body=Name the error: ev.ID. -f id=C50")
+		b.waitFor("the new text", editor+`?.querySelector('.cbody')?.textContent.trim() === 'Name the error: ev.ID.' && !`+editor+`.querySelector('textarea')`)
+		forge.after(t, "delete", "gh-pr-477.json", pr477(theirs, main, func(ts []obj) []obj { return append(ts, mine("Name the error: ev.ID.")) }))
+		b.evalJS(readme + `.scrollIntoView({block: 'center'})`)
+		b.click("Delete", readme+`.querySelector('[aria-label=Delete]')`)
+		forge.waitFor(t, n, "-f id=C40")
+		b.waitFor("the website's draft gone", `!`+fileBox("README.md")+`.querySelector('.thr')`)
+
+		// Resolve and unresolve happen at once.
+		resolved := func(on bool) obj {
+			return pr477(theirs, main, func(ts []obj) []obj {
+				ts[0]["isResolved"], ts[0]["viewerCanResolve"], ts[0]["viewerCanUnresolve"] = on, !on, on
+				return append(ts, mine("Name the error: ev.ID."))
+			})
+		}
+		forge.after(t, "resolve", "gh-pr-477.json", resolved(true))
+		b.evalJS(open + `.scrollIntoView({block: 'center'})`)
+		b.click("Resolve", open+`.querySelector('.thead button')`)
+		forge.waitFor(t, n, "resolveReviewThread(input: {threadId: $thread}) { thread { id } } } -f thread=T1")
+		b.waitFor("the thread folded", open+`?.matches('.thr.folded') && `+open+`.textContent === 'Resolved · tim: Should a 429 count as retryable? · 2 replies'`)
+		b.click("the resolved thread", open)
+		forge.after(t, "unresolve", "gh-pr-477.json", resolved(false))
+		b.click("Unresolve", byText("#viewer .thr.resolved .thead button", "Unresolve"))
+		forge.waitFor(t, n, "unresolveReviewThread(")
+		b.waitFor("the thread open again", open+`?.matches('.thr:not(.resolved):not(.folded)') && `+open+`.querySelector('.thead button')?.textContent === 'Resolve'`)
+
+		// Someone pushed since kijk showed the diff: kijk writes nothing and keeps the text.
+		forge.set(t, "gh-target.json", target("ffffffffffffffffffffffffffffffffffffffff", "PRR_1"))
+		other := boxRow(retry, "\treturn err")
+		b.hover("another line", other)
+		b.click("+", other+`.querySelector('.addc')`)
+		b.waitFor("the editor", `document.activeElement?.matches('.thr.editing textarea')`)
+		b.typeText("Wrap it.")
+		before := len(forge.calls())
+		b.press("submitNote")
+		b.waitFor("the reason", `document.querySelector('.thr.editing .error')?.textContent === '#477 has new commits. kijk shows them now; add your comment there.' && document.querySelector('.thr.editing textarea').value === 'Wrap it.'`)
+		if strings.Contains(strings.Join(forge.calls()[before:], "\n"), "addPullRequestReviewThread(") {
+			t.Fatal("kijk wrote a comment on a head it did not show")
+		}
+		b.key("Escape", kb.Escape)
+		b.waitFor("the editor closed", `!document.querySelector('.thr.editing')`)
+		forge.set(t, "gh-target.json", target(theirs, "PRR_1"))
+		shots(b, "prs-drafts")
+		b.noErrors()
 	})
 
 	t.Run("shots", func(t *testing.T) {
