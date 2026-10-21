@@ -220,3 +220,38 @@ func TestPRLogRoute(t *testing.T) {
 		t.Errorf("bad job id: %d %s", w.Code, w.Body.String())
 	}
 }
+
+// A file at a pull request's head includes files as they are at that head, not on disk.
+func TestPRFileIncludes(t *testing.T) {
+	gittest.Isolate(t)
+	bare := filepath.Join(t.TempDir(), "docs.git")
+	gittest.Run(t, t.TempDir(), "init", "-q", "--bare", "-b", "main", bare)
+	work := gittest.Repo(t)
+	gittest.Write(t, filepath.Join(work, "guide.adoc"), "= Guide\n\ninclude::part.adoc[]\n")
+	gittest.Write(t, filepath.Join(work, "part.adoc"), "On main.\n")
+	gittest.Run(t, work, "add", ".")
+	gittest.Run(t, work, "commit", "-qm", "Start")
+	gittest.Run(t, work, "remote", "add", "origin", bare)
+	gittest.Run(t, work, "push", "-q", "origin", "main")
+	gittest.Run(t, work, "checkout", "-qb", "docs")
+	gittest.Write(t, filepath.Join(work, "part.adoc"), "In the pull request.\n")
+	gittest.Run(t, work, "commit", "-qam", "Docs")
+	gittest.Run(t, work, "push", "-q", "origin", "docs:refs/pull/7/head")
+	clone := filepath.Join(t.TempDir(), "docs")
+	gittest.Run(t, t.TempDir(), "clone", "-q", bare, clone)
+	gittest.Run(t, clone, "remote", "set-url", "origin", "https://github.com/acme/docs.git")
+	gittest.Run(t, clone, "config", "url."+bare+".insteadOf", "https://github.com/acme/docs.git")
+	fakeGh(t, listAnswer, prAnswer("OPEN", revParse(t, work, "docs"), revParse(t, work, "main")), "")
+	get := prServer(t, clone)
+	if w := get("/api/pr/view", url.Values{"n": {"7"}}); w.Code != 200 {
+		t.Fatalf("view %d %s", w.Code, w.Body.String())
+	}
+	w := get("/api/markdown", url.Values{"path": {"guide.adoc"}, "pr": {"7"}})
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "In the pull request.") || strings.Contains(w.Body.String(), "On main.") {
+		t.Errorf("markdown %d %s", w.Code, w.Body.String())
+	}
+	// PlantUML reads its includes through /api/text, which takes pr too.
+	if w := get("/api/text", url.Values{"path": {"part.adoc"}, "pr": {"7"}}); !strings.Contains(w.Body.String(), "In the pull request.") {
+		t.Errorf("text %d %s", w.Code, w.Body.String())
+	}
+}
