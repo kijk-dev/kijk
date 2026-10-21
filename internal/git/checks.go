@@ -308,7 +308,8 @@ func jobState(status string) string {
 var (
 	jobPathRe   = regexp.MustCompile(`^/([A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)+)/-/jobs/([0-9]+)$`)
 	jobIDRe     = regexp.MustCompile(`^[0-9]{1,20}$`)
-	timestampRe = regexp.MustCompile(`^\d{4}-\d\d-\d\dT[\d:.]+Z `)
+	// GitHub starts a log line with its time; a newer GitLab runner adds the stream, as "00O+".
+	timestampRe = regexp.MustCompile(`^\d{4}-\d\d-\d\dT[\d:.]+Z (\d\d[OE]\+? ?)?`)
 	ansiRe      = regexp.MustCompile(`\x1b\[[0-9;]*[A-Za-z]|section_(start|end):\d+:[^\r\n]*\r?`)
 )
 
@@ -337,7 +338,15 @@ func JobLog(root, id string) ([]string, error) {
 		}
 		endpoint = "projects/" + url.PathEscape(m[1]) + "/jobs/" + m[2] + "/trace"
 	}
-	out, err := runTool(tool, "api", "--hostname", f.Host, endpoint)
+	args := []string{"api", "--hostname", f.Host, endpoint}
+	if tool == "gh" {
+		// A log holds color codes, which gh prints only when asked to; they are cut off below.
+		args = []string{"api", "--hostname", f.Host, "--allow-escape-sequences", endpoint}
+	}
+	out, err := runTool(tool, args...)
+	if err != nil && tool == "gh" && strings.Contains(err.Error(), "unknown flag") {
+		out, err = runTool(tool, "api", "--hostname", f.Host, endpoint) // a gh from before the flag
+	}
 	if err != nil {
 		return nil, errors.New(toolNote(tool, err))
 	}
