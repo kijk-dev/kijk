@@ -7,7 +7,10 @@ import { FORGE } from './pr.js';
 // Since your review: what changed in a pull request from the head of your last review to the head
 // now. The switch is kept per window and pull request, and starts at All changes.
 
-export const REBASED = 'Rebased or force-pushed since your review. All changes show.';
+const REBASED = 'Rebased or force-pushed since your review. All changes show.';
+const MISSING = 'kijk does not have the commit of your last review in this clone. All changes show.';
+// why is the note when kijk cannot show what changed since, and all changes show.
+const why = a => (a.rebased ? REBASED : a.missing ? MISSING : a.error || '');
 
 const on = new Set(); // root and number of the pull requests switched to Since your review
 const answers = new Map(); // root, number, reviewed head and head: the answer, or the call asking
@@ -58,7 +61,7 @@ export function shown(root, n, res) {
   if (!since?.on) return { files: all, since: null, from: '' };
   const a = since.answer;
   if (!a) return { files: null, since, from: '' };
-  if (a.rebased || a.error) return { files: all, since, from: '' };
+  if (why(a)) return { files: all, since, from: '' };
   return { files: a.files, since, from: since.from };
 }
 
@@ -79,7 +82,7 @@ export function sinceParts(root, n, res, pick) {
   group.setAttribute('aria-label', 'Which changes');
   const a = s.answer;
   const ago = age(new Date(s.time || 0).toISOString());
-  const count = a && !a.rebased && !a.error ? ` · ${plural(a.commits, 'new commit')}` : '';
+  const count = a && !why(a) ? ` · ${plural(a.commits, 'new commit')}` : '';
   const kind = (FORGE[res.forge?.kind] || FORGE.github).kind;
   for (const [yes, text, tip] of [[false, 'All changes', `All changes\nEvery file of the ${kind}`], [true, 'Since your review', `Only what changed since your review\nReviewed ${ago} ago${count}`]]) {
     const b = el('button', null, text);
@@ -92,15 +95,15 @@ export function sinceParts(root, n, res, pick) {
     group.append(b);
   }
   wrap.append(group);
-  const why = s.on && a && (a.rebased ? REBASED : a.error);
-  return why ? [wrap, el('p', 'since-note', why)] : [wrap];
+  const note = s.on && a && why(a);
+  return note ? [wrap, el('p', 'since-note', note)] : [wrap];
 }
 
 // sinceBar is the bar at the top of Changes in Since your review.
 export function sinceBar(root, n, s, files) {
   const a = s.answer;
-  const bar = el('div', `sincebar${a.rebased || a.error ? ' all' : ''}`);
-  const text = a.rebased ? REBASED : a.error || `Since your review · ${plural(a.commits, 'commit')} · ${plural(files.length, 'file')}`;
+  const bar = el('div', `sincebar${why(a) ? ' all' : ''}`);
+  const text = why(a) || `Since your review · ${plural(a.commits, 'commit')} · ${plural(files.length, 'file')}`;
   const back = el('button', 'tool', 'Show all changes');
   back.onclick = () => setSince(root, n, false);
   bar.append(el('span', null, text), back);

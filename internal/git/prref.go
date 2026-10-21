@@ -106,20 +106,21 @@ type Since struct {
 	Files   []change `json:"files"`
 	Commits int      `json:"commits"`
 	Rebased bool     `json:"rebased,omitempty"` // the reviewed head is not in the history now
+	Missing bool     `json:"missing,omitempty"` // this repo does not have the reviewed head
 }
 
 // PRSince lists the files that changed from the reviewed head from to head, limited to files the
 // pull request changes at either head, so a merge of the target does not bring the target's files.
 func PRSince(root, split, from, head string) (Since, error) {
 	s := Since{Files: []change{}}
-	if !ValidHash(split) || !ValidHash(from) || !ValidHash(head) {
+	if !ValidHash(split) || !FullHash(from) || !ValidHash(head) {
 		return s, ErrBadHash
 	}
 	if from == head {
 		return s, nil
 	}
 	if !hasCommit(root, from) {
-		s.Rebased = true
+		s.Missing = true // as when it was reviewed in another clone
 		return s, nil
 	}
 	if _, err := Run(root, "merge-base", "--is-ancestor", from, head); err != nil {

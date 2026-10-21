@@ -388,6 +388,10 @@ func (a *api) diff(w http.ResponseWriter, r *http.Request) {
 		}
 		hash = r[0] + ".." + r[1]
 		if from := q.Get("from"); from != "" {
+			if !git.FullHash(from) {
+				fail(w, git.ErrBadHash)
+				return
+			}
 			hash = from + ".." + r[1] // since the head of your last review
 		}
 	}

@@ -293,6 +293,7 @@ func TestPRSinceRoute(t *testing.T) {
 		From, At string
 		Commits  int
 		Rebased  bool
+		Missing  bool
 		Files    []struct {
 			Path     string
 			Add, Del int
@@ -314,10 +315,10 @@ func TestPRSinceRoute(t *testing.T) {
 	if s, code := ask(head); code != 200 || s.Commits != 0 || len(s.Files) != 0 || s.Rebased {
 		t.Errorf("since the head: %d %+v", code, s)
 	}
-	if s, code := ask(strings.Repeat("ab", 20)); code != 200 || !s.Rebased || len(s.Files) != 0 {
+	if s, code := ask(strings.Repeat("ab", 20)); code != 200 || !s.Missing || s.Rebased || len(s.Files) != 0 {
 		t.Errorf("a commit kijk does not have: %d %+v", code, s)
 	}
-	for _, bad := range []string{"", "HEAD", "main"} {
+	for _, bad := range []string{"", "HEAD", "main", "abcd", base[:12]} {
 		if _, code := ask(bad); code != http.StatusBadRequest {
 			t.Errorf("from %q: %d", bad, code)
 		}
@@ -332,7 +333,9 @@ func TestPRSinceRoute(t *testing.T) {
 	if w := diff(base); w.Code != 200 || !strings.Contains(w.Body.String(), `{"k":"+","n":4,"t":"\tfor i := 0; i `) {
 		t.Errorf("diff since the base: %d %s", w.Code, w.Body.String())
 	}
-	if w := diff("HEAD"); w.Code != http.StatusBadRequest {
-		t.Errorf("diff from HEAD: %d %s", w.Code, w.Body.String())
+	for _, bad := range []string{"HEAD", "abcd", base[:12]} {
+		if w := diff(bad); w.Code != http.StatusBadRequest {
+			t.Errorf("diff from %q: %d %s", bad, w.Code, w.Body.String())
+		}
 	}
 }

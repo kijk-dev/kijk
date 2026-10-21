@@ -1414,6 +1414,13 @@ func TestBrowser(t *testing.T) {
 		b.hover("the status bar", `document.querySelector('#statusbar')`) // no tooltip in the shot
 		shots(b, "since-rebased")
 
+		// A head reviewed in another clone may not be in this one: that is not a force push.
+		b.evalJS(`for (const k of Object.keys(localStorage)) if (k.startsWith('kijk.viewed:') && k.endsWith(':477')) localStorage.setItem(k, JSON.stringify({...JSON.parse(localStorage.getItem(k)), review: {head: 'ab'.repeat(20), time: Date.now()}}))`)
+		b.act("reload", chromedp.Reload())
+		b.click("Since your review", since)
+		const missing = "kijk does not have the commit of your last review in this clone. All changes show."
+		b.waitFor("all changes, with why", bar+`?.firstChild.textContent === `+jsString(missing)+` && document.querySelector('#prs-pr .since-note')?.textContent === `+jsString(missing)+` && `+boxes+` === `+jsString(ci+" "+readme+" "+retry))
+
 		// Local mode on your own branch has no switch.
 		b.click("back", `document.querySelector('#prs-pr .back')`)
 		b.click("this branch", prRow(482))
