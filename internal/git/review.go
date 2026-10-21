@@ -166,9 +166,8 @@ func Resolve(root string, n int, thread string, resolved bool) error {
 // Verdicts are the verdicts of a review, by the names the page sends.
 var Verdicts = map[string]string{"comment": "COMMENT", "approve": "APPROVE", "changes": "REQUEST_CHANGES"}
 
-// SubmitReview sends your review: every draft, the verdict and the summary. head is the head kijk
-// showed, for a review that has no drafts yet. On GitLab the summary goes as a draft first; its id
-// tells the page the summary is on the forge, also when a later step failed.
+// SubmitReview sends every draft, the verdict and the summary, for head, the head kijk showed. On
+// GitLab it gives the summary's draft id: the summary is on the forge, also when a later step failed.
 func SubmitReview(root string, n int, head, verdict, body string) (summary string, err error) {
 	if Verdicts[verdict] == "" {
 		return "", badInput("unknown verdict " + verdict)
