@@ -483,14 +483,15 @@ function prepare(frag, file, md, doc) {
     pre.removeAttribute('class');
     pre.replaceWith(box);
     box.append(pre);
-    file.diagrams.push({ box, pre, type, text: pre.textContent, root: file.root, path: file.path, openedAt: file.versions.at });
+    file.diagrams.push({ box, pre, type, text: pre.textContent, root: file.root, path: file.path, pr: file.pr, openedAt: file.versions.at });
   }
   for (const img of frag.querySelectorAll('img')) {
     const src = img.getAttribute('src') || '';
     if (external(src)) continue;
     const box = el('span', 'md-img', `Image: ${img.getAttribute('alt') || src}`);
     const path = inFolder(src, file);
-    if (path == null || typeOf(path).show !== 'image') {
+    // The image routes serve files on disk only, which a pull request's version may not match.
+    if (path == null || typeOf(path).show !== 'image' || file.pr) {
       img.replaceWith(box);
       continue;
     }
@@ -806,11 +807,11 @@ async function textKey(text) {
 const themeOf = type => (type.dark && darkTheme.matches ? 'dark' : 'light');
 
 // drawContext is everything any engine needs to draw; each engine uses its part.
-function drawContext({ type, root, path }) {
+function drawContext({ type, root, path, pr }) {
   const place = splitKey(root);
   return {
     theme: themeOf(type), vars: themeVars(),
-    base: base(place.machine), root: place.root, path, // includes are read through the folder's machine
+    base: base(place.machine), root: place.root, path, pr, // includes are read through the folder's machine
     maxBytes: type.maxBytes, maxChars: type.maxChars,
   };
 }
@@ -820,7 +821,7 @@ function drawContext({ type, root, path }) {
 // time: the includes may change unseen.
 function drawDiagram(diagram, keyText) {
   const { type, root, path, openedAt } = diagram;
-  const at = type.engine.includes ? `${root}\n${path}\n${openedAt}` : '';
+  const at = type.engine.includes ? `${root}\n${path}\n${diagram.pr || ''}\n${openedAt}` : '';
   const key = `${type.name}\n${at}\n${themeOf(type)}\n${keyText}`;
   let entry = drawn.get(key);
   if (entry) {

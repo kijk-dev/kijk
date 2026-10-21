@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 
 	"github.com/kijk-dev/kijk/internal/git"
@@ -236,7 +237,12 @@ func (a *api) markdown(w http.ResponseWriter, r *http.Request) {
 		reply(w, rendered{HTML: render.DiagramFile(src, t.Name)})
 		return
 	}
-	html, includes, err := t.Render(src, rel, func(inc string) ([]byte, error) { return readIncluded(root, inc) })
+	read := func(inc string) ([]byte, error) { return readIncluded(root, inc) }
+	if pr := r.URL.Query().Get("pr"); pr != "" {
+		n, _ := strconv.Atoi(pr) // target checked it
+		read = func(inc string) ([]byte, error) { return a.readAtPR(root, n, inc) }
+	}
+	html, includes, err := t.Render(src, rel, read)
 	if err != nil {
 		fail(w, err)
 		return
@@ -247,6 +253,15 @@ func (a *api) markdown(w http.ResponseWriter, r *http.Request) {
 type rendered struct {
 	HTML     string   `json:"html"`
 	Includes []string `json:"includes,omitempty"` // the files it shows in place, so it redraws when one changes
+}
+
+// readAtPR reads a file an AsciiDoc file at a pull request's head includes, at that head.
+func (a *api) readAtPR(root string, n int, rel string) ([]byte, error) {
+	p, err := git.PRFile(root, n, rel, a.prFiles())
+	if err != nil {
+		return nil, err
+	}
+	return readIncluded(filepath.Dir(p), filepath.Base(p))
 }
 
 // readIncluded reads a file an AsciiDoc file includes, by the same path rule as every route.
