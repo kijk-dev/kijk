@@ -543,7 +543,15 @@ func TestBrowser(t *testing.T) {
 		b.waitFor("retry.go at #477", `(t => t?.firstChild.textContent === 'retry.go' && t.querySelector('.muted')?.textContent === '#477')(document.querySelector('#filetabs .filetab.active')) && `+viewHas("func (s *Sender) deliver(ctx context.Context, ev Event) error {"))
 
 		// The Overview: who wants what, reviewers, the description, checks as a graph, the conversation.
+		// The log cannot be read at first, as while its run still goes; a refresh reads it.
+		logFile := filepath.Join(forge.dir, "gh-log-303.txt")
+		if err := os.Rename(logFile, logFile+".later"); err != nil {
+			t.Fatal(err)
+		}
 		b.click("Overview", prsRow("Overview"))
+		b.waitFor("the log not read yet", `document.querySelector('.md.ov .joblog pre')?.textContent.startsWith('gh: no answer for')`)
+		os.Rename(logFile+".later", logFile)
+		b.press("refreshPrs")
 		b.waitFor("the Overview tab", `(t => t?.firstChild.textContent === 'Overview' && t.querySelector('.muted')?.textContent === '#477')(document.querySelector('#filetabs .filetab.active'))`)
 		b.waitFor("title and meta", `document.querySelector('.md.ov h1')?.textContent === 'Retry webhook delivery with backoff #477' && document.querySelector('.md.ov .meta').textContent.includes('sanne wants to merge') && document.querySelector('.md.ov .meta').textContent.includes('· 2 commits')`)
 		b.waitFor("the reviewers", `[...document.querySelectorAll('.md.ov .person')].map(p => p.textContent + ':' + p.dataset.tip.split('\n')[1]).join('|') === 'Ppriya:Approved|Ttim:Commented|Yyou:Review requested'`)

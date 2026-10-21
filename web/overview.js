@@ -61,6 +61,8 @@ export async function openOverview(viewer, root, tab) {
 }
 
 onView((root, n, res) => {
+  // A log that could not be read, as while its run still went, is asked for again.
+  for (const [id, l] of logs) if (l.error) logs.delete(id);
   if (view && isCurrent(view) && view.root === root && view.n === n) draw(view, res);
 });
 
