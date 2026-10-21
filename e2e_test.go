@@ -851,6 +851,20 @@ func TestBrowser(t *testing.T) {
 		forge.waitFor(t, before, "-f body=Wrap it. -F line=26 -f path="+retry)
 		b.waitFor("the editor closed", `!document.querySelector('.thr.editing')`)
 		forge.set(t, "gh-target.json", target(theirs, "PRR_1"))
+
+		// Escape closes a new comment, and + on the same line gives its text back.
+		half := boxRow(retry, "\t\t\treturn ctx.Err()")
+		b.evalJS(half + `.scrollIntoView({block: 'center'})`)
+		b.hover("a line", half)
+		b.click("+", half+`.querySelector('.addc')`)
+		b.waitFor("the editor", `document.activeElement?.matches('.thr.editing textarea')`)
+		b.typeText("Half a thought")
+		b.key("Escape", kb.Escape)
+		b.waitFor("the editor closed", `!document.querySelector('.thr.editing')`)
+		b.hover("the line again", half)
+		b.click("+", half+`.querySelector('.addc')`)
+		b.waitFor("the text back", `document.activeElement?.matches('.thr.editing textarea') && document.activeElement.value === 'Half a thought'`)
+		b.key("Escape", kb.Escape)
 		shots(b, "prs-drafts")
 
 		// The review box counts every draft, also the one from the website.

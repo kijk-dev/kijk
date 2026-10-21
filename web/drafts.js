@@ -122,10 +122,14 @@ function textBox(label, text, okText, ok, cancel) {
   return wrap;
 }
 
+// unsent keeps the text of a new comment closed with Escape, by file and line, until it is added.
+const unsent = new Map();
+
 // lineEditor is the box under row l of file f where a new comment is written. done() closes it.
 // The editor knows the head its row is of; move(row, at) puts it on a row of another head.
 export function lineEditor(root, n, res, f, l, done) {
   const ed = { text: l.t };
+  const kept = () => `${root}\n${n}\n${f.path}\n${ed.key}`;
   const box = el('div', 'thr draftonly editing');
   const head = el('div', 'thead');
   const title = el('span');
@@ -137,9 +141,15 @@ export function lineEditor(root, n, res, f, l, done) {
     if (!ed.row) throw new Error('This line is not in the diff now. Copy your text and add it on another line.');
     const r = ed.row;
     await addComment(root, n, ed.at, { path: f.path, orig: f.orig || '', line: ed.line, old: ed.old, oldLine: r.k === ' ' ? r.o : 0, body });
+    unsent.delete(kept());
     hooks.announce?.(`Comment added to your review on line ${ed.line}`);
     done();
-  }, done);
+  }, () => {
+    const left = text.querySelector('textarea').value;
+    if (left.trim()) unsent.set(kept(), left);
+    else unsent.delete(kept());
+    done();
+  });
   c.append(who, text);
   box.append(head, c);
   ed.el = box;
@@ -154,6 +164,7 @@ export function lineEditor(root, n, res, f, l, done) {
     text.querySelector('textarea').setAttribute('aria-label', `Comment on line ${ed.line}`);
   };
   ed.move(l, res.at);
+  text.querySelector('textarea').value = unsent.get(kept()) || '';
   text.focus();
   return ed;
 }
