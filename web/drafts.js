@@ -414,9 +414,15 @@ export function reviewBox(root, n, res) {
       }));
       why.textContent = r.write.why || '';
       why.hidden = !r.write.why;
-      // A new summary from the forge shows, unless the box holds text of its own not saved yet.
+      // A new summary from the forge shows. Text of the box's own not saved yet stays after it, so
+      // Submit, which saves it first, cannot drop what was added in the Overview or on the website.
       const forge = r.summary || '';
-      if (forge !== known && (area.value.trim() === known.trim() || area.value.trim() === forge.trim())) area.value = forge;
+      const mine = area.value;
+      if (forge !== known) {
+        if (mine.trim() === known.trim() || mine.trim() === forge.trim()) area.value = forge;
+        else if (known && mine.startsWith(known)) area.value = forge + mine.slice(known.length);
+        else if (forge.trim()) area.value = `${forge}\n\n${mine}`;
+      }
       known = forge;
       saved.hidden = !dirty();
       submit.disabled = nothing(root, n, r) && !area.value.trim();

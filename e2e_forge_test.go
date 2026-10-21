@@ -69,6 +69,7 @@ case "$*" in
 *" version") f="glab-version-$host.json" ;;
 */draft_notes/bulk_publish*) m=publish ;;
 *"--method POST "*/approve) m=approve ;;
+*"--method PUT "*/draft_notes/*) m=put ;;
 *"--method POST "*/draft_notes*) m=draft ;;
 */draft_notes) f=glab-drafts.json ;;
 esac
