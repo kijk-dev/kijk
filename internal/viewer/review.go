@@ -103,7 +103,10 @@ func (a *api) prResolve(req writeRequest) (any, error) {
 
 // prSummary sets the summary of your review on the forge.
 func (a *api) prSummary(req writeRequest) (any, error) {
-	r, _ := a.ranges.get(req.Root, req.N)
+	r, ok := a.ranges.get(req.Root, req.N)
+	if !ok {
+		return nil, errNotShown // a new pending review would start on a head not on screen
+	}
 	return struct{}{}, git.SetSummary(req.Root, req.N, r[1], req.Body)
 }
 

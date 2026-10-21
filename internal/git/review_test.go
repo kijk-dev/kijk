@@ -153,6 +153,18 @@ func TestGithubSubmit(t *testing.T) {
 		t.Fatalf("calls %q", c)
 	}
 
+	// GitHub records a submitted review on its own commit: a verdict through a pending review on
+	// another commit than the one on screen is refused.
+	calls = gittest.FakeToolCalls(t, "gh", submit, ghTargetAt("bbb", "PRR_9", "old", ""))
+	err := SubmitReview(repo, 7, "bbb", "approve")
+	if err == nil || err.Error() != "Your pending review on #7 is on an older commit. Post it first, or finish it on GitHub." || len(calls()) != 1 {
+		t.Fatalf("approve through an old review: %v, calls %q", err, calls())
+	}
+	calls = gittest.FakeToolCalls(t, "gh", submit, ghTargetAt("bbb", "PRR_9", "old", ""))
+	if err := SubmitReview(repo, 7, "bbb", "comment"); err != nil || len(calls()) != 2 {
+		t.Fatalf("comment through an old review: %v", err)
+	}
+
 	calls = gittest.FakeToolCalls(t, "gh", submit, ghTarget("aaa", "PRR_9"))
 	if err := SubmitReview(repo, 7, "aaa", "comment"); err != nil {
 		t.Fatal(err)
@@ -182,7 +194,12 @@ func TestGithubSummary(t *testing.T) {
 	repo := forgeRepo(t, "git@github.com:acme/shop.git")
 	add := gittest.Rule{Has: "addPullRequestReview(input", Out: `{"data":{"addPullRequestReview":{"pullRequestReview":{"id":"PRR_new"}}}}`}
 	update := gittest.Rule{Has: "updatePullRequestReview(input", Out: `{"data":{"updatePullRequestReview":{"pullRequestReview":{"id":"PRR_9"}}}}`}
+	// A new pending review starts at the head on screen, so it is refused when that moved.
 	calls := gittest.FakeToolCalls(t, "gh", add, update, ghTarget("bbb", ""))
+	if err := SetSummary(repo, 7, "aaa", "Looks good."); !errors.Is(err, ErrHeadMoved) || len(calls()) != 1 {
+		t.Fatalf("head moved: %v, calls %q", err, calls())
+	}
+	calls = gittest.FakeToolCalls(t, "gh", add, update, ghTarget("aaa", ""))
 	if err := SetSummary(repo, 7, "aaa", "Looks good."); err != nil {
 		t.Fatal(err)
 	}

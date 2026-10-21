@@ -310,8 +310,8 @@ function setReview(root, n, patch) {
 }
 
 // saveSummary sets the summary on the forge: GitHub's pending review body, GitLab's draft note.
-async function saveSummary(root, n, body) {
-  await post('pr/summary', { root, n, body });
+async function saveSummary(root, n, at, body) {
+  await shown(root, n, at, 'pr/summary', { body });
   await loadView(root, n).catch(() => {});
   hooks.announce?.('Summary saved');
 }
@@ -382,7 +382,7 @@ export function reviewBox(root, n, res) {
     const save = async () => {
       error.textContent = '';
       try {
-        await saveSummary(root, n, area.value);
+        await saveSummary(root, n, box.res.at, area.value);
       } catch (err) {
         error.textContent = err.message;
         hooks.announce?.(err.message);
@@ -479,7 +479,7 @@ export function commentFoot(root, n, res) {
     add.disabled = true;
     error.textContent = '';
     try {
-      await saveSummary(root, n, summary ? `${summary}\n\n${text}` : text);
+      await saveSummary(root, n, foot.res.at, summary ? `${summary}\n\n${text}` : text);
       if (input.value.trim() === text) input.value = '';
       hooks.announce?.('Added to the summary of your review');
     } catch (err) {
