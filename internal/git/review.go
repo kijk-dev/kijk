@@ -180,7 +180,7 @@ func SubmitReview(root string, n int, head, verdict, body string) (summary strin
 	if tool == "gh" {
 		err = githubSubmit(f, n, head, verdict, body)
 	} else {
-		summary, err = gitlabSubmit(f, n, verdict, body)
+		summary, err = gitlabSubmit(f, n, head, verdict, body)
 	}
 	return summary, toolErr(tool, err)
 }

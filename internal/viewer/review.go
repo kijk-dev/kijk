@@ -90,7 +90,11 @@ type submitReply struct {
 // prSubmit answers a failure after the summary went to the forge with both, so the page does not
 // send the summary twice.
 func (a *api) prSubmit(req writeRequest) (any, error) {
-	r, _ := a.ranges.get(req.Root, req.N)
+	r, ok := a.ranges.get(req.Root, req.N)
+	// A verdict is for the head on screen, so kijk must know which one that is.
+	if !ok && req.Verdict != "comment" {
+		return nil, errNotShown
+	}
 	summary, err := git.SubmitReview(req.Root, req.N, r[1], req.Verdict, req.Body)
 	if err != nil && summary != "" {
 		return submitReply{summary, err.Error()}, nil

@@ -123,7 +123,7 @@ func TestGitlabSubmit(t *testing.T) {
 	c := calls()[1:]
 	if len(c) != 4 || !has(c[0], "--method", "POST", mr7+"/draft_notes") || body(t, c[0])["note"] != "Looks good." ||
 		!has(c[1], mr7+"/draft_notes") || has(c[1], "--method") || !has(c[2], "--method", "POST", mr7+"/draft_notes/bulk_publish") ||
-		!has(c[3], "--method", "POST", mr7+"/approve") {
+		!has(c[3], "--method", "POST", mr7+"/approve") || body(t, c[3])["sha"] != "h1" {
 		t.Fatalf("calls %q", c)
 	}
 
@@ -140,6 +140,12 @@ func TestGitlabSubmit(t *testing.T) {
 	gittest.FakeToolCalls(t, "glab", publish, gittest.Rule{Has: "/approve", Err: "403 Forbidden\n", Exit: 1}, drafts, summary)
 	_, err = SubmitReview(repo, 7, "h1", "approve", "")
 	if err == nil || err.Error() != "Your comments are posted, but the approval failed: glab: 403 Forbidden" {
+		t.Fatalf("err %v", err)
+	}
+	// The approval is for the head kijk showed; GitLab refuses it when that moved.
+	gittest.FakeToolCalls(t, "glab", publish, gittest.Rule{Has: "/approve", Err: "409 Conflict\n", Exit: 1}, drafts)
+	_, err = SubmitReview(repo, 7, "h1", "approve", "")
+	if err == nil || err.Error() != "Your comments are posted, but the approval failed: !7 has new commits. Look at them first." {
 		t.Fatalf("err %v", err)
 	}
 	// GitLab answers a refused Request changes with errors in the data.
