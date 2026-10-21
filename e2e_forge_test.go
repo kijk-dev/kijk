@@ -196,7 +196,8 @@ func teammatePR(t *testing.T, repo, origin string) string {
 }
 
 // reviewForge answers for the review repo: its list, the agent's own #482 and sanne's #477.
-func reviewForge(t *testing.T, f *fakeForge, repo, origin string) {
+// ownThread puts sanne's question on #482.
+func reviewForge(t *testing.T, f *fakeForge, repo, origin string, ownThread bool) {
 	t.Helper()
 	own := gitOut(t, repo, "rev-parse", "origin/fix-login")
 	main := gitOut(t, repo, "rev-parse", "origin/main")
@@ -219,10 +220,13 @@ func reviewForge(t *testing.T, f *fakeForge, repo, origin string) {
 		"asked": obj{"nodes": []obj{{"number": 477}, {"number": 471}}}}))
 
 	session := sessionGo("sess, ok := s.lookup(c.Value)", "")
+	var threads []obj
+	if ownThread {
+		threads = []obj{ghThread("S1", "internal/auth/session.go", lineOf(session, "\tsess, ok := s.lookup(c.Value)"), 0, false, false, "",
+			ghComment("sanne", "Does lookup also check the expiry?"))}
+	}
 	f.set(t, "gh-pr-482.json", ghPR(r482, "After an SSO login, an expired session looped.", own, main,
-		[]obj{{"author": ghUser("sanne"), "state": "COMMENTED"}}, nil, nil,
-		[]obj{ghThread("S1", "internal/auth/session.go", lineOf(session, "\tsess, ok := s.lookup(c.Value)"), 0, false, false, "",
-			ghComment("sanne", "Does lookup also check the expiry?"))},
+		[]obj{{"author": ghUser("sanne"), "state": "COMMENTED"}}, nil, nil, threads,
 		[]obj{ghCheck(401, "build", "COMPLETED", "SUCCESS", 2001, ".github/workflows/none.yml"), ghCheck(402, "test (linux)", "COMPLETED", "FAILURE", 2001, ".github/workflows/none.yml")}))
 	f.set(t, "gh-log-402.txt", "2026-10-21T10:00:01.0000000Z === RUN   TestResume\n2026-10-21T10:00:02.0000000Z     session_test.go:12: got nil session\n2026-10-21T10:00:03.0000000Z --- FAIL: TestResume (0.00s)\n")
 

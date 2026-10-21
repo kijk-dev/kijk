@@ -1,6 +1,7 @@
 import { el } from './api.js';
 import { line, setView, isCurrent, LINE_HEIGHT } from './view.js';
 import { lineCount, kind } from './git.js';
+import { onKey } from './keys.js';
 
 // The file boxes of Branch changes and of a pull request's Changes: one box per file, each drawn
 // when it comes near the screen. A source says what the boxes show:
@@ -48,9 +49,12 @@ export function iconButton(svg, label, act) {
 
 // boxView makes the view of a tab of boxes. tab.folds keeps the boxes the user folded or opened;
 // save stores the tab.
+let last = null; // the box view made last, while it is the open view
+
 export function boxView(viewer, root, tab, keep, save, src) {
   const v = { kind: 'boxes', viewer, root, tab, save, keep, src, boxes: new Map() };
   setView(v);
+  last = v;
   v.jump = dir => {
     step(v, dir, b => b.starts);
     return true;
@@ -413,8 +417,14 @@ export async function step(v, dir, pick, has = () => true) {
   }
 }
 
-// stepMarks is Alt+↓ / Alt+↑: the next or previous thread or note.
-export const stepMarks = (v, dir) => step(v, dir, b => [...b.body.querySelectorAll('.thr')], b => !!v.src.marked?.(b.f));
+// Alt+↓ / Alt+↑: the next or previous thread or note.
+const markKey = dir => () => {
+  const v = last && isCurrent(last) ? last : null;
+  if (!v?.scroll || document.activeElement?.closest('textarea, input')) return false;
+  step(v, dir, b => [...b.body.querySelectorAll('.thr')], b => !!v.src.marked?.(b.f));
+};
+onKey('nextNote', markKey(1));
+onKey('prevNote', markKey(-1));
 
 // goToBox scrolls to a file's box.
 export function goToBox(v, path, focus) {
