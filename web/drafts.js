@@ -125,7 +125,8 @@ function textBox(label, text, okText, ok, cancel) {
 const unsent = new Map();
 
 // lineEditor is the box under row l of file f where a new comment is written. done() closes it.
-// The editor knows the head its row is of; move(row, at) puts it on a row of another head.
+// The editor knows the head its row is of; move(row, at) puts it on a row of another head. With
+// toForge(row), the row is of another diff, and toForge gives the forge diff's row of its line.
 export function lineEditor(root, n, res, f, l, done) {
   const ed = { text: l.t };
   const kept = () => `${root}\n${n}\n${f.path}\n${ed.key}`;
@@ -138,17 +139,21 @@ export function lineEditor(root, n, res, f, l, done) {
   who.append(avatar(res.me || 'you'), el('b', null, res.me || 'you'));
   const text = textBox('Comment', '', 'Add to review', async body => {
     if (!ed.row) throw new Error('This line is not in the diff now. Copy your text and add it on another line.');
-    const r = ed.row;
+    const r = (await ed.toForge?.(ed.row)) || ed.row;
     await addComment(root, n, ed.at, { path: f.path, orig: f.orig || '', line: ed.line, old: ed.old, oldLine: r.k === ' ' ? r.o : 0, body });
     unsent.delete(kept());
     hooks.announce?.(`Comment added to your review on line ${ed.line}`);
     done();
   }, () => {
+    ed.keep();
+    done();
+  });
+  // keep holds the text not added yet, so + on the same line gives it back.
+  ed.keep = () => {
     const left = text.querySelector('textarea').value;
     if (left.trim()) unsent.set(kept(), left);
     else unsent.delete(kept());
-    done();
-  });
+  };
   c.append(who, text);
   box.append(head, c);
   ed.el = box;
