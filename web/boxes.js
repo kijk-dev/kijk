@@ -320,6 +320,11 @@ export async function loadBox(v, b) {
       res = { error: err.message };
     }
     if (!isCurrent(v) || v.boxes.get(b.f.path) !== b) return;
+    // The basis moved during the fetch, as when the switch moved before the box was first drawn.
+    if (b.basis !== v.src.basis()) {
+      b.again = true;
+      return;
+    }
     const json = b.basis + JSON.stringify(res); // the same diff on another branch has other notes
     if (b.loaded && json === b.json) return;
     b.json = json;

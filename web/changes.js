@@ -44,7 +44,7 @@ async function forgeRow(v, f, row) {
   const hunks = res.hunks || [];
   const same = hunks.flatMap(h => h.lines).find(l => l.k !== '-' && l.n === row.n);
   if (same) return { k: same.k, o: same.o, n: same.n, t: same.t };
-  if (v.res.forge?.kind === 'github') throw new Error('GitHub takes a comment only near a change of the pull request. Comment on this line in All changes.');
+  if (v.res.forge?.kind === 'github') throw new Error('GitHub takes a comment only within 3 lines of a change of the pull request.');
   let delta = 0; // old line minus new line below the last hunk above the row
   for (const h of hunks) {
     const end = h.newStart + h.lines.filter(l => l.k !== '-').length;
