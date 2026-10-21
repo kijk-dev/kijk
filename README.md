@@ -140,6 +140,10 @@ icon counts the pull requests that wait for your review.
   requests too ("4/9 viewed"). When a push changes a file you viewed, the mark clears, the file
   opens and says "changed since you viewed it". kijk keeps the marks in the browser on this
   machine, for all clones of the repo. They do not go to GitHub or GitLab.
+- After you post a review in kijk, or view every file, a new push adds a switch under the pull
+  request's title: **All changes** | **Since your review**. **Since your review** shows only the
+  files and lines that changed since then. After a rebase or force push kijk cannot tell, so it
+  shows all changes and says so.
 - **Overview** shows the description, the reviewers and what they said, the conversation, and
   the checks. The checks of each GitHub workflow or GitLab pipeline are a graph: each job a pill,
   with lines to the jobs it needs. The first three failed jobs show the last lines of their logs.
