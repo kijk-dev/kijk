@@ -28,7 +28,7 @@ export function avatar(name) {
   return a;
 }
 
-function comment(c) {
+export function comment(c) {
   const box = el('div', 'c');
   const who = el('div', 'who');
   const when = el('span', 'muted', age(c.at));

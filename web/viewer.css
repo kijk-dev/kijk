@@ -734,3 +734,71 @@ kbd { font: 11px/1 var(--code-font); padding: 1px 4px; border: 1px solid var(--b
 .copypanel .label { padding: 6px 12px 3px; font-size: 11px; font-weight: 700; text-transform: uppercase; color: var(--muted); }
 @media (prefers-reduced-motion: reduce) { .fhead .fold svg { transition: none; } }
 #prs .note.error { margin: 6px 12px 0; font-size: 12px; color: var(--error); }
+
+/* The Overview of a pull request, in the reading column. */
+.md.ov { padding: 16px 24px 48px; }
+.md.ov h1 { margin-bottom: .2em; border-bottom: 0; padding-bottom: 0; font-size: 1.45em; }
+.md.ov h1 .muted { font-weight: 400; }
+.md.ov .meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin: 0 0 1.2em; font-size: 13px; color: var(--muted); }
+.md.ov .meta .ref { font-size: 11px; line-height: 16px; }
+.md.ov h2 { font-size: 1.05em; border-bottom: 0; padding-bottom: 0; margin: 1.6em 0 .5em; display: flex; align-items: baseline; gap: 8px; }
+.md.ov h2 .muted { font-weight: 400; font-size: 13px; }
+.md.ov .desc { padding: 2px 0 0; }
+.md.ov .h2mode { margin-left: auto; font-weight: 400; }
+/* Reviewers: a row of chips under the title. */
+.md.ov .people { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: -.4em 0 1.2em; font-size: 12.5px; }
+.md.ov .people > .muted { margin-right: 2px; }
+.person { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px 2px 2px; border: 1px solid var(--border); border-radius: 13px; background: var(--panel); }
+.person .av { width: 20px; height: 20px; font-size: 9.5px; }
+.person.me { border-color: color-mix(in srgb, var(--modified) 45%, transparent); }
+.rs { display: flex; color: var(--muted); }
+.rs svg { width: 13px; height: 13px; }
+.rs.ok { color: var(--added); }
+.rs.bad { color: var(--conflict); }
+/* Checks as a graph: one column per step in the needs chain. */
+.dagwrap { margin: 0 0 12px; }
+.dagtitle { display: flex; align-items: baseline; gap: 6px; margin: 0 0 6px; font-size: 13px; }
+.dagtitle b { font-weight: 600; }
+.dagtitle .muted { font-size: 12px; }
+.dagtitle a { font-size: 12px; text-decoration: none; }
+.dag { position: relative; overflow-x: auto; padding: 12px 14px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); }
+.dag .edges { position: absolute; left: 0; top: 0; pointer-events: none; overflow: visible; }
+.dag .edges path { fill: none; stroke: var(--edge); stroke-width: 1.5; }
+.dag .edges path.dim { stroke-dasharray: 3 3; }
+.dagcols { position: relative; display: flex; gap: 22px; width: max-content; }
+.dagcol { display: flex; flex-direction: column; gap: 8px; }
+.md .job {
+  display: flex; align-items: center; gap: 6px; width: 132px; height: 28px; padding: 0 9px 0 6px; border: 1px solid var(--border);
+  border-radius: 14px; background: var(--bg); color: var(--text); font-size: 12.5px; text-decoration: none; white-space: nowrap;
+}
+.md .job:hover { text-decoration: none; border-color: var(--modified); }
+.md .job:focus-visible { outline: 2px solid var(--busy); outline-offset: 1px; }
+.job.bad { border-color: color-mix(in srgb, var(--conflict) 55%, transparent); }
+.job.skip .jn, .job.wait .jn { color: var(--muted); }
+.jn { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.ji { display: flex; flex: none; width: 15px; height: 15px; align-items: center; justify-content: center; }
+.ji svg { width: 14px; height: 14px; }
+.ji.ok { color: var(--added); }
+.ji.bad { color: var(--conflict); }
+.ji.skip { color: var(--muted); }
+.rundot { width: 8px; height: 8px; border-radius: 50%; background: var(--busy); animation: fade 1.2s ease-in-out infinite; }
+.joblog { margin: -4px 0 16px; border: 1px solid color-mix(in srgb, var(--conflict) 40%, var(--border)); border-radius: 6px; overflow: hidden; }
+.jlhead { display: flex; align-items: center; gap: 6px; padding: 5px 10px; font-size: 12.5px; background: color-mix(in srgb, var(--conflict) 7%, var(--panel)); }
+.jlhead b { font-weight: 600; }
+.jlhead .muted { font-size: 12px; }
+.jlhead .tool { display: inline-flex; align-items: center; gap: 5px; margin-left: auto; }
+.jlhead .tool svg { width: 12px; height: 12px; }
+.jlhead .grow-end { margin-left: auto; font-size: 12px; }
+.jlhead .tool + .grow-end { margin-left: 0; }
+.md .joblog pre { margin: 0; border-radius: 0; background: var(--bg); font-size: 12px; line-height: 17px; white-space: pre-wrap; }
+.ovlist { list-style: none !important; padding: 0 !important; margin: 0 0 1em; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; }
+.ovlist li { display: flex; align-items: center; gap: 8px; margin: 0 !important; padding: 5px 10px; }
+.ovlist li + li { border-top: 1px solid var(--border); }
+.ovlist .grow { flex: 1; min-width: 0; }
+.ovlist .muted { font-size: 12px; font-variant-numeric: tabular-nums; }
+.ovlist a { font-size: 12px; }
+/* In the Overview, the conversation is a plain box. */
+.thr.conv { position: static; width: auto; margin: 0 0 1em; border-color: var(--border); }
+.thr.conv::before { display: none; }
+.thr.conv .c { padding-bottom: 10px; }
+@media (prefers-reduced-motion: reduce) { .rundot { animation: none; } }

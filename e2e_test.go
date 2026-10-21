@@ -540,6 +540,23 @@ func TestBrowser(t *testing.T) {
 		b.click("Open the whole file", fileBox("internal/webhook/retry.go")+`.querySelector('[aria-label="Open the whole file"]')`)
 		b.waitFor("retry.go at #477", `(t => t?.firstChild.textContent === 'retry.go' && t.querySelector('.muted')?.textContent === '#477')(document.querySelector('#filetabs .filetab.active')) && `+viewHas("func (s *Sender) deliver(ctx context.Context, ev Event) error {"))
 
+		// The Overview: who wants what, reviewers, the description, checks as a graph, the conversation.
+		b.click("Overview", prsRow("Overview"))
+		b.waitFor("the Overview tab", `(t => t?.firstChild.textContent === 'Overview' && t.querySelector('.muted')?.textContent === '#477')(document.querySelector('#filetabs .filetab.active'))`)
+		b.waitFor("title and meta", `document.querySelector('.md.ov h1')?.textContent === 'Retry webhook delivery with backoff #477' && document.querySelector('.md.ov .meta').textContent.includes('sanne wants to merge') && document.querySelector('.md.ov .meta').textContent.includes('· 2 commits')`)
+		b.waitFor("the reviewers", `[...document.querySelectorAll('.md.ov .person')].map(p => p.textContent + ':' + p.dataset.tip.split('\n')[1]).join('|') === 'Ppriya:Approved|Ttim:Commented|Yyou:Review requested'`)
+		b.waitFor("the description", `document.querySelector('.md.ov .desc strong')?.textContent === 'one' && document.querySelector('.md.ov .desc li')?.textContent === 'Retry up to five times.'`)
+		b.waitFor("the checks graph", `(d => d && [...d.querySelectorAll('.dagcol')].map(c => [...c.querySelectorAll('.job')].map(j => j.textContent).join('+')).join(' | ') === 'build | test (linux)+test (windows)')(document.querySelector('.md.ov .dag'))`)
+		b.waitFor("the failed job and the lines", `document.querySelector('.md.ov .job.bad')?.textContent === 'test (windows)' && document.querySelectorAll('.md.ov .dag .edges path').length === 2`)
+		b.waitFor("other checks", `[...document.querySelectorAll('.md.ov .ovlist.other li')].map(l => l.textContent).join('|').startsWith('Vercel – Preview')`)
+		b.waitFor("the end of the failed log", `document.querySelector('.md.ov .joblog .jlhead b')?.textContent === 'test (windows)' && document.querySelector('.md.ov .joblog pre')?.textContent.endsWith('--- FAIL: TestBackoffJitter (0.00s)') && !document.querySelector('.md.ov .joblog button')`)
+		b.waitFor("the conversation", `document.querySelector('.md.ov .thr.conv .cbody')?.textContent.trim() === 'Do we want the attempt number in the delivery log?'`)
+		shots(b, "prs-overview")
+		b.click("List", byText(".md.ov .h2mode button", "List"))
+		b.waitFor("the checks as a list", `!document.querySelector('.md.ov .dag') && document.querySelectorAll('.md.ov .ovlist.jobs li').length === 3`)
+		b.click("Graph", byText(".md.ov .h2mode button", "Graph"))
+		b.waitFor("the graph again", `document.querySelector('.md.ov .dag')`)
+
 		// The list again, with the button and with Alt+←.
 		b.click("back", `document.querySelector('#prs-pr .back')`)
 		b.waitFor("the list again", `!document.querySelector('#prs-list').hidden && document.querySelector('#prs-pr').hidden`)
@@ -577,13 +594,18 @@ func TestBrowser(t *testing.T) {
 		}
 		shots(b, "prs-local")
 
+		// A failed job of your own branch goes to the agent.
+		b.click("Overview", prsRow("Overview"))
+		b.waitFor("the failed job of #482", `document.querySelector('.md.ov .joblog .jlhead b')?.textContent === 'test (linux)'`)
+		b.evalJS(`navigator.clipboard.writeText = t => (window.e2eClip = t, Promise.resolve())`)
+		b.click("Copy for agent", `document.querySelector('.md.ov .joblog button')`)
+		b.waitFor("the failure on the clipboard", `window.e2eClip === `+jsString("CI job test (linux) failed on branch fix-login (PR #482).\nFix it, then say what you changed.\n\n=== RUN   TestResume\n    session_test.go:12: got nil session\n--- FAIL: TestResume (0.00s)"))
+		b.waitFor("the status bar", `document.querySelector('#statusbar').textContent.includes('Copied the failure of test (linux)')`)
+
 		// Refresh asks the forge again.
 		before := len(forge.calls())
 		b.press("refreshPrs")
-		b.act("wait for the refresh", chromedp.Sleep(500*time.Millisecond))
-		if after := forge.calls(); len(after) <= before || !strings.Contains(strings.Join(after[before:], "\n"), "pullRequest(number") {
-			t.Fatalf("refresh asked nothing new: %q", after[before:])
-		}
+		forge.waitFor(t, before, "pullRequest(number")
 		b.noErrors()
 	})
 
