@@ -151,7 +151,7 @@ func TestBranchChanges(t *testing.T) {
 	if got := files(b); got != want {
 		t.Fatalf("files:\n%s\nwant\n%s", got, want)
 	}
-	if b.Branch != "feature" || b.Base != "origin/main" || b.Upstream != "origin/feature" || b.Ahead != 1 || b.Uncommitted != 2 || !ValidHash(b.Split) {
+	if b.Branch != "feature" || b.Base != "origin/main" || b.Upstream != "origin/feature" || b.Ahead != 1 || b.Uncommitted != 2 || !ValidHash(b.Split) || !ValidHash(b.UpHash) {
 		t.Fatalf("branch = %+v", b)
 	}
 

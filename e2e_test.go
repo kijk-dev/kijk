@@ -183,6 +183,7 @@ func TestBrowser(t *testing.T) {
 		k := startKijkIn(t, exe, t.TempDir(), "CLAUDE_CONFIG_DIR="+claude, "PATH="+fakeGH(t)+string(os.PathListSeparator)+os.Getenv("PATH"))
 		b := openPage(t, newTab(t, tab), k, "/")
 		b.selectAgent("Fix the login", "review")
+		const session = "internal/auth/session.go"
 
 		// The PRs tab and its panel.
 		b.waitFor("the PRs tab", `(b => b && !b.hidden && b.dataset.tip.startsWith('PRs\n'))(`+prsTab+`)`)
@@ -196,6 +197,46 @@ func TestBrowser(t *testing.T) {
 		b.waitFor("the new files marked", prsRow("redirect.go")+`.querySelector('.np') && `+prsRow("redirect_test.go")+`.querySelector('.np') && !`+prsRow("session.go")+`.querySelector('.np')`)
 		b.act("reload", chromedp.Reload())
 		b.waitFor("the PRs tab kept", prsTab+`.classList.contains('active') && !document.querySelector('#prs').hidden && document.querySelectorAll('#prs .prfiles li').length === 6`)
+
+		// Branch changes: every file in one scroll.
+		b.waitFor("the Branch changes tab", `document.querySelector('#filetabs .filetab.active')?.textContent.startsWith('Branch changes')`)
+		b.waitFor("six boxes", `document.querySelectorAll('#viewer .fbox').length === 6`)
+		b.waitFor("go.sum folded", fileBox("go.sum")+`.classList.contains('shut') && `+fileBox("go.sum")+`.querySelector('.fnote').textContent.startsWith('Generated file, 2 lines')`)
+		b.waitFor("the edit not committed", boxHas("README.md", "add", "Run it with go run."))
+		b.waitFor("the untracked file", boxHas("internal/auth/redirect_test.go", "add np", "func TestSafeNext(t *testing.T) {"))
+		b.waitFor("the lines not pushed", boxHas(session, "add np", "\tsess, ok := s.byID[id]")+" && "+fileBox(session)+`.querySelector('.np-tag')`)
+		b.waitFor("the pushed line without dashes", boxHas(session, "add", "\tsess, ok := s.lookup(c.Value)")+` && !`+boxRow(session, "\tsess, ok := s.lookup(c.Value)")+`.classList.contains('np')`)
+		b.waitFor("the dashed circle on new files", fileBox("internal/auth/redirect.go")+`.querySelector('.fhead .np') && !`+fileBox(session)+`.querySelector('.fhead .np')`)
+		fold := fileBox("README.md") + `.querySelector('.fold')`
+		b.click("the README.md chevron", fold)
+		b.waitFor("README.md folded", fileBox("README.md")+`.classList.contains('shut')`)
+		b.click("the README.md chevron", fold)
+		b.waitFor("README.md open", `!`+fileBox("README.md")+`.classList.contains('shut')`)
+
+		// The sidebar list jumps to a box, and follows the scroll.
+		b.click("session.go in the list", prsRow("session.go"))
+		b.waitFor("session.go at the top", `(s => s.scrollTop > 0 && Math.abs(`+fileBox(session)+`.offsetTop - 12 - s.scrollTop) < 2)(document.querySelector('.allfiles'))`)
+		b.evalJS(`document.querySelector('.allfiles').scrollTop = 0`)
+		b.waitFor("README.md selected", prsRow("README.md")+`.classList.contains('selected')`)
+		b.press("nextChange")
+		b.waitFor("a change below the top", changeAt)
+		top := evalJS[float64](b, `document.querySelector('.allfiles').scrollTop`)
+		b.press("nextChange")
+		b.waitFor("the next change", changeAt+` && document.querySelector('.allfiles').scrollTop > `+fmt.Sprint(top))
+		b.press("prevChange")
+		b.waitFor("the change before", changeAt+` && document.querySelector('.allfiles').scrollTop === `+fmt.Sprint(top))
+		b.press("find")
+		b.act("wait for a find bar", chromedp.Sleep(200*time.Millisecond))
+		b.waitFor("no find bar in Branch changes", `document.querySelector('#findbar').hidden`)
+		b.click("Show more lines", fileBox(session)+`.querySelector('.ln.sep .more')`)
+		b.waitFor("more lines of session.go", boxRow(session, "func (s *Store) Resume(w http.ResponseWriter, r *http.Request) (*Session, error) {"))
+
+		// The agent edits a file above the one on screen: the view stays where it is.
+		b.click("session.go in the list", prsRow("session.go"))
+		b.waitFor("session.go at the top", `(s => s.scrollTop > 0 && Math.abs(`+fileBox(session)+`.offsetTop - 12 - s.scrollTop) < 2)(document.querySelector('.allfiles'))`)
+		write(t, filepath.Join(repo, "README.md"), "# Review\n\nA shop backend.\n\nRun it with go run.\n\nOr build it.\nThen run the binary.\n")
+		b.waitFor("the new lines", boxHas("README.md", "add", "Then run the binary."))
+		b.waitFor("session.go still at the top", `Math.abs(`+fileBox(session)+`.offsetTop - 12 - document.querySelector('.allfiles').scrollTop) < 2`)
 
 		b.noErrors()
 	})
@@ -489,6 +530,24 @@ const (
 func prsRow(name string) string {
 	return fmt.Sprintf(`[...document.querySelectorAll('#prs .prfiles li')].find(e => e.querySelector('.name')?.textContent === %s)`, jsString(name))
 }
+
+// fileBox is the box of a file in the Branch changes view.
+func fileBox(path string) string {
+	return fmt.Sprintf(`document.querySelector('#viewer .fbox[data-path=%s]')`, jsString(path))
+}
+
+// boxRow is the row of a box whose text is text.
+func boxRow(path, text string) string {
+	return fmt.Sprintf(`[...(%s?.querySelectorAll('.ln') || [])].find(e => e.querySelector('.tx')?.textContent === %s)`, fileBox(path), jsString(text))
+}
+
+// boxHas is true when a box has a row of the classes cls, such as "add np", with the text.
+func boxHas(path, cls, text string) string {
+	return fmt.Sprintf(`[...(%s?.querySelectorAll('.ln.%s') || [])].some(e => e.querySelector('.tx')?.textContent === %s)`, fileBox(path), strings.ReplaceAll(cls, " ", "."), jsString(text))
+}
+
+// changeAt is true when a change starts five lines below the top of the Branch changes view.
+const changeAt = `(s => [...s.querySelectorAll('.fbox:not(.shut) .ln.add, .fbox:not(.shut) .ln.del')].some(r => Math.abs(r.getBoundingClientRect().top - s.getBoundingClientRect().top - 124) < 2))(document.querySelector('.allfiles'))`
 
 const agentRows = `[...document.querySelectorAll('#rows li[role=button]')]`
 

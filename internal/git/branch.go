@@ -22,8 +22,9 @@ type Branch struct {
 	Base        string       `json:"base"`  // the PR target or the main line
 	Split       string       `json:"split"` // where HEAD split from the base
 	Upstream    string       `json:"upstream,omitempty"`
-	Ahead       int          `json:"ahead"`       // commits the upstream does not have
-	Uncommitted int          `json:"uncommitted"` // files with changes not committed
+	UpHash      string       `json:"upHash,omitempty"` // where the upstream is, so the page notices a push
+	Ahead       int          `json:"ahead"`            // commits the upstream does not have
+	Uncommitted int          `json:"uncommitted"`      // files with changes not committed
 	PR          *pullRequest `json:"pr,omitempty"`
 	Files       []BranchFile `json:"files"`
 }
@@ -82,6 +83,7 @@ func BranchChanges(root, target string) (Branch, error) {
 	// A file is not pushed when the upstream lacks it; without an upstream nothing is pushed.
 	added, upErr := map[string]bool{}, errors.New("no upstream")
 	if b.Upstream != "" {
+		b.UpHash, _ = Run(root, "rev-parse", "--verify", "-q", "@{upstream}")
 		var raw []byte
 		raw, upErr = Raw(root, "diff", "--no-ext-diff", "--no-renames", "--diff-filter=A", "--name-only", "-z", "@{upstream}")
 		for _, p := range strings.Split(string(raw), "\x00") {

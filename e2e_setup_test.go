@@ -252,12 +252,14 @@ func (p page) press(action string) {
 		mods []chromedp.Modifier
 	}
 	keys := map[string][2]combo{ // macOS, other systems
-		"back":     {{"[", []chromedp.Modifier{meta}}, {kb.ArrowLeft, []chromedp.Modifier{ctrl, alt}}},
-		"forward":  {{"]", []chromedp.Modifier{meta}}, {kb.ArrowRight, []chromedp.Modifier{ctrl, alt}}},
-		"find":     {{"f", []chromedp.Modifier{meta}}, {"f", []chromedp.Modifier{ctrl}}},
-		"gotoLine": {{"l", []chromedp.Modifier{meta}}, {"g", []chromedp.Modifier{ctrl}}},
-		"gotoFile": {{"o", []chromedp.Modifier{meta, shift}}, {"n", []chromedp.Modifier{ctrl, shift}}},
-		"prsTab":   {{"2", []chromedp.Modifier{meta}}, {"2", []chromedp.Modifier{alt}}},
+		"back":       {{"[", []chromedp.Modifier{meta}}, {kb.ArrowLeft, []chromedp.Modifier{ctrl, alt}}},
+		"forward":    {{"]", []chromedp.Modifier{meta}}, {kb.ArrowRight, []chromedp.Modifier{ctrl, alt}}},
+		"find":       {{"f", []chromedp.Modifier{meta}}, {"f", []chromedp.Modifier{ctrl}}},
+		"gotoLine":   {{"l", []chromedp.Modifier{meta}}, {"g", []chromedp.Modifier{ctrl}}},
+		"gotoFile":   {{"o", []chromedp.Modifier{meta, shift}}, {"n", []chromedp.Modifier{ctrl, shift}}},
+		"prsTab":     {{"2", []chromedp.Modifier{meta}}, {"2", []chromedp.Modifier{alt}}},
+		"nextChange": {{kb.F7, nil}, {kb.F7, nil}},
+		"prevChange": {{kb.F7, []chromedp.Modifier{shift}}, {kb.F7, []chromedp.Modifier{shift}}},
 	}
 	c, ok := keys[action]
 	if !ok {
@@ -268,6 +270,11 @@ func (p page) press(action string) {
 		k = c[0]
 	}
 	p.key(action, k.key, k.mods...)
+}
+
+func (p page) evalJS(js string) {
+	p.t.Helper()
+	evalJS[any](p, js+`; null`)
 }
 
 // emulate sets the color scheme and the window width the page sees.

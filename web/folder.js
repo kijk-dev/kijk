@@ -65,7 +65,12 @@ let page = null;
 // open folder; start, shown when no folder is open; announce(text); and onFolderEvent, run on each live update of the folder.
 export function setupFolder(p) {
   page = p;
-  setupReview({ announce: p.announce, push: pushNow });
+  setupReview({
+    announce: p.announce,
+    push: pushNow,
+    openFile: path => { if (!offline) openTab({ kind: 'file', path }, true); },
+    openBranch: () => openTab({ kind: 'branch', path: '' }, true),
+  });
 }
 
 export const SERVER = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="7" rx="1.5"/><rect x="3" y="13" width="18" height="7" rx="1.5"/><path d="M7 7.5h.01M7 16.5h.01"/></svg>';
@@ -108,7 +113,7 @@ export function openFolder(r, again) {
     onFile: (path, pin) => { if (!offline) openTab({ kind: 'file', path }, pin); },
     onToggle: saveState,
   });
-  setBranchFolder(r.key);
+  setBranchFolder(r.key); // before the tabs, which may open Branch changes
   setTabs(r.key, state, tabsChanged);
   tabsEl.hidden = true;
   sidebarHead.hidden = false;
@@ -418,6 +423,7 @@ function switchSidebar(tab) {
   selectTab(tab);
   saveState();
   refreshGit();
+  if (tab === 'prs' && !offline) openTab({ kind: 'branch', path: '' }, true);
 }
 
 tabsEl.onclick = e => {

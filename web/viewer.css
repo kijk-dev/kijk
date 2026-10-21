@@ -522,3 +522,37 @@ button.pill:hover { background: color-mix(in srgb, var(--modified) 22%, var(--se
 .reviewbox .head b { font-weight: 600; }
 .reviewbox .head > * { white-space: nowrap; }
 .reviewbox .head .muted { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* Branch changes: every file in one scroll. Each file is a box whose header sticks while you scroll it. */
+.allfiles { position: relative; flex: 1; min-height: 0; overflow: auto; padding: 12px 12px 0; background: var(--panel); }
+.allfiles:focus { outline: none; }
+.fbox { margin-bottom: 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); overflow: clip; content-visibility: auto; }
+.fhead {
+  position: sticky; top: -12px; z-index: 2; display: flex; align-items: center; gap: 7px; height: 34px; padding: 0 8px 0 4px;
+  background: var(--panel); border-bottom: 1px solid var(--border); font-size: 12.5px; white-space: nowrap;
+}
+.fbox.shut { content-visibility: visible; }
+.fbox.shut .fhead { border-bottom: 0; }
+.fhead .fold svg { transition: transform .1s; }
+.fbox:not(.shut) .fhead .fold svg { transform: rotate(90deg); }
+.fpath { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.fpath b { font-weight: 600; }
+.fhead .lc { margin-left: 0; padding-left: 0; font-size: 11.5px; }
+.fhead .np svg { width: 13px; height: 13px; }
+.fhead .grow { flex: 1; }
+.fnote { display: flex; align-items: center; gap: 4px; padding: 4px 12px; border-top: 1px solid var(--border); background: var(--sep-bg); font-size: 12px; color: var(--muted); }
+.fnote .more { font: inherit; padding: 0; position: static; }
+.fbody { overflow-x: auto; container-type: inline-size; font: var(--code-size)/18px var(--code-font); padding: 0 0 6px; }
+.fbody .ln { position: relative; min-width: max-content; }
+.fbody .ln.sep .gut { width: calc(var(--gutter) * 2); }
+.fbody .ln.sep .tx { color: var(--muted); }
+.fbody .ln.sep .more { font: 12px system-ui, -apple-system, sans-serif; margin-left: 10px; padding: 0; position: static; }
+.fempty { margin: 8px 12px 2px; color: var(--muted); font: 12px system-ui, -apple-system, sans-serif; }
+.fend { margin: 4px 0 24px; text-align: center; font-size: 12px; color: var(--muted); }
+.np-tag {
+  display: inline-flex; align-items: center; gap: 4px; margin-left: 10px; padding: 0 6px; border: 1px dashed var(--edge); border-radius: 8px;
+  font: 11px/14px system-ui, -apple-system, sans-serif; color: var(--muted); vertical-align: 1px;
+}
+.np-tag svg { width: 10px; height: 10px; }
+/* A dashed change bar: the line exists only on this machine. */
+.ln.np .gut::after { background: repeating-linear-gradient(var(--added) 0 3px, transparent 3px 6px); }
+@media (prefers-reduced-motion: reduce) { .fhead .fold svg { transition: none; } }
