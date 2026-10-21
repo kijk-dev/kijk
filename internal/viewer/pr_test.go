@@ -270,3 +270,13 @@ func TestPRViewChecksWithoutHead(t *testing.T) {
 		t.Errorf("error %q, checks %v", v.Error, v.Checks)
 	}
 }
+
+// GitLab's words name a merge request with "!", GitHub's a pull request with "#".
+func TestForgeWords(t *testing.T) {
+	if w, s := prWords("gitlab"); w+" "+s != "merge request !" {
+		t.Errorf("gitlab: %q %q", w, s)
+	}
+	if w, s := prWords("github"); w+" "+s != "pull request #" {
+		t.Errorf("github: %q %q", w, s)
+	}
+}

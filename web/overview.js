@@ -168,7 +168,9 @@ function checks(v, res, words) {
     if (g.number) title.append(el('span', 'muted', `· ${words.ci === 'Pipeline' ? 'pipeline' : 'run'} #${g.number}`));
     if (g.url) {
       const a = el('a', null, '↗');
-      Object.assign(a, { href: g.url, target: '_blank', rel: 'noopener', title: `Open on ${words.name}` });
+      Object.assign(a, { href: g.url, target: '_blank', rel: 'noopener' });
+      a.dataset.tip = `Open on ${words.name}`;
+      a.setAttribute('aria-label', `Open the ${words.ci === 'Pipeline' ? 'pipeline' : 'run'} on ${words.name}`);
       title.append(a);
     }
     wrap.append(title, g.graph && !asList ? graph(g) : jobList(g.jobs, 'jobs'));
