@@ -1,0 +1,7 @@
+[
+{"id":51,"author_id":7,"merge_request_id":12,"resolve_discussion":false,"discussion_id":"a","note":"Cap it at MaxDelay.","commit_id":null,"line_code":null,"position":null},
+{"id":52,"author_id":7,"merge_request_id":12,"resolve_discussion":false,"discussion_id":null,"note":"Is 5 enough?","commit_id":null,"line_code":"abc_14_16","position":{"base_sha":"4444444444444444444444444444444444444444","start_sha":"5555555555555555555555555555555555555555","head_sha":"3333333333333333333333333333333333333333","old_path":"config.go","new_path":"config.go","position_type":"text","old_line":null,"new_line":16,"line_range":null}},
+{"id":53,"author_id":7,"merge_request_id":12,"resolve_discussion":false,"discussion_id":null,"note":"Looks fine overall.","commit_id":null,"line_code":null,"position":{"base_sha":null,"start_sha":null,"head_sha":null,"old_path":null,"new_path":null,"position_type":"text","old_line":null,"new_line":null,"line_range":null}},
+{"id":54,"author_id":7,"merge_request_id":12,"resolve_discussion":false,"discussion_id":null,"note":"Why remove this?","commit_id":null,"line_code":"def_3_0","position":{"base_sha":"4444444444444444444444444444444444444444","start_sha":"5555555555555555555555555555555555555555","head_sha":"6666666666666666666666666666666666666666","old_path":"legacy.go","new_path":"legacy.go","position_type":"text","old_line":3,"new_line":null,"line_range":null}},
+{"id":55,"author_id":7,"merge_request_id":12,"resolve_discussion":false,"discussion_id":"d","note":"Yes, please.","commit_id":null,"line_code":null,"position":null}
+]

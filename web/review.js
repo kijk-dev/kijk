@@ -2,9 +2,9 @@ import { el, get, storeKey } from './api.js';
 import { isCurrent } from './view.js';
 import { lineCount, ago, fileRow } from './git.js';
 import { forgeMark, FORGE } from './pr.js';
-import { onKey, keyLabel, mac } from './keys.js';
-import { boxView, showBoxes, noBoxes, redraw, drawBox, iconButton, setCur, curRow, goToBox, plural } from './boxes.js';
-import { threadEl, outdatedBar, threadCount, avatar } from './threads.js';
+import { keyLabel, mac } from './keys.js';
+import { boxView, showBoxes, noBoxes, redraw, drawBox, iconButton, goToBox, plural } from './boxes.js';
+import { threadEl, outdatedBar, threadCount, avatar, sent } from './threads.js';
 
 // The PRs tab for the folder's own branch: the panel in the sidebar, the Branch changes view, agent
 // notes and Copy for agent. Its pull request's threads come from prs.js.
@@ -171,7 +171,7 @@ function saveCopiedThreads() {
 }
 
 // openThreads are the threads of the branch's pull request that still want an answer.
-const openThreads = () => (branchPR && branchPR.number === ownPR() ? branchPR.threads.filter(t => !t.resolved && !t.outdated) : []);
+const openThreads = () => (branchPR && branchPR.number === ownPR() ? sent(branchPR.threads).filter(t => !t.resolved && !t.outdated) : []);
 const threadLines = new Map(); // thread id: the line on disk it shows under
 
 function saveNotes() {
@@ -434,7 +434,7 @@ const branchSource = {
     if (v.editor?.path === b.f.path && !v.editor.id) put(`n:${v.editor.n}`, v.editor.el);
     return { extra, under, end, top: th.bar.length ? outdatedBar(`local:${b.f.path}`, th.bar, { redraw: redrawBox }) : [] };
   },
-  onAdd: (v, path, n, text) => openEditor(v, path, n, text),
+  onAdd: (v, path, l) => openEditor(v, path, l.n, l.t),
   addTip: `Note for the agent\n${keyLabel('addNote')}`,
   onTop: path => selectRow(path),
   drawn: (v, b) => {
@@ -521,7 +521,7 @@ async function place(v, b, rows) {
 }
 
 // threadsOn are the threads of the branch's pull request on a file.
-const threadsOn = path => (branchPR && branchPR.number === ownPR() ? branchPR.threads.filter(t => t.path === path) : []);
+const threadsOn = path => (branchPR && branchPR.number === ownPR() ? sent(branchPR.threads).filter(t => t.path === path) : []);
 
 // placeThreads puts each thread of the branch's pull request on the line on disk that has the text
 // its line has at the head: the same line, else the nearest one. Other threads go to the bar.
@@ -717,19 +717,6 @@ function closeEditor(v) {
   v.editor = null;
   if (b?.loaded) drawBox(v, b);
 }
-
-// ----- Keys: a note on the current line -----
-
-const typing = () => !!document.activeElement?.closest('textarea, input');
-
-onKey('addNote', () => {
-  const v = openView();
-  if (!v?.scroll || typing()) return false;
-  const row = curRow(v);
-  if (!row) return;
-  setCur(v, row);
-  openEditor(v, row.closest('.fbox').dataset.path, Number(row.dataset.n), row.dataset.t);
-});
 
 
 // placeThreadsAll finds the line on disk of every open thread, also of those whose box is not

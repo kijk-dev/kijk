@@ -24,7 +24,7 @@ type Options struct {
 
 // Register adds the routes of one folder's views to mux. The caller guards mux.
 func Register(mux *http.ServeMux, rts *Roots, o Options) {
-	a := &api{roots: rts, index: newIndexCache(), hl: newHlCache(), cacheDir: o.CacheDir, ranges: &prRanges{m: map[string][2]string{}}}
+	a := &api{roots: rts, index: newIndexCache(), hl: newHlCache(), cacheDir: o.CacheDir, ranges: &prRanges{m: map[string][2]string{}, writes: map[string]git.Write{}}}
 	if o.Web != nil {
 		ec := newEngineCache(o.CacheDir, o.Version)
 		mux.HandleFunc("GET /diagram", serveFrame(o.Web, ec))
@@ -50,6 +50,12 @@ func Register(mux *http.ServeMux, rts *Roots, o Options) {
 	mux.HandleFunc("GET /api/prs", a.prs)
 	mux.HandleFunc("GET /api/pr/view", a.prView)
 	mux.HandleFunc("GET /api/pr/log", a.prLog)
+	mux.HandleFunc("POST /api/pr/comment", a.write(a.prComment))
+	mux.HandleFunc("POST /api/pr/comment/edit", a.write(a.prEdit))
+	mux.HandleFunc("POST /api/pr/comment/delete", a.write(a.prDelete))
+	mux.HandleFunc("POST /api/pr/resolve", a.write(a.prResolve))
+	mux.HandleFunc("POST /api/pr/summary", a.write(a.prSummary))
+	mux.HandleFunc("POST /api/pr/submit", a.write(a.prSubmit))
 	mux.HandleFunc("GET /api/commit-files", a.commitFiles)
 	mux.HandleFunc("POST /api/fetch", a.gitAction(func(req actionRequest) (string, error) { return git.Fetch(req.Root) }))
 	mux.HandleFunc("POST /api/push", a.gitAction(func(req actionRequest) (string, error) { return git.Push(req.Root) }))

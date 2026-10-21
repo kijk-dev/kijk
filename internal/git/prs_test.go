@@ -54,6 +54,10 @@ func TestParseGithubList(t *testing.T) {
 	if got := rows(res.PRs); got != want {
 		t.Errorf("got\n%s\nwant\n%s", got, want)
 	}
+	// Only your own pending review is visible, so its comments are your drafts.
+	if res.PRs[0].Drafts != 3 || res.PRs[1].Drafts != 0 {
+		t.Errorf("drafts %d %d, want 3 0", res.PRs[0].Drafts, res.PRs[1].Drafts)
+	}
 	if res.Me != "you" || res.Total != 41 {
 		t.Errorf("me %q, total %d", res.Me, res.Total)
 	}
@@ -115,7 +119,11 @@ func reviewers(rs []Reviewer) string {
 func comments(cs []Comment) string {
 	var s []string
 	for _, c := range cs {
-		s = append(s, c.Author+": "+c.Body)
+		if c.Draft {
+			s = append(s, "draft "+c.ID+" "+c.Author+": "+c.Body)
+		} else {
+			s = append(s, c.Author+": "+c.Body)
+		}
 	}
 	return strings.Join(s, " | ")
 }
@@ -123,7 +131,16 @@ func comments(cs []Comment) string {
 func threads(ts []Thread) string {
 	var s []string
 	for _, t := range ts {
-		s = append(s, fmt.Sprintf("%s %s:%d old=%v orig=%d resolved=%v outdated=%v was=%q [%s]", t.ID, t.Path, t.Line, t.Old, t.OrigLine, t.Resolved, t.Outdated, t.Was, comments(t.Comments)))
+		var can []string
+		for _, c := range []struct {
+			on   bool
+			name string
+		}{{t.Draft, "draft"}, {t.CanReply, "reply"}, {t.CanResolve, "resolve"}, {t.CanUnresolve, "unresolve"}} {
+			if c.on {
+				can = append(can, c.name)
+			}
+		}
+		s = append(s, fmt.Sprintf("%s %s:%d old=%v orig=%d resolved=%v outdated=%v was=%q %v [%s]", t.ID, t.Path, t.Line, t.Old, t.OrigLine, t.Resolved, t.Outdated, t.Was, can, comments(t.Comments)))
 	}
 	return strings.Join(s, "\n")
 }
@@ -145,12 +162,21 @@ func TestParseGithubPRView(t *testing.T) {
 	if got, want := comments(pr.Comments), "tim: Do we want the attempt number in the log? | ghost: From a deleted account | priya: Looks good."; got != want {
 		t.Errorf("conversation %s\nwant %s", got, want)
 	}
-	want := `T1 internal/webhook/retry.go:27 old=false orig=27 resolved=false outdated=false was="\t\tif !retryable(err) {" [tim: Should a 429 count as retryable? | sanne: Good point.]
-T2 internal/webhook/retry.go:31 old=false orig=31 resolved=true outdated=false was="\t\tselect {" [priya: Check ctx before the first sleep?]
-T3 internal/webhook/retry.go:0 old=false orig=40 resolved=false outdated=true was="\ttime.Sleep(500 * time.Millisecond)" [tim: Name this delay.]
-T4 internal/webhook/legacy.go:3 old=true orig=3 resolved=false outdated=false was="func old() {}" [tim: Was anyone still calling this?]`
+	// Your pending comments are drafts: a reply in T1, and T5, a new comment of only a draft.
+	want := `T1 internal/webhook/retry.go:27 old=false orig=27 resolved=false outdated=false was="\t\tif !retryable(err) {" [reply resolve] [tim: Should a 429 count as retryable? | sanne: Good point. | draft C3 you: My draft]
+T2 internal/webhook/retry.go:31 old=false orig=31 resolved=true outdated=false was="\t\tselect {" [reply unresolve] [priya: Check ctx before the first sleep?]
+T3 internal/webhook/retry.go:0 old=false orig=40 resolved=false outdated=true was="\ttime.Sleep(500 * time.Millisecond)" [] [tim: Name this delay.]
+T4 internal/webhook/legacy.go:3 old=true orig=3 resolved=false outdated=false was="func old() {}" [] [tim: Was anyone still calling this?]
+T5 go.mod:4 old=false orig=4 resolved=false outdated=false was="x" [draft] [draft C9 you: Only a draft]`
 	if got := threads(pr.Threads); got != want {
 		t.Errorf("threads\n%s\nwant\n%s", got, want)
+	}
+	if pr.Drafts != 2 {
+		t.Errorf("drafts %d, want 2", pr.Drafts)
+	}
+	// The summary is the body of your pending review.
+	if pr.Summary != "Looks good, one question." {
+		t.Errorf("summary %q", pr.Summary)
 	}
 }
 
@@ -170,9 +196,9 @@ func TestParseGitlabPRView(t *testing.T) {
 		t.Errorf("conversation %s", got)
 	}
 	// A note written on another head is outdated; a note on the old side is on a removed line.
-	want := `gid://gitlab/Discussion/a retry.go:27 old=false orig=27 resolved=false outdated=false was="" [tim: Should a 429 count? | sanne: Yes.]
-gid://gitlab/Discussion/b retry.go:40 old=false orig=40 resolved=false outdated=true was="" [tim: Name this delay.]
-gid://gitlab/Discussion/c legacy.go:3 old=true orig=3 resolved=true outdated=false was="" [tim: Was anyone calling this?]`
+	want := `gid://gitlab/Discussion/a retry.go:27 old=false orig=27 resolved=false outdated=false was="" [reply resolve] [tim: Should a 429 count? | sanne: Yes.]
+gid://gitlab/Discussion/b retry.go:40 old=false orig=40 resolved=false outdated=true was="" [reply resolve] [tim: Name this delay.]
+gid://gitlab/Discussion/c legacy.go:3 old=true orig=3 resolved=true outdated=false was="" [reply unresolve] [tim: Was anyone calling this?]`
 	if got := threads(pr.Threads); got != want {
 		t.Errorf("threads\n%s\nwant\n%s", got, want)
 	}
@@ -223,4 +249,130 @@ func TestPRState(t *testing.T) {
 			t.Errorf("prState(%s, %v) = %s, want %s", c.state, c.draft, got, c.want)
 		}
 	}
+}
+
+// GitLab keeps drafts apart: a reply goes into its thread, a draft on a line is a new comment, and
+// any other is part of the conversation.
+func TestGitlabDrafts(t *testing.T) {
+	var pr PR
+	if err := parseGitlabPR(recorded(t, "gitlab-pr.json"), &pr); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(filepath.Join("testdata", "forge", "gitlab-drafts.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := addGitlabDrafts(&pr, b); err != nil {
+		t.Fatal(err)
+	}
+	want := `gid://gitlab/Discussion/a retry.go:27 old=false orig=27 resolved=false outdated=false was="" [reply resolve] [tim: Should a 429 count? | sanne: Yes. | draft 51 you: Cap it at MaxDelay.]
+gid://gitlab/Discussion/b retry.go:40 old=false orig=40 resolved=false outdated=true was="" [reply resolve] [tim: Name this delay.]
+gid://gitlab/Discussion/c legacy.go:3 old=true orig=3 resolved=true outdated=false was="" [reply unresolve] [tim: Was anyone calling this?]
+draft-52 config.go:16 old=false orig=16 resolved=false outdated=false was="" [draft] [draft 52 you: Is 5 enough?]
+draft-54 legacy.go:3 old=true orig=3 resolved=false outdated=true was="" [draft] [draft 54 you: Why remove this?]`
+	if got := threads(pr.Threads); got != want {
+		t.Errorf("threads\n%s\nwant\n%s", got, want)
+	}
+	if got, want := comments(pr.Comments), "tim: Do we want the attempt number in the log? | draft 55 you: Yes, please."; got != want {
+		t.Errorf("conversation %s\nwant %s", got, want)
+	}
+	// The first draft not on a line and not a reply is the summary of your review.
+	if pr.Drafts != 4 || pr.Summary != "Looks fine overall." {
+		t.Errorf("drafts %d, summary %q", pr.Drafts, pr.Summary)
+	}
+	// A comment on a whole file is no summary, even when it is the oldest draft not on a line.
+	var file PR
+	if err := addGitlabDrafts(&file, []byte(`[{"id":53,"note":"Fine.","position":null},{"id":40,"note":"About a.go","position":{"position_type":"file","new_path":"a.go"}}]`)); err != nil {
+		t.Fatal(err)
+	}
+	if file.Summary != "Fine." {
+		t.Errorf("summary %q", file.Summary)
+	}
+	// A reply to a comment not on a line says whom it answers.
+	if r := pr.Comments[1].ReplyTo; r != "tim" {
+		t.Errorf("reply to %q", r)
+	}
+}
+
+// kijk asks a GitLab server its version once while it runs, and asks again after a failure.
+func TestGitlabVersion(t *testing.T) {
+	gitlabVersions.Clear()
+	t.Cleanup(gitlabVersions.Clear)
+	gittest.FakeTool(t, "glab", gittest.Rule{Err: "connection refused\n", Exit: 1})
+	if v := gitlabVersion("gitlab.acme.dev"); v != "" {
+		t.Errorf("version %q after a failure", v)
+	}
+	args := gittest.FakeTool(t, "glab", gittest.Rule{Has: "version", Out: `{"version":"17.4.1-ee","revision":"abc"}`})
+	if v := gitlabVersion("gitlab.acme.dev"); v != "17.4.1-ee" {
+		t.Errorf("version %q", v)
+	}
+	if a := strings.Join(args(), " "); a != "api --hostname gitlab.acme.dev version" {
+		t.Errorf("glab was called with %s", a)
+	}
+	gittest.FakeTool(t, "glab", gittest.Rule{Err: "should not be asked\n", Exit: 1})
+	if v := gitlabVersion("gitlab.acme.dev"); v != "17.4.1-ee" {
+		t.Errorf("version %q the second time", v)
+	}
+}
+
+func TestWriteRules(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		got  Write
+		want Write
+	}{
+		{"teammate on GitHub", githubWrite(&PR{PRRow: PRRow{Author: "sanne"}, Me: "you"}), Write{OK: true, Approve: true, Changes: true}},
+		{"own on GitHub", githubWrite(&PR{PRRow: PRRow{Author: "you"}, Me: "you"}),
+			Write{OK: true, Why: "You cannot approve or request changes on your own pull request"}},
+		{"GitLab 19.6", gitlabWrite("19.6.0-pre"), Write{OK: true, Approve: true, Changes: true}},
+		{"GitLab 18.9", gitlabWrite("18.9.0"), Write{OK: true, Approve: true, Changes: true}},
+		{"GitLab 17.4", gitlabWrite("17.4.1-ee"), Write{OK: true, Approve: true, Why: "Request changes needs GitLab 18.9. This server runs 17.4."}},
+		{"GitLab 16.3", gitlabWrite("16.3.0"), Write{OK: true, Approve: true, Why: "Request changes needs GitLab 18.9. This server runs 16.3."}},
+		{"GitLab 15.11", gitlabWrite("15.11.13"), Write{Note: "Reviews from kijk need GitLab 16.3. This server runs 15.11."}},
+		{"GitLab unknown", gitlabWrite(""), Write{OK: true, Approve: true, Why: "Request changes needs GitLab 18.9. kijk cannot read this server's version."}},
+	} {
+		if c.got != c.want {
+			t.Errorf("%s: %+v, want %+v", c.name, c.got, c.want)
+		}
+	}
+}
+
+func TestViewGitlabPR(t *testing.T) {
+	gittest.Isolate(t)
+	repo := gittest.Repo(t)
+	gittest.Run(t, repo, "remote", "add", "origin", "https://gitlab.com/acme/shop.git")
+	mr, err := os.ReadFile(filepath.Join("testdata", "forge", "gitlab-pr.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	drafts, err := os.ReadFile(filepath.Join("testdata", "forge", "gitlab-drafts.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		version, drafts string
+		want            int
+		write           Write
+	}{
+		{"17.4.1-ee", string(drafts), 4, Write{OK: true, Approve: true, Why: "Request changes needs GitLab 18.9. This server runs 17.4."}},
+		{"15.11.0", "", 0, Write{Note: "Reviews from kijk need GitLab 16.3. This server runs 15.11."}},
+		{"18.9.0", "", 0, Write{Note: "Cannot read your drafts: glab: 403 Forbidden"}},
+	} {
+		gitlabVersions.Clear()
+		rules := []gittest.Rule{{Has: "mergeRequest(iid", Out: string(mr)}, {Has: "gitlab.com version", Out: `{"version":"` + c.version + `"}`}}
+		if c.drafts != "" {
+			rules = append(rules, gittest.Rule{Has: "acme%2Fshop/merge_requests/12/draft_notes", Out: c.drafts})
+		} else {
+			rules = append(rules, gittest.Rule{Has: "draft_notes", Err: "403 Forbidden\n", Exit: 1})
+		}
+		gittest.FakeTool(t, "glab", rules...)
+		pr, _, err := ViewPR(repo, 12)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if pr.Drafts != c.want || pr.Write != c.write {
+			t.Errorf("GitLab %s: drafts %d, write %+v", c.version, pr.Drafts, pr.Write)
+		}
+	}
+	gitlabVersions.Clear()
 }

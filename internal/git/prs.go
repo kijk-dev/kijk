@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os/exec"
 	"regexp"
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 // PRRow is one open pull request in the PR list.
@@ -26,6 +28,7 @@ type PRRow struct {
 	CI        string `json:"ci,omitempty"` // "passed", "failed" or "running"
 	Requested bool   `json:"requested,omitempty"`
 	URL       string `json:"url,omitempty"`
+	Drafts    int    `json:"drafts,omitempty"` // yours, not sent yet; GitHub only
 }
 
 // PRList is the open pull requests of the repo behind origin, newest activity first.
@@ -110,9 +113,21 @@ func addRows(res *PRList, rows []PRRow, asked bool) {
 	}
 }
 
-// graphQL runs a query with gh or glab and hands the data to parse. Strings go as -f, numbers as
-// -F, in name order, so a call reads the same each time.
+// graphQL runs a query with gh or glab and hands the data to parse.
 func graphQL[T any](tool string, f *forge, query string, vars map[string]any, out *T, parse func([]byte, *T) error) error {
+	data, errs, err := callGraphQL(tool, f, query, vars)
+	if err != nil {
+		return err
+	}
+	if len(errs) > 0 && (len(data) == 0 || string(data) == "null") {
+		return errors.New(errs[0])
+	}
+	return parse(data, out)
+}
+
+// callGraphQL gives the data and the error messages of a GraphQL call. Strings go as -f, numbers
+// as -F, in name order, so a call reads the same each time.
+func callGraphQL(tool string, f *forge, query string, vars map[string]any) (json.RawMessage, []string, error) {
 	args := []string{"api", "graphql", "--hostname", f.Host, "-f", "query=" + query}
 	keys := make([]string, 0, len(vars))
 	for k := range vars {
@@ -129,7 +144,7 @@ func graphQL[T any](tool string, f *forge, query string, vars map[string]any, ou
 	}
 	b, err := runTool(tool, args...)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	var env struct {
 		Data   json.RawMessage `json:"data"`
@@ -138,16 +153,18 @@ func graphQL[T any](tool string, f *forge, query string, vars map[string]any, ou
 		} `json:"errors"`
 	}
 	if err := json.Unmarshal(b, &env); err != nil {
-		return err
+		return nil, nil, err
 	}
-	if len(env.Errors) > 0 && (len(env.Data) == 0 || string(env.Data) == "null") {
-		return errors.New(env.Errors[0].Message)
+	var errs []string
+	for _, e := range env.Errors {
+		errs = append(errs, e.Message)
 	}
-	return parse(env.Data, out)
+	return env.Data, errs, nil
 }
 
 const githubRow = `fragment row on PullRequest { number title isDraft url createdAt headRefName baseRefName
-  additions deletions author { login } commits(last: 1) { nodes { commit { statusCheckRollup { state } } } } }`
+  additions deletions author { login } commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
+  pending: reviews(states: PENDING, first: 1) { nodes { comments { totalCount } } } }`
 
 const githubListQuery = `query($owner: String!, $name: String!, $asked: String!) {
   viewer { login }
@@ -184,6 +201,11 @@ type githubRowJSON struct {
 			}
 		}
 	}
+	Pending *struct {
+		Nodes []struct {
+			Comments struct{ TotalCount int }
+		}
+	}
 }
 
 func (r githubRowJSON) row() PRRow {
@@ -194,6 +216,10 @@ func (r githubRowJSON) row() PRRow {
 	}
 	if n := r.Commits.Nodes; len(n) > 0 && n[0].Commit.StatusCheckRollup != nil {
 		p.CI = rollupCI(n[0].Commit.StatusCheckRollup.State)
+	}
+	// Others' pending reviews are not visible, so this one is yours.
+	if r.Pending != nil && len(r.Pending.Nodes) > 0 {
+		p.Drafts = r.Pending.Nodes[0].Comments.TotalCount
 	}
 	return p
 }
@@ -429,9 +455,13 @@ type PR struct {
 	Threads   []Thread   `json:"threads"`
 	Checks    *Checks    `json:"checks,omitempty"`
 	Me        string     `json:"me,omitempty"`
+	Drafts    int        `json:"drafts"`  // your comments not sent yet
+	Summary   string     `json:"summary"` // of your review, held on the forge until you submit it
+	Write     Write      `json:"write"`
 
 	rollup   *githubRollup // read into Checks once the head is in the repo
 	pipeline *gitlabPipeline
+	talk     map[string]string // GitLab: the discussions not on a line, by id, with their first author
 }
 
 type Reviewer struct {
@@ -440,11 +470,15 @@ type Reviewer struct {
 }
 
 type Comment struct {
+	ID     string `json:"id,omitempty"`
 	Author string `json:"author"`
-	At     string `json:"at"`
+	At     string `json:"at,omitempty"`
 	Body   string `json:"body"`
 	HTML   string `json:"html,omitempty"` // set by the viewer
 	URL    string `json:"url,omitempty"`
+	Draft  bool   `json:"draft,omitempty"` // yours, sent with your review
+	// ReplyTo is whom a draft answers when it is a reply to a comment not on a line.
+	ReplyTo string `json:"replyTo,omitempty"`
 }
 
 // Thread is a discussion on a line of the diff.
@@ -459,6 +493,20 @@ type Thread struct {
 	Resolved bool      `json:"resolved,omitempty"`
 	Outdated bool      `json:"outdated,omitempty"`
 	Comments []Comment `json:"comments"`
+
+	Draft        bool `json:"draft,omitempty"` // only your drafts: a new comment no one else sees yet
+	CanReply     bool `json:"canReply,omitempty"`
+	CanResolve   bool `json:"canResolve,omitempty"`
+	CanUnresolve bool `json:"canUnresolve,omitempty"`
+}
+
+// Write says what kijk may write to a pull request, and why not.
+type Write struct {
+	OK      bool   `json:"ok"`
+	Note    string `json:"note,omitempty"` // why not, when OK is false
+	Approve bool   `json:"approve"`
+	Changes bool   `json:"changes"`       // Request changes
+	Why     string `json:"why,omitempty"` // why Approve or Request changes is off
 }
 
 // ViewPR asks the forge for pull request n.
@@ -483,7 +531,153 @@ func ViewPR(root string, n int) (*PR, *forge, error) {
 		}
 		return nil, f, err
 	}
+	if tool == "gh" {
+		pr.Write = githubWrite(&pr)
+	} else {
+		pr.Write = gitlabWrite(gitlabVersion(f.Host))
+		if pr.Write.OK {
+			// Submit publishes every draft, so kijk writes only when it can show them all.
+			if out, err := runTool("glab", "api", "--hostname", f.Host, gitlabMR(f, n)+"/draft_notes"); err != nil {
+				pr.Write = Write{Note: "Cannot read your drafts: " + toolNote(tool, err)}
+			} else if err := addGitlabDrafts(&pr, out); err != nil {
+				pr.Write = Write{Note: "Cannot read your drafts: " + err.Error()}
+			}
+		}
+	}
+	if pr.State == "merged" || pr.State == "closed" {
+		word := "pull request"
+		if tool == "glab" {
+			word = "merge request"
+		}
+		pr.Write = Write{Note: "This " + word + " is " + pr.State + "."}
+	}
 	return &pr, f, nil
+}
+
+// gitlabMR is the REST path of merge request n.
+func gitlabMR(f *forge, n int) string {
+	return "projects/" + url.PathEscape(f.Path) + "/merge_requests/" + strconv.Itoa(n)
+}
+
+func githubWrite(pr *PR) Write {
+	if pr.Me != "" && pr.Author == pr.Me {
+		return Write{OK: true, Why: "You cannot approve or request changes on your own pull request"}
+	}
+	return Write{OK: true, Approve: true, Changes: true}
+}
+
+var versionRe = regexp.MustCompile(`^(\d+)\.(\d+)`)
+
+// gitlabWrite: draft notes on a line need GitLab 16.3, Request changes 18.9.
+func gitlabWrite(version string) Write {
+	m := versionRe.FindStringSubmatch(version)
+	if m == nil {
+		return Write{OK: true, Approve: true, Why: "Request changes needs GitLab 18.9. kijk cannot read this server's version."}
+	}
+	major, _ := strconv.Atoi(m[1])
+	minor, _ := strconv.Atoi(m[2])
+	at := func(a, b int) bool { return major > a || major == a && minor >= b }
+	runs := " This server runs " + m[1] + "." + m[2] + "."
+	switch {
+	case !at(16, 3):
+		return Write{Note: "Reviews from kijk need GitLab 16.3." + runs}
+	case !at(18, 9):
+		return Write{OK: true, Approve: true, Why: "Request changes needs GitLab 18.9." + runs}
+	}
+	return Write{OK: true, Approve: true, Changes: true}
+}
+
+// gitlabVersions keeps each GitLab server's version, asked once while kijk runs.
+var gitlabVersions sync.Map
+
+// gitlabVersion is the version a GitLab server says it runs, such as "17.4.1-ee"; empty when it
+// does not say. A failure is not kept, so the next pull request asks again.
+func gitlabVersion(host string) string {
+	if v, ok := gitlabVersions.Load(host); ok {
+		return v.(string)
+	}
+	out, err := runTool("glab", "api", "--hostname", host, "version")
+	if err != nil {
+		return ""
+	}
+	var v struct{ Version string }
+	if json.Unmarshal(out, &v) != nil || v.Version == "" {
+		return ""
+	}
+	gitlabVersions.Store(host, v.Version)
+	return v.Version
+}
+
+type gitlabDraft struct {
+	ID           int    `json:"id"`
+	Note         string `json:"note"`
+	DiscussionID string `json:"discussion_id"`
+	Position     *struct {
+		OldPath string `json:"old_path"`
+		NewPath string `json:"new_path"`
+		OldLine int    `json:"old_line"`
+		NewLine int    `json:"new_line"`
+		HeadSha string `json:"head_sha"`
+	} `json:"position"`
+}
+
+// general is a draft not on a line, not on a file and not a reply.
+func (d gitlabDraft) general() bool {
+	p := d.Position
+	return d.DiscussionID == "" && (p == nil || p.NewLine == 0 && p.OldLine == 0 && p.NewPath == "" && p.OldPath == "")
+}
+
+// summaryDraft is the id of the summary of your review: your oldest general draft; 0 for none.
+func summaryDraft(ds []gitlabDraft) int {
+	id := 0
+	for _, d := range ds {
+		if d.general() && (id == 0 || d.ID < id) {
+			id = d.ID
+		}
+	}
+	return id
+}
+
+// addGitlabDrafts adds your draft notes: a reply goes into its thread, a draft on a line is a new
+// comment, any other is part of the conversation.
+func addGitlabDrafts(pr *PR, out []byte) error {
+	var ds []gitlabDraft
+	if err := json.Unmarshal(out, &ds); err != nil {
+		return err
+	}
+	summary := summaryDraft(ds)
+	for _, d := range ds {
+		c := Comment{ID: strconv.Itoa(d.ID), Author: pr.Me, Body: d.Note, Draft: true}
+		pr.Drafts++
+		if d.DiscussionID != "" {
+			i := slices.IndexFunc(pr.Threads, func(t Thread) bool { return strings.TrimPrefix(t.ID, "gid://gitlab/Discussion/") == d.DiscussionID })
+			if i >= 0 {
+				pr.Threads[i].Comments = append(pr.Threads[i].Comments, c)
+			} else {
+				c.ReplyTo = pr.talk[d.DiscussionID] // a reply to a comment not on a line
+				pr.Comments = append(pr.Comments, c)
+			}
+			continue
+		}
+		p := d.Position
+		if d.ID == summary {
+			pr.Drafts--
+			pr.Summary = c.Body
+			continue
+		}
+		if p == nil || p.NewLine == 0 && p.OldLine == 0 {
+			pr.Comments = append(pr.Comments, c) // also a comment on a whole file, which has no line to show under
+			continue
+		}
+		th := Thread{ID: "draft-" + c.ID, Path: cmp.Or(p.NewPath, p.OldPath), Line: p.NewLine, Draft: true, Comments: []Comment{c}}
+		if p.NewLine == 0 {
+			th.Path, th.Line, th.Old = cmp.Or(p.OldPath, p.NewPath), p.OldLine, true
+		}
+		th.OrigLine = th.Line
+		th.Outdated = p.HeadSha != "" && p.HeadSha != pr.HeadOid
+		pr.Threads = append(pr.Threads, th)
+	}
+	return nil
 }
 
 const githubPRQuery = `query($owner: String!, $name: String!, $n: Int!) {
@@ -495,9 +689,11 @@ const githubPRQuery = `query($owner: String!, $name: String!, $n: Int!) {
       reviewRequests(first: 30) { nodes { requestedReviewer { __typename ... on User { login } ... on Team { name } ... on Bot { login } ... on Mannequin { login } } } }
       latestReviews(first: 30) { nodes { author { login } state } }
       reviews(first: 50) { nodes { author { login } state body createdAt url } }
+      pending: reviews(states: PENDING, first: 1) { nodes { body viewerDidAuthor } }
       comments(first: 100) { nodes { author { login } body createdAt url } }
       reviewThreads(first: 100) { nodes { id isResolved isOutdated path line originalLine diffSide
-        comments(first: 50) { nodes { author { login } body createdAt url state diffHunk } } } }
+        viewerCanReply viewerCanResolve viewerCanUnresolve
+        comments(first: 50) { nodes { id author { login } body createdAt url state diffHunk } } } }
       head: commits(last: 1) { nodes { commit { oid statusCheckRollup { state contexts(first: 100) { nodes {
         __typename
         ... on CheckRun { databaseId name status conclusion startedAt completedAt detailsUrl
@@ -517,6 +713,7 @@ func login(a *githubAuthor) string {
 }
 
 type githubCommentJSON struct {
+	ID        string
 	Author    *githubAuthor
 	Body      string
 	CreatedAt string
@@ -526,7 +723,7 @@ type githubCommentJSON struct {
 }
 
 func (c githubCommentJSON) comment() Comment {
-	return Comment{Author: login(c.Author), At: c.CreatedAt, Body: c.Body, URL: webURL(c.URL)}
+	return Comment{ID: c.ID, Author: login(c.Author), At: c.CreatedAt, Body: c.Body, URL: webURL(c.URL), Draft: c.State == "PENDING"}
 }
 
 func parseGithubPRView(data []byte, pr *PR) error {
@@ -554,19 +751,26 @@ func parseGithubPRView(data []byte, pr *PR) error {
 				Reviews struct {
 					Nodes []githubCommentJSON
 				}
+				Pending struct {
+					Nodes []struct {
+						Body            string
+						ViewerDidAuthor bool
+					}
+				}
 				Comments struct {
 					Nodes []githubCommentJSON
 				}
 				ReviewThreads struct {
 					Nodes []struct {
-						ID           string
-						IsResolved   bool
-						IsOutdated   bool
-						Path         string
-						Line         int
-						OriginalLine int
-						DiffSide     string
-						Comments     struct {
+						ID                                                   string
+						IsResolved                                           bool
+						IsOutdated                                           bool
+						Path                                                 string
+						Line                                                 int
+						OriginalLine                                         int
+						DiffSide                                             string
+						ViewerCanReply, ViewerCanResolve, ViewerCanUnresolve bool
+						Comments                                             struct {
 							Nodes []githubCommentJSON
 						}
 					}
@@ -618,6 +822,11 @@ func parseGithubPRView(data []byte, pr *PR) error {
 	for _, c := range p.Comments.Nodes {
 		pr.Comments = append(pr.Comments, c.comment())
 	}
+	for _, r := range p.Pending.Nodes {
+		if r.ViewerDidAuthor {
+			pr.Summary = r.Body
+		}
+	}
 	for _, r := range p.Reviews.Nodes {
 		if strings.TrimSpace(r.Body) != "" && r.State != "PENDING" {
 			pr.Comments = append(pr.Comments, r.comment())
@@ -626,10 +835,14 @@ func parseGithubPRView(data []byte, pr *PR) error {
 	slices.SortStableFunc(pr.Comments, func(a, b Comment) int { return strings.Compare(a.At, b.At) })
 	for _, t := range p.ReviewThreads.Nodes {
 		th := Thread{ID: t.ID, Path: t.Path, Old: t.DiffSide == "LEFT", Line: t.Line, OrigLine: t.OriginalLine,
-			Resolved: t.IsResolved, Outdated: t.IsOutdated || t.Line == 0, Comments: []Comment{}}
+			Resolved: t.IsResolved, Outdated: t.IsOutdated || t.Line == 0, Comments: []Comment{}, Draft: true,
+			CanReply: t.ViewerCanReply, CanResolve: t.ViewerCanResolve, CanUnresolve: t.ViewerCanUnresolve}
 		for _, c := range t.Comments.Nodes {
+			// Your pending comments are drafts; a thread of only drafts is a new comment of yours.
 			if c.State == "PENDING" {
-				continue
+				pr.Drafts++
+			} else {
+				th.Draft = false
 			}
 			if th.Was == "" && c.DiffHunk != "" {
 				lines := strings.Split(strings.TrimRight(c.DiffHunk, "\n"), "\n")
@@ -640,6 +853,9 @@ func parseGithubPRView(data []byte, pr *PR) error {
 			th.Comments = append(th.Comments, c.comment())
 		}
 		if len(th.Comments) > 0 {
+			if th.Draft {
+				th.CanReply, th.CanResolve, th.CanUnresolve = false, false, false
+			}
 			pr.Threads = append(pr.Threads, th)
 		}
 	}
@@ -799,7 +1015,8 @@ func parseGitlabPR(data []byte, pr *PR) error {
 			}
 			if th == nil && n.Position != nil {
 				p := n.Position
-				th = &Thread{ID: d.ID, Path: cmp.Or(p.NewPath, p.FilePath), Line: p.NewLine, Resolved: d.Resolved, Comments: []Comment{}}
+				th = &Thread{ID: d.ID, Path: cmp.Or(p.NewPath, p.FilePath), Line: p.NewLine, Resolved: d.Resolved, Comments: []Comment{},
+					CanReply: true, CanResolve: d.Resolvable && !d.Resolved, CanUnresolve: d.Resolvable && d.Resolved}
 				if p.NewLine == 0 {
 					th.Path, th.Line, th.Old = cmp.Or(p.OldPath, p.FilePath), p.OldLine, true
 				}
@@ -812,6 +1029,12 @@ func parseGitlabPR(data []byte, pr *PR) error {
 			if th != nil {
 				th.Comments = append(th.Comments, c)
 			} else {
+				if pr.talk == nil {
+					pr.talk = map[string]string{}
+				}
+				if id := strings.TrimPrefix(d.ID, "gid://gitlab/Discussion/"); pr.talk[id] == "" {
+					pr.talk[id] = c.Author
+				}
 				pr.Comments = append(pr.Comments, c)
 			}
 		}
