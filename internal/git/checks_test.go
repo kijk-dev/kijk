@@ -3,6 +3,7 @@ package git
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -142,13 +143,27 @@ func TestJobLog(t *testing.T) {
 	if len(lines) != 30 || lines[0] != "line 12" || lines[29] != "--- FAIL: TestBackoff" {
 		t.Errorf("lines %q", lines)
 	}
-	if a := strings.Join(args(), " "); a != "api --hostname github.com repos/acme/shop/actions/jobs/3/logs" {
+	// A log holds color codes, which gh prints only when asked to; kijk cuts them off itself.
+	if a := strings.Join(args(), " "); a != "api --hostname github.com --allow-escape-sequences repos/acme/shop/actions/jobs/3/logs" {
 		t.Errorf("gh was called with %s", a)
 	}
 	for _, bad := range []string{"", "3; rm", "../1", "/acme/shop/-/jobs/1"} {
 		if _, err := JobLog(repo, bad); err == nil {
 			t.Errorf("JobLog(%q) should fail", bad)
 		}
+	}
+}
+
+// A gh from before --allow-escape-sequences gets the call again without it.
+func TestJobLogOldGh(t *testing.T) {
+	gittest.Isolate(t)
+	repo := gittest.Repo(t)
+	gittest.Run(t, repo, "remote", "add", "origin", "git@github.com:acme/shop.git")
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "gh"), []byte("#!/bin/sh\ncase \"$*\" in *--allow-escape-sequences*) echo 'unknown flag: --allow-escape-sequences' >&2; exit 1 ;; esac\necho 'line one'\n"), 0o755)
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	if lines, err := JobLog(repo, "3"); err != nil || strings.Join(lines, "|") != "line one" {
+		t.Errorf("lines %q %v", lines, err)
 	}
 }
 
@@ -163,6 +178,12 @@ func TestJobLogGitlab(t *testing.T) {
 	}
 	if strings.Join(lines, "|") != "$ go test|ok|FAIL shop 0.4s" {
 		t.Errorf("lines %q", lines)
+	}
+
+	// A newer runner starts each line with a time and the stream it came from.
+	fakeTool(t, "glab", "2026-10-21T16:30:54.432218Z 00O+section_start:1792600254:cleanup\r\x1b[0K\n2026-10-21T16:30:54.432222Z 00O+\x1b[36;1mCleaning up\x1b[0;m\n2026-10-21T16:30:54.919476Z 00E \x1b[31;1mERROR: Job failed\x1b[0;m\n")
+	if lines, _ := JobLog(repo, "/acme/fork/-/jobs/42"); strings.Join(lines, "|") != "Cleaning up|ERROR: Job failed" {
+		t.Errorf("lines with times %q", lines)
 	}
 	if a := strings.Join(args(), " "); a != "api --hostname gitlab.com projects/acme%2Ffork/jobs/42/trace" {
 		t.Errorf("glab was called with %s", a)
