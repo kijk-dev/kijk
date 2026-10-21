@@ -646,6 +646,12 @@ func TestBrowser(t *testing.T) {
 		b.act("reload", chromedp.Reload())
 		b.press("prsTab")
 		b.waitFor("This branch and the note", `!document.querySelector('#prs-branch').hidden && document.querySelector('#prs-branch .pr-note')?.textContent === 'Log in with gh auth login to see the status' && !document.querySelector('#prs-branch .back')`)
+		// On the main line there is no This branch, so the list's place says it.
+		run(t, repo, "stash", "-q", "-u")
+		run(t, repo, "checkout", "-q", "main")
+		b.waitFor("the note on main", `!document.querySelector('#prs-list').hidden && document.querySelector('#prs-list .note')?.textContent === 'Log in with gh auth login to see the status'`)
+		run(t, repo, "checkout", "-q", "fix-login")
+		run(t, repo, "stash", "pop", "-q")
 		os.Remove(filepath.Join(forge.dir, "gh-error.txt"))
 
 		cmd := exec.Command(exe, "-port", fmt.Sprint(k.port), "-no-open", "https://github.com/acme/billing/pull/12")

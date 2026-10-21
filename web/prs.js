@@ -347,8 +347,8 @@ function drawList() {
     if (!hits.length) parts.push(el('p', 'prmore', `No open ${w.kind} matches “${query}”.`));
   } else {
     if (onBranch()) parts.push(section('This branch', ''), ul([thisBranch()]));
-    if (list?.note) {
-      parts.push(el('p', 'note', list.note));
+    if (list?.note || (line?.forge && !maybeList())) {
+      parts.push(el('p', 'note', list?.note || line.note)); // the tool is missing or not logged in
     } else if (!list) {
       parts.push(el('p', 'note', 'Loading…'));
     } else {
