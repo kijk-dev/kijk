@@ -21,8 +21,9 @@ in code, UI text and commit messages.
   folder: `folder.js`, `view.js`, `tabs.js`, `tree.js`, `git.js`, `find.js`, `diagram.js`, `pr.js`,
   the PRs tab (`prs.js` the list and an opened pull request, `review.js` the folder's own branch,
   `boxes.js` the file boxes of Branch changes and Changes, `changes.js`, `threads.js`, `drafts.js`
-  what writes a review, `overview.js` with the checks graph, `prdata.js` the answers they share),
-  `api.js`, `keys.js`, `tip.js`, `viewer.css`, and `engines/` with one file per diagram engine.
+  what writes a review, `overview.js` with the checks graph, `prdata.js` the answers they share,
+  `viewed.js` the viewed marks), `api.js`, `keys.js`, `tip.js`, `viewer.css`, and `engines/` with
+  one file per diagram engine.
   The app side is the page around it: `app.js` (the rail), `status.js`, `app.css` and
   `index.html`. App files may import viewer files; viewer files never import app files, and a
   test in `main_test.go` checks it.
