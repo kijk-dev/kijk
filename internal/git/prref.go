@@ -101,6 +101,64 @@ func PRFiles(root, base, head string) ([]change, error) {
 	return cs, nil
 }
 
+// Since is what changed in a pull request from a head you reviewed to the head now.
+type Since struct {
+	Files   []change `json:"files"`
+	Commits int      `json:"commits"`
+	Rebased bool     `json:"rebased,omitempty"` // the reviewed head is not in the history now
+}
+
+// PRSince lists the files that changed from the reviewed head from to head, limited to files the
+// pull request changes at either head, so a merge of the target does not bring the target's files.
+func PRSince(root, split, from, head string) (Since, error) {
+	s := Since{Files: []change{}}
+	if !ValidHash(split) || !ValidHash(from) || !ValidHash(head) {
+		return s, ErrBadHash
+	}
+	if from == head {
+		return s, nil
+	}
+	if !hasCommit(root, from) {
+		s.Rebased = true
+		return s, nil
+	}
+	if _, err := Run(root, "merge-base", "--is-ancestor", from, head); err != nil {
+		s.Rebased = true
+		return s, nil
+	}
+	raw, err := Raw(root, "diff", "--no-ext-diff", "--raw", "--no-abbrev", "-z", "-M", from, head)
+	if err != nil {
+		return s, err
+	}
+	ours := map[string]bool{}
+	names := func(a, b string) error {
+		out, err := Raw(root, "diff", "--no-ext-diff", "--name-only", "--no-renames", "-z", a, b)
+		for _, p := range strings.Split(string(out), "\x00") {
+			ours[p] = true
+		}
+		return err
+	}
+	if err := names(split, head); err != nil {
+		return s, err
+	}
+	if old, err := MergeBase(root, split, from); err == nil {
+		if err := names(old, from); err != nil {
+			return s, err
+		}
+	}
+	for _, c := range parseRaw(raw) {
+		if ours[c.Path] || (c.Orig != "" && ours[c.Orig]) {
+			s.Files = append(s.Files, c)
+		}
+	}
+	setCounts(s.Files, numstat(root, "-M", from, head))
+	slices.SortFunc(s.Files, func(x, y change) int { return strings.Compare(x.Path, y.Path) })
+	// Commits of the target that came in with a merge are not the author's.
+	n, _ := Run(root, "rev-list", "--count", head, "^"+from, "^"+split)
+	s.Commits, _ = strconv.Atoi(n)
+	return s, nil
+}
+
 // DeletePRRef removes the refs of a pull request that closed.
 func DeletePRRef(root string, n int) {
 	Run(root, "update-ref", "-d", prRef(n))
