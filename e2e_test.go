@@ -616,6 +616,21 @@ func TestBrowser(t *testing.T) {
 		b.waitFor("the thread copied", `(l => l?.classList.contains('used') && !l.querySelector('input').checked && l.querySelector('.where').textContent.includes('copied'))([...document.querySelectorAll('.copypanel li')].at(-1))`)
 		b.key("Escape", kb.Escape)
 
+		// The agent adds lines above the thread while its box is not drawn: the prompt has its line now.
+		b.click("close Branch changes", `document.querySelector('#filetabs .filetab.active .close')`)
+		b.waitFor("Branch changes closed", `![...document.querySelectorAll('#filetabs .filetab')].some(t => t.textContent.startsWith('Branch changes'))`)
+		sessionPath := filepath.Join(repo, session)
+		src, err := os.ReadFile(sessionPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		write(t, sessionPath, strings.Replace(string(src), "package auth\n", "package auth\n\n// One.\n// Two.\n// Three.\n// Four.\n", 1))
+		b.click("Copy for agent", byText("#prs-branch .reviewbox button", "Copy for agent…"))
+		b.waitFor("the thread at its line on disk", `[...document.querySelectorAll('.copypanel li')].at(-1)?.querySelector('.where').textContent === `+jsString(session+":"+fmt.Sprint(lineOf(string(src), "\tsess, ok := s.lookup(c.Value)")+5)+" · sanne · copied"))
+		b.key("Escape", kb.Escape)
+		write(t, sessionPath, string(src))
+		b.press("prsTab")
+
 		// A failed job of your own branch goes to the agent.
 		b.click("Overview", prsRow("Overview"))
 		b.waitFor("the failed job of #482", `document.querySelector('.md.ov .joblog .jlhead b')?.textContent === 'test (linux)'`)

@@ -732,6 +732,22 @@ onKey('addNote', () => {
 });
 
 
+// placeThreadsAll finds the line on disk of every open thread, also of those whose box is not
+// drawn, so the prompt has the line the thread is on now.
+async function placeThreadsAll() {
+  const key = folder;
+  const ts = openThreads().filter(t => !t.old && t.text != null);
+  const paths = [...new Set(ts.map(t => t.path))];
+  const files = await Promise.all(paths.map(path => fileLines(folder, path)));
+  if (key !== folder) return false;
+  for (const t of ts) {
+    const file = files[paths.indexOf(t.path)];
+    const line = file && nearest(file.texts, t.text, threadLines.get(t.id) || t.line);
+    if (line) threadLines.set(t.id, line);
+  }
+  return true;
+}
+
 // ----- Copy for agent -----
 
 // prompt is the text the agent gets: two fixed lines, then each note under its file and line.
@@ -760,7 +776,7 @@ function closeCopy() {
 }
 
 async function startCopy() {
-  if (!(await placeAll())) return;
+  if (!(await placeAll()) || !(await placeThreadsAll())) return;
   const button = panel.querySelector('[data-k=copy]');
   if (button) openCopy(button);
 }
