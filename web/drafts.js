@@ -375,7 +375,7 @@ export function reviewBox(root, n, res) {
     area.placeholder = 'Summary (optional)';
     area.setAttribute('aria-label', 'Summary');
     // The summary goes to the forge when it is saved, not on every key.
-    const saved = el('div', 'saved', 'Not saved · Ctrl Enter saves it');
+    const saved = el('div', 'saved', `Not saved · ${mac ? '⌘' : 'Ctrl'} Enter saves it`);
     const error = el('div', 'error');
     let known = ''; // the summary the forge had when the box last showed it
     const dirty = () => area.value.trim() !== (box.res.summary || '').trim();
