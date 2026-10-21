@@ -35,6 +35,7 @@ const BIG = 2000;
 const GENERATED = ['go.sum', 'package-lock.json', 'yarn.lock', 'pnpm-lock.yaml', 'Cargo.lock'];
 const lines = f => (f.add || 0) + (f.del || 0);
 const generated = path => GENERATED.includes(path.split('/').pop()) || path.endsWith('.min.js');
+const heavy = f => generated(f.path) || lines(f) > BIG;
 export const HEAD = 34; // px, a box's sticky header
 const AHEAD = 5 * LINE_HEIGHT + HEAD; // a jump puts its target this far below the top
 
@@ -144,7 +145,7 @@ async function updateBoxes(v, change) {
     if (b) b.f = f;
     else b = newBox(v, f);
     v.boxes.set(f.path, b);
-    follow(v, b);
+    followMark(v, b);
     drawHead(v, b);
   }
   for (const [path, b] of old) if (v.boxes.get(path) !== b) v.near.unobserve(b.el);
@@ -168,7 +169,7 @@ async function updateBoxes(v, change) {
 function newBox(v, f) {
   const b = { f, el: el('section', 'fbox'), head: el('div', 'fhead'), body: el('div', 'fbody'), loaded: false, context: 3, json: '', starts: [] };
   b.state = v.src.viewed?.(f) || '';
-  b.open = v.tab.folds?.[f.path] ?? startsOpen(b);
+  b.open = keptOpen(v, b) ?? startsOpen(b);
   b.note = el('div', 'fnote');
   // Until it is drawn, the box is as high as its diff will about be, so the scrollbar is right.
   // The browser skips painting a box far from the screen, and then takes this height for it too.
@@ -183,13 +184,20 @@ function newBox(v, f) {
   return b;
 }
 
-// A viewed file starts folded, as do files whose diff nobody reads.
-const startsOpen = b => !(b.state === 'viewed' || generated(b.f.path) || lines(b.f) > BIG);
+// A viewed file starts folded, as do files whose diff nobody reads, unless they changed since viewed.
+const startsOpen = b => b.state === 'changed' || !(b.state === 'viewed' || heavy(b.f));
+
+// keptOpen is the user's own fold or open of a box, while its viewed mark is as it was then.
+function keptOpen(v, b) {
+  const k = v.tab.folds?.[b.f.path];
+  if (typeof k === 'boolean') return b.state ? undefined : k;
+  return k?.state === b.state ? k.open : undefined;
+}
 
 function showOpen(v, b) {
   b.el.classList.toggle('shut', !b.open);
   b.body.hidden = !b.open;
-  b.note.hidden = b.open || b.state === 'viewed' || !(generated(b.f.path) || lines(b.f) > BIG);
+  b.note.hidden = b.open || b.state === 'viewed' || !heavy(b.f);
   if (!b.note.hidden) {
     const show = el('button', 'more', 'Show');
     show.onclick = () => fold(v, b, true);
@@ -197,23 +205,19 @@ function showOpen(v, b) {
   }
 }
 
-// follow folds a box that became viewed and opens one that is not viewed any more, as a file that
-// changed since. A box folded above the top of the view scrolls to its header.
-function follow(v, b) {
+// followMark folds a box that became viewed and opens one that is not viewed any more, as a file
+// that changed since. The view keeps its place; a box folded across its top scrolls to its header.
+function followMark(v, b) {
   const state = v.src.viewed?.(b.f) || '';
   if (state === b.state) return;
   b.state = state;
-  if (v.tab.folds && b.f.path in v.tab.folds) {
-    const { [b.f.path]: _, ...rest } = v.tab.folds;
-    v.tab.folds = rest;
-    v.save();
-  }
-  const open = startsOpen(b);
+  const open = keptOpen(v, b) ?? startsOpen(b);
   if (open === b.open) return showOpen(v, b);
-  const above = !open && b.el.offsetTop < v.scroll.scrollTop;
+  const a = anchor(v);
   b.open = open;
   showOpen(v, b);
-  if (above) v.scroll.scrollTop = b.el.offsetTop - 12;
+  if (a?.b === b && !open) v.scroll.scrollTop = b.el.offsetTop - 12;
+  else restore(v, a);
   if (open && (!b.loaded || b.stale)) loadBox(v, b);
 }
 
@@ -221,14 +225,14 @@ function follow(v, b) {
 export function marksChanged(v) {
   if (!v.scroll) return;
   for (const b of v.boxes.values()) {
-    follow(v, b);
+    followMark(v, b);
     drawHead(v, b);
   }
 }
 
 function fold(v, b, open) {
   b.open = open;
-  v.tab.folds = { ...v.tab.folds, [b.f.path]: open };
+  v.tab.folds = { ...v.tab.folds, [b.f.path]: v.src.viewed ? { open, state: b.state } : open };
   v.save();
   drawHead(v, b);
   showOpen(v, b);
@@ -252,7 +256,7 @@ export function drawHead(v, b) {
   if (lc) parts.push(lc);
   parts.push(...extra.filter(p => p && !p.classList?.contains('np')));
   parts.push(el('span', 'grow'));
-  b.el.classList.toggle('seen', b.state === 'viewed');
+  b.el.classList.toggle('viewed', b.state === 'viewed');
   if (b.state === 'changed') parts.push(el('span', 'again', 'changed since you viewed it'));
   if (v.src.setViewed) {
     const check = el('label', 'check');
@@ -260,7 +264,7 @@ export function drawHead(v, b) {
     box.type = 'checkbox';
     box.checked = b.state === 'viewed';
     box.onchange = () => {
-      v.src.setViewed(b.f, box.checked);
+      if (!v.src.setViewed(b.f, box.checked)) box.checked = !box.checked;
       v.scroll.focus({ preventScroll: true }); // the header is drawn again; V keeps working
     };
     check.append(box, ' Viewed');
@@ -498,9 +502,9 @@ export function markCurrent() {
   const v = last && isCurrent(last) ? last : null;
   if (!v?.scroll || !v.src.setViewed || !v.scroll.contains(document.activeElement) || document.activeElement.closest('textarea, input')) return false;
   const b = currentBox(v);
-  if (!b) return;
+  if (!b) return false;
   const on = b.state !== 'viewed';
-  v.src.setViewed(b.f, on);
+  if (!v.src.setViewed(b.f, on)) return false;
   if (!on) return;
   const boxes = [...v.boxes.values()];
   const next = boxes.slice(boxes.indexOf(b) + 1).find(x => x.state !== 'viewed');

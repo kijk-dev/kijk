@@ -1083,25 +1083,37 @@ func TestBrowser(t *testing.T) {
 		const ci, readme, retry = ".github/workflows/ci.yml", "README.md", "internal/webhook/retry.go"
 		check := func(path string) string { return fileBox(path) + `?.querySelector('.fhead .check input')` }
 		viewed := func(path string) string {
-			return `(` + fileBox(path) + `?.matches('.seen') && ` + check(path) + `.checked)`
+			return `(` + fileBox(path) + `?.matches('.viewed') && ` + check(path) + `.checked)`
 		}
 		notViewed := func(path string) string {
-			return `(` + check(path) + ` && !` + fileBox(path) + `.matches('.seen') && !` + check(path) + `.checked)`
+			return `(` + check(path) + ` && !` + fileBox(path) + `.matches('.viewed') && !` + check(path) + `.checked)`
 		}
 		shut := func(path string) string { return fileBox(path) + `?.matches('.shut')` }
 		b.waitFor("a Viewed box on each file", `[...document.querySelectorAll('#viewer .fbox')].every(f => f.querySelector('.fhead .check')?.textContent.trim() === 'Viewed' && f.querySelector('.fhead .check').dataset.tip === 'Viewed\nV')`)
 		b.waitFor("nothing viewed yet", notViewed(ci)+` && `+notViewed(readme)+` && `+notViewed(retry))
 
-		// Checked in its header, a file folds; its chevron still opens it.
-		rowCheck := func(name string) string { return prsRow(name) + `?.querySelector('input.seen')` }
+		rowCheck := func(name string) string { return prsRow(name) + `?.querySelector('input.viewedbox')` }
 		rowViewed := func(name string) string {
 			return `(` + prsRow(name) + `?.matches('.viewed') && ` + rowCheck(name) + `.checked)`
 		}
 		count := func(text string) string {
 			return `document.querySelector('#prs-pr .prfiles h3 .viewedcount')?.textContent === ` + jsString(text)
 		}
-		b.waitFor("a Viewed box on each row", `[...document.querySelectorAll('#prs-pr .prfiles li[data-path]:not(.ov)')].every(r => (c => c && !c.checked && c.tabIndex === -1 && c.getAttribute('aria-label') === 'Viewed' && c.dataset.tip === 'Viewed\nV')(r.querySelector('input.seen')))`)
+		b.waitFor("a Viewed box on each row", `[...document.querySelectorAll('#prs-pr .prfiles li[data-path]:not(.ov)')].every(r => (c => c && !c.checked && c.tabIndex === -1 && c.getAttribute('aria-label') === 'Viewed' && c.dataset.tip === 'Viewed\nV')(r.querySelector('input.viewedbox')))`)
 		b.waitFor("none of three viewed", count("0 of 3 viewed"))
+
+		// A row's box keeps the place in Changes, also when its file is above the view.
+		b.evalJS(`(s => s.scrollTop = ` + fileBox(retry) + `.offsetTop + 20)(document.querySelector('.allfiles'))`)
+		b.waitFor("the view inside retry.go", `document.querySelector('.allfiles').scrollTop > `+fileBox(retry)+`.offsetTop`)
+		place := `Math.round(` + fileBox(retry) + `.getBoundingClientRect().top)`
+		at := fmt.Sprint(evalJS[float64](b, place))
+		b.click("the box of ci.yml's row", rowCheck("ci.yml"))
+		b.waitFor("ci.yml viewed, the view in place", viewed(ci)+` && `+shut(ci)+` && Math.abs(`+place+` - `+at+`) < 2`)
+		b.click("the box of ci.yml's row", rowCheck("ci.yml"))
+		b.waitFor("ci.yml open again, the view in place", notViewed(ci)+` && !`+shut(ci)+` && Math.abs(`+place+` - `+at+`) < 2`)
+		b.evalJS(`document.querySelector('.allfiles').scrollTop = 0`)
+
+		// Checked in its header, a file folds; its chevron still opens it.
 		b.click("Viewed of README.md", check(readme))
 		b.waitFor("README.md viewed and folded", viewed(readme)+` && `+shut(readme))
 		b.waitFor("the focus kept in Changes, for V", `document.activeElement === document.querySelector('.allfiles')`)
@@ -1137,16 +1149,37 @@ func TestBrowser(t *testing.T) {
 		b.act("reload", chromedp.Reload())
 		b.waitFor("the marks after a reload", viewed(ci)+` && `+viewed(retry)+` && `+notViewed(readme)+` && `+shut(ci)+` && `+shut(retry))
 
-		// Sanne pushes a change to retry.go only: its mark clears and it says so; ci.yml stays viewed.
+		// A mark made while Changes is not in front wins over a fold made by hand.
+		b.click("the chevron of README.md", fileBox(readme)+`.querySelector('.fhead .fold')`)
+		b.waitFor("README.md folded by hand", shut(readme))
+		b.click("Overview", prsRow("Overview"))
+		b.waitFor("the Overview in front", `document.querySelector('.md.ov')`)
+		b.click("the box of README.md's row", rowCheck("README.md"))
+		b.waitFor("README.md viewed", rowViewed("README.md"))
+
+		// Sanne pushes: the marks of the files she changed clear and say so; ci.yml stays viewed.
 		work := filepath.Join(t.TempDir(), "sanne")
 		run(t, t.TempDir(), "clone", "-q", origin, work)
 		run(t, work, "fetch", "-q", "origin", "refs/pull/477/head")
 		run(t, work, "checkout", "-q", "FETCH_HEAD")
-		write(t, filepath.Join(work, "internal", "webhook", "retry.go"), retryGo+"\n// backoff grows with each attempt.\n")
-		run(t, work, "commit", "-qam", "Say how backoff grows")
-		run(t, work, "push", "-q", "origin", "HEAD:refs/pull/477/head")
-		forge.set(t, "gh-pr-477.json", pr477(gitOut(t, work, "rev-parse", "HEAD"), gitOut(t, repo, "rev-parse", "origin/main"), func(ts []obj) []obj { return ts }))
+		withDraft := func(ts []obj) []obj {
+			return append(ts, ghThread("T7", readme, 5, 0, false, false, "", ghDraft("C40", "Say how long it waits too.")))
+		}
+		push := func(files map[string]string) {
+			for path, text := range files {
+				write(t, filepath.Join(work, filepath.FromSlash(path)), text)
+			}
+			run(t, work, "add", "-A")
+			run(t, work, "commit", "-qm", "Change more")
+			run(t, work, "push", "-q", "origin", "HEAD:refs/pull/477/head")
+			forge.set(t, "gh-pr-477.json", pr477(gitOut(t, work, "rev-parse", "HEAD"), gitOut(t, repo, "rev-parse", "origin/main"), withDraft))
+		}
+		readmeText, _ := os.ReadFile(filepath.Join(work, "README.md"))
+		push(map[string]string{retry: retryGo + "\n// backoff grows with each attempt.\n", readme: string(readmeText) + "\nSee retry.go.\n"})
 		b.press("refreshPrs")
+		b.waitFor("the new head", `document.querySelector('#prs-pr .prfiles li[data-path="README.md"] .again')`)
+		b.click("retry.go in the list", prsRow("retry.go"))
+		b.waitFor("README.md changed and open", notViewed(readme)+` && !`+shut(readme)+` && `+fileBox(readme)+`.querySelector('.fhead .again')`)
 		b.waitFor("retry.go changed since viewed", notViewed(retry)+` && !`+shut(retry)+` && `+fileBox(retry)+`.querySelector('.fhead .again')?.textContent === 'changed since you viewed it'`)
 		b.waitFor("ci.yml still viewed", viewed(ci)+` && `+shut(ci)+` && !`+fileBox(ci)+`.querySelector('.again')`)
 		b.waitFor("the row of retry.go changed", `!`+rowViewed("retry.go")+` && `+prsRow("retry.go")+`.querySelector('.again')?.textContent === 'changed' && `+prsRow("retry.go")+`.querySelector('.again').dataset.tip === 'Changed since you viewed it' && `+count("1 of 3 viewed"))
@@ -1170,28 +1203,52 @@ func TestBrowser(t *testing.T) {
 		}
 		shots(b, "viewed-sidebar")
 
-		// The list says how far you got, also after a reload, from the marks kept.
+		// The list says how far you got.
 		b.click("back", `document.querySelector('#prs-pr .back')`)
-		b.waitFor("the count in the list", prRow(477)+`?.querySelector('.yours')?.textContent === '3/3 viewed'`)
+		b.waitFor("the count in the list, after the drafts", prRow(477)+`?.querySelector('.yours')?.textContent === '1 draft · 3/3 viewed'`)
 		b.act("reload", chromedp.Reload())
-		b.waitFor("the count after a reload", prRow(477)+`?.querySelector('.yours')?.textContent === '3/3 viewed'`)
+		b.waitFor("the count after a reload", prRow(477)+`?.querySelector('.yours')?.textContent === '1 draft · 3/3 viewed'`)
+
+		// A generated file that changed since you viewed it opens too.
+		b.click("#477", prRow(477))
+		b.waitFor("#477 open", `document.querySelector('#prs-pr .pr-num')?.textContent === '#477'`)
+		push(map[string]string{"go.sum": "example.com/a v1.0.0 h1:aaa=\nexample.com/d v0.1.0 h1:ddd=\n"})
+		b.press("refreshPrs")
+		b.waitFor("go.sum folded as generated", shut("go.sum")+` && `+notViewed("go.sum"))
+		b.click("the box of go.sum's row", rowCheck("go.sum"))
+		b.waitFor("go.sum viewed", viewed("go.sum"))
+		push(map[string]string{"go.sum": "example.com/a v1.0.0 h1:aaa=\nexample.com/e v0.2.0 h1:eee=\n"})
+		b.press("refreshPrs")
+		b.waitFor("go.sum open and changed", notViewed("go.sum")+` && !`+shut("go.sum")+` && `+fileBox("go.sum")+`.querySelector('.fhead .again')`)
+		b.click("back", `document.querySelector('#prs-pr .back')`)
 
 		// Local mode has no marks; As on GitHub has.
 		b.click("this branch", prRow(482))
 		b.waitFor("Branch changes", `document.querySelector('#filetabs .filetab.active')?.textContent.startsWith('Branch changes') && document.querySelectorAll('#viewer .fbox').length === 6`)
 		b.waitFor("no Viewed box in Local mode", `!document.querySelector('#viewer .fhead .check')`)
 		b.click("As on GitHub", byText("#prs-branch .prmode button", "As on GitHub"))
-		b.waitFor("Viewed boxes As on GitHub", `(t => t?.firstChild.textContent === 'Changes' && t.querySelector('.muted')?.textContent === '#482')(document.querySelector('#filetabs .filetab.active')) && document.querySelectorAll('#viewer .fbox').length > 0 && [...document.querySelectorAll('#viewer .fbox')].every(f => f.querySelector('.fhead .check input') && !f.matches('.seen'))`)
+		b.waitFor("Viewed boxes As on GitHub", `(t => t?.firstChild.textContent === 'Changes' && t.querySelector('.muted')?.textContent === '#482')(document.querySelector('#filetabs .filetab.active')) && document.querySelectorAll('#viewer .fbox').length > 0 && [...document.querySelectorAll('#viewer .fbox')].every(f => f.querySelector('.fhead .check input') && !f.matches('.viewed'))`)
 		b.click("Local", byText("#prs-pr .prmode button", "Local"))
 
-		// Another worktree of the repo shares the marks.
-		b.click("the other worktree", row("Other work"))
-		b.waitFor("the other folder", `document.querySelector('#folder-name')?.title === `+jsString(other))
-		b.waitFor("the count on the tab", prsTab+`.querySelector('.tabcount')?.textContent === '2'`)
-		b.press("prsTab")
+		// Another worktree of the repo, in a second window, shares the marks, and a mark made there
+		// shows here at once.
+		b.click("back", `document.querySelector('#prs-branch .back')`)
 		b.waitFor("the list", prRow(477))
 		b.click("#477", prRow(477))
-		b.waitFor("the same marks", viewed(ci)+` && `+viewed(retry)+` && `+viewed(readme))
+		b.waitFor("#477 here", viewed(ci))
+		w := openPage(t, newTab(t, tab), k, "/")
+		w.click("the other worktree", row("Other work"))
+		w.waitFor("the other folder", `document.querySelector('#folder-name')?.title === `+jsString(other))
+		w.waitFor("the count on the tab", prsTab+`.querySelector('.tabcount')?.textContent === '2'`)
+		w.press("prsTab")
+		w.waitFor("the count kept with the marks", prRow(477)+`?.querySelector('.yours')?.textContent === '3/4 viewed'`)
+		w.click("#477", prRow(477))
+		w.waitFor("the same marks", viewed(ci)+` && `+viewed(retry)+` && `+viewed(readme)+` && `+notViewed("go.sum"))
+		w.click("Viewed of ci.yml", check(ci))
+		w.waitFor("ci.yml cleared there", notViewed(ci))
+		b.waitFor("ci.yml cleared here", notViewed(ci)+` && !`+rowViewed("ci.yml"))
+		w.noErrors()
+		b.press("prsTab")
 
 		// Once #477 is closed, the list holds every open pull request without it, and its marks go.
 		b.click("back", `document.querySelector('#prs-pr .back')`)

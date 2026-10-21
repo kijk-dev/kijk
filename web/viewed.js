@@ -11,7 +11,6 @@ const listeners = new Set();
 
 const repoKey = (root, forge) => `${PREFIX}${splitKey(root).machine}:${forge?.host}/${forge?.path}:`;
 
-// Reads go to localStorage each time, so a mark made in the other kijk window shows too.
 function read(k) {
   try {
     return JSON.parse(localStorage.getItem(k));
@@ -44,25 +43,31 @@ export function marksOf(root, n, res) {
 }
 
 function save(k, marks, files) {
-  // A mark of a file the pull request no longer changes is of no use.
+  // A mark of a file the pull request no longer changes goes, so the record does not grow.
   for (const p of Object.keys(marks)) if (!files.some(f => f.path === p)) delete marks[p];
   const state = stateIn(marks);
   write(k, Object.keys(marks).length ? { marks, files: files.length, viewed: files.filter(f => state(f) === 'viewed').length } : null);
 }
 
-// setViewed marks file f of pull request n viewed, or clears its mark.
+// setViewed marks file f of pull request n viewed, or clears its mark. False when it cannot.
 export function setViewed(root, n, res, f, on) {
-  if (!res?.forge || !f.blobs) return;
+  if (!res?.forge || !f.blobs) return false;
   const k = repoKey(root, res.forge) + n;
   const marks = { ...read(k)?.marks };
   if (on) marks[f.path] = f.blobs;
   else delete marks[f.path];
   save(k, marks, res.files);
-  for (const fn of listeners) fn(root, n);
+  for (const fn of listeners) fn(root, n, f.path);
+  return true;
 }
 
-// onViewed runs fn(root, n) after a mark changed.
+// onViewed runs fn(root, n, path) after a mark changed, and fn(null) after one changed in the other
+// kijk window.
 export const onViewed = fn => listeners.add(fn);
+
+addEventListener('storage', e => {
+  if (e.key === null || e.key.startsWith(PREFIX)) for (const fn of listeners) fn(null);
+});
 
 // listCount is {viewed, files} for a row of the list: from the last answer kijk has, else as kept.
 export function listCount(root, forge, n) {
