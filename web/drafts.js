@@ -4,6 +4,7 @@ import { avatar } from './threads.js';
 import { iconButton, plural } from './boxes.js';
 import { FORGE, forgeMark } from './pr.js';
 import { mac } from './keys.js';
+import { setReviewed } from './viewed.js';
 
 // Writing a review: drafts on the forge, resolves, the review box and the check before posting.
 // Every write asks for the pull request again, so what shows is the forge's state.
@@ -581,6 +582,7 @@ function openCheck(root, n, res) {
       return;
     }
     setReview(root, n, { verdict: 'comment' });
+    setReviewed(root, n, res);
     close();
     const said = `Posted your review on ${w.num}${n}`;
     hooks.say?.(said);

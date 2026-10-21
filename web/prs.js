@@ -10,6 +10,7 @@ import { setupOverview } from './overview.js';
 import { setupDrafts, reviewBox } from './drafts.js';
 import { setBranchThreads, redrawBranchPanel, wakeBranch } from './review.js';
 import { marksOf, setViewed, onViewed, listCount, sweep } from './viewed.js';
+import { shown, sinceParts, onSince } from './since.js';
 
 // The PRs tab: the list of open pull requests, one pull request opened in the sidebar, the count
 // on the tab, and when to ask the forge again. The folder's own branch in Local mode is review.js.
@@ -193,6 +194,10 @@ onView((root, n, res) => {
 
 onViewed(root => {
   if (!root || root === folder) draw();
+});
+
+onSince(root => {
+  if (root === folder) draw();
 });
 
 // refresh asks again about what the tab shows. The list is asked too, for the count.
@@ -470,6 +475,7 @@ function prHead(n, mine, res, row) {
   const ci = res?.checks ? res.ci : p.ci;
   const chips = prChips({ ...p, ci, ciUrl: p.url && forgeKind() === 'github' ? `${p.url}/checks` : '', target: p.base }, w, line?.default || p.base);
   if (chips) h.append(chips);
+  h.append(...sinceParts(folder, n, res, yes => { if (yes) page.openTab({ kind: 'pr', n, path: '' }, true); }));
   return h;
 }
 
@@ -481,13 +487,16 @@ function drawPR(n, mine) {
   const why = failed.get(n) || res?.error;
   if (why) parts.push(el('p', 'note error', why));
   const wrap = el('div', 'prs-scroll prfiles');
-  const files = res?.files || [];
+  const files = shown(folder, n, res).files || res?.files || [];
   const h = el('h3', null, `Files ${files.length}`);
   const sum = files.reduce(([a, d], f) => [a + (f.add || 0), d + (f.del || 0)], [0, 0]);
   const lc = lineCount(...sum);
   if (lc) h.append(lc);
   const marks = marksOf(folder, n, res);
-  if (files.length) h.append(el('span', 'viewedcount', `${marks.count} of ${files.length} viewed`));
+  // Since your review, a file is marked as the pull request's own file of that path.
+  const own = f => res?.files.find(x => x.path === f.path);
+  const viewedNow = files.filter(f => own(f) && marks.state(own(f)) === 'viewed').length;
+  if (files.length) h.append(el('span', 'viewedcount', `${viewedNow} of ${files.length} viewed`));
   const ul = el('ul');
   ul.setAttribute('aria-label', `Files of ${words().num}${n}`);
   ul.append(overviewRow(n, res));
@@ -500,14 +509,14 @@ function drawPR(n, mine) {
     r.dataset.path = f.path;
     const tc = threadCount((res.threads || []).filter(t => t.path === f.path));
     if (tc) r.insertBefore(tc, r.querySelector('.lc'));
-    const state = marks.state(f);
+    const state = own(f) ? marks.state(own(f)) : '';
     r.classList.toggle('viewed', state === 'viewed');
     if (state === 'changed') {
       const again = el('span', 'again', 'changed');
       again.dataset.tip = 'Changed since you viewed it';
       r.insertBefore(again, r.querySelector('.tc, .lc'));
     }
-    r.append(viewedBox(n, res, f, state));
+    if (own(f)) r.append(viewedBox(n, res, own(f), state));
     if (f.path === selectedFile) r.classList.add('selected');
     ul.append(r);
   }
@@ -569,7 +578,8 @@ function markRow(li) {
   if (!setViewed(folder, w.n, res, f, on)) return;
   const marks = marksOf(folder, w.n, res);
   const rows = [...prEl.querySelectorAll('.prfiles li')];
-  const next = on && res.files.slice(res.files.indexOf(f) + 1).find(x => marks.state(x) !== 'viewed');
+  const list = (shown(folder, w.n, res).files || res.files).map(x => res.files.find(y => y.path === x.path)).filter(Boolean);
+  const next = on && list.slice(list.indexOf(f) + 1).find(x => marks.state(x) !== 'viewed');
   const to = rows.find(r => r.dataset.path === (next ? next.path : f.path));
   if (!to) return;
   for (const r of rows) r.tabIndex = r === to ? 0 : -1;

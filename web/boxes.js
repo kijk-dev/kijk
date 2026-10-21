@@ -21,6 +21,8 @@ import { onKey, keyLabel } from './keys.js';
 //   marked(f)              the file has threads or notes, for Alt+↓ and Alt+↑
 //   viewed(f), setViewed(f, on)  the viewed mark: 'viewed', 'changed' since, or ''; optional
 //   viewedAt(f)            changes with each mark or clear of f, so a fold made before goes
+//   viewable(f)            false when f cannot be marked viewed; optional
+//   banner()               an element above the boxes, or null; optional
 
 export const ICON = {
   plus: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>',
@@ -151,7 +153,8 @@ async function updateBoxes(v, change) {
     drawHead(v, b);
   }
   for (const [path, b] of old) if (v.boxes.get(path) !== b) v.near.unobserve(b.el);
-  const els = [...v.boxes.values()].map(b => b.el);
+  const banner = v.src.banner?.();
+  const els = [...(banner ? [banner] : []), ...[...v.boxes.values()].map(b => b.el)];
   v.end.textContent = files.length ? 'End of the changes' : 'No changes yet';
   if (els.length + 1 !== v.scroll.children.length || els.some((e, i) => v.scroll.children[i] !== e)) {
     v.scroll.replaceChildren(...els, v.end);
@@ -269,7 +272,7 @@ export function drawHead(v, b) {
   parts.push(el('span', 'grow'));
   b.el.classList.toggle('viewed', b.state === 'viewed');
   if (b.state === 'changed') parts.push(el('span', 'again', 'changed since you viewed it'));
-  if (v.src.setViewed) {
+  if (v.src.setViewed && v.src.viewable?.(f) !== false) {
     const check = el('label', 'check');
     const box = el('input');
     box.type = 'checkbox';

@@ -1297,6 +1297,131 @@ func TestBrowser(t *testing.T) {
 		b.noErrors()
 	})
 
+	t.Run("since last review", func(t *testing.T) {
+		repo, origin := reviewRepo(t)
+		forge := newFakeForge(t)
+		reviewForge(t, forge, repo, origin, false)
+		theirs := gitOut(t, origin, "rev-parse", "refs/pull/477/head")
+		forge.set(t, "gh-target.json", ghData(obj{"repository": obj{"pullRequest": obj{"id": "PR_477", "headRefOid": theirs, "reviews": obj{"nodes": []obj{}}}}}))
+		forge.set(t, "gh-review.json", ghData(obj{"addPullRequestReview": obj{"pullRequestReview": obj{"id": "PRR_1"}}}))
+		claude := t.TempDir()
+		claudeAgent(t, claude, repo, "Fix the login", "idle")
+		k := startKijkIn(t, exe, t.TempDir(), "CLAUDE_CONFIG_DIR="+claude, forge.env())
+		b := openPage(t, newTab(t, tab), k, "/")
+		b.selectAgent("Fix the login", "review")
+		b.waitFor("the count on the tab", prsTab+`.querySelector('.tabcount')?.textContent === '2'`)
+		b.press("prsTab")
+		b.click("#477", prRow(477))
+		b.waitFor("three boxes", `document.querySelectorAll('#viewer .fbox').length === 3`)
+
+		const ci, readme, retry = ".github/workflows/ci.yml", "README.md", "internal/webhook/retry.go"
+		sw := `document.querySelector('#prs-pr .prmode.since')`
+		bar := `document.querySelector('#viewer .allfiles > .sincebar')`
+		boxes := `[...document.querySelectorAll('#viewer .fbox')].map(f => f.dataset.path).join(' ')`
+		rows := `[...document.querySelectorAll('#prs-pr .prfiles li[data-path]:not(.ov)')].map(r => r.dataset.path).join(' ')`
+		rowCheck := func(name string) string { return prsRow(name) + `?.querySelector('input.viewedbox')` }
+		reviewed := func(head string) string {
+			return `Object.entries(localStorage).some(([k, v]) => k.startsWith('kijk.viewed:') && k.endsWith(':477') && JSON.parse(v).review?.head === ` + jsString(head) + `)`
+		}
+		b.waitFor("no switch before a review", `document.querySelector('#prs-pr .prfiles h3') && !`+sw)
+
+		// Two of three files viewed: not every file, so no reviewed head yet.
+		b.click("the box of ci.yml's row", rowCheck("ci.yml"))
+		b.click("the box of README.md's row", rowCheck("README.md"))
+		b.waitFor("two viewed", `document.querySelector('#prs-pr .prfiles h3 .viewedcount')?.textContent === '2 of 3 viewed' && !`+reviewed(theirs))
+
+		// Posting a review keeps the head; it is the head now, so still no switch.
+		box := `document.querySelector('#prs-pr .reviewbox')`
+		b.click("Approve", byText("#prs-pr .reviewbox .mode button", "Approve"))
+		b.click("Submit review…", box+`.querySelector('button.primary')`)
+		b.waitFor("the check", `document.querySelector('.confirm[role=dialog]')`)
+		b.key("Enter", "\r")
+		b.waitFor("posted, the head kept", `!document.querySelector('.confirm') && document.querySelector('#statusbar').textContent.includes('Posted your review on #477') && `+reviewed(theirs))
+		b.waitFor("no switch on the reviewed head", `!`+sw)
+
+		// Sanne pushes a fix to retry.go.
+		work := filepath.Join(t.TempDir(), "sanne")
+		run(t, t.TempDir(), "clone", "-q", origin, work)
+		run(t, work, "fetch", "-q", "origin", "refs/pull/477/head")
+		run(t, work, "checkout", "-qb", "sanne", "FETCH_HEAD")
+		main := gitOut(t, repo, "rev-parse", "origin/main")
+		push := func(force bool) string {
+			args := []string{"push", "-q", "origin", "HEAD:refs/pull/477/head"}
+			if force {
+				args = append(args, "--force")
+			}
+			run(t, work, args...)
+			head := gitOut(t, work, "rev-parse", "HEAD")
+			forge.set(t, "gh-pr-477.json", pr477(head, main, func(ts []obj) []obj { return ts }))
+			return head
+		}
+		commit := func(path, text, msg string) {
+			write(t, filepath.Join(work, filepath.FromSlash(path)), text)
+			run(t, work, "add", "-A")
+			run(t, work, "commit", "-qm", msg)
+		}
+		commit(retry, retryGo+"\n// backoff grows with each attempt.\n", "Say how backoff grows")
+		push(false)
+		b.press("refreshPrs")
+		since := byText("#prs-pr .prmode.since .mode button", "Since your review")
+		all := byText("#prs-pr .prmode.since .mode button", "All changes")
+		b.waitFor("the switch after a push", sw+` && `+sw+`.querySelector('.mode').getAttribute('aria-label') === 'Which changes' && `+all+`?.getAttribute('aria-pressed') === 'true' && `+
+			since+`?.getAttribute('aria-pressed') === 'false' && `+since+`.dataset.tip.startsWith('Only what changed since your review\nReviewed ') && `+since+`.dataset.tip.endsWith(' ago · 1 new commit')`)
+
+		// Since your review: only the new line of retry.go, the bar, and the file list.
+		b.click("Overview", prsRow("Overview"))
+		b.waitFor("the Overview in front", `document.querySelector('.md.ov')`)
+		b.click("Since your review", since)
+		b.waitFor("Changes with only retry.go", `document.querySelector('#filetabs .filetab.active')?.firstChild.textContent === 'Changes' && `+boxes+` === `+jsString(retry))
+		b.waitFor("only the new line", boxHas(retry, "add", "// backoff grows with each attempt.")+` && !`+boxRow(retry, "\t\tif !retryable(err) {"))
+		b.waitFor("the bar", bar+`?.firstChild.textContent === 'Since your review · 1 commit · 1 file' && `+bar+`.querySelector('button')?.textContent === 'Show all changes'`)
+		b.waitFor("the file list since", rows+` === `+jsString(retry)+` && document.querySelector('#prs-pr .prfiles h3').firstChild.textContent === 'Files 1' && document.querySelector('#prs-pr .prfiles h3 .viewedcount')?.textContent === '0 of 1 viewed' && `+since+`.getAttribute('aria-pressed') === 'true'`)
+		b.waitFor("no + on the reviewed side", `!`+fileBox(retry)+`.querySelector('.ln.del .addc')`)
+		b.hover("the status bar", `document.querySelector('#statusbar')`) // no tooltip in the shot
+		shots(b, "since-review")
+
+		// Show all changes in the bar goes back.
+		b.click("Show all changes", bar+`.querySelector('button')`)
+		b.waitFor("all changes again", boxes+` === `+jsString(ci+" "+readme+" "+retry)+` && !`+bar+` && `+all+`.getAttribute('aria-pressed') === 'true' && `+rows+` === `+jsString(ci+" "+readme+" "+retry))
+
+		// main moves on and sanne merges it in: main's own file does not show.
+		run(t, work, "checkout", "-qb", "mainwork", "origin/main")
+		commit("billing.go", "package billing\n", "Add billing")
+		run(t, work, "push", "-q", "origin", "HEAD:main")
+		main = gitOut(t, work, "rev-parse", "HEAD")
+		run(t, work, "checkout", "-q", "sanne")
+		run(t, work, "merge", "-q", "--no-edit", "mainwork")
+		merged := push(false)
+		b.press("refreshPrs")
+		b.waitFor("the switch says two commits", since+`?.dataset.tip.endsWith(' · 2 new commits')`)
+		b.click("Since your review", since)
+		b.waitFor("billing.go left out", bar+`?.firstChild.textContent === 'Since your review · 2 commits · 1 file' && `+boxes+` === `+jsString(retry)+` && `+rows+` === `+jsString(retry))
+
+		// Marking the last file not viewed makes every file viewed: the switch hides, all changes show.
+		b.click("Viewed of retry.go", fileBox(retry)+`.querySelector('.fhead .check input')`)
+		b.waitFor("the switch gone", `!`+sw+` && `+reviewed(merged)+` && !`+bar+` && `+boxes+` === `+jsString(ci+" "+readme+" "+retry)+` && [...document.querySelectorAll('#viewer .fbox')].every(f => f.matches('.viewed.shut'))`)
+
+		// After a force push there is nothing to compare: all changes show, with a note.
+		run(t, work, "checkout", "-qb", "rebased", "mainwork")
+		run(t, work, "merge", "-q", "--squash", "sanne")
+		commit(retry, retryGo+"\n// rebased.\n", "Retry, rebased")
+		push(true)
+		b.press("refreshPrs")
+		b.waitFor("the switch after a force push", since)
+		b.click("Since your review", since)
+		const note = "Rebased or force-pushed since your review. All changes show."
+		b.waitFor("all changes, with the note", bar+`?.firstChild.textContent === `+jsString(note)+` && `+bar+`.querySelector('button')?.textContent === 'Show all changes' && document.querySelector('#prs-pr .since-note')?.textContent === `+jsString(note)+` && `+boxes+` === `+jsString(ci+" "+readme+" "+retry)+` && document.querySelector('.allfiles').scrollTop === 0`)
+		b.hover("the status bar", `document.querySelector('#statusbar')`) // no tooltip in the shot
+		shots(b, "since-rebased")
+
+		// Local mode on your own branch has no switch.
+		b.click("back", `document.querySelector('#prs-pr .back')`)
+		b.click("this branch", prRow(482))
+		b.waitFor("Branch changes", `document.querySelector('#filetabs .filetab.active')?.textContent.startsWith('Branch changes')`)
+		b.waitFor("no switch in Local mode", `!document.querySelector('#prs > :not([hidden]) .prmode.since')`)
+		b.noErrors()
+	})
+
 	t.Run("shots", func(t *testing.T) {
 		if os.Getenv("KIJK_E2E_SHOTS") == "" {
 			t.Skip("set KIJK_E2E_SHOTS=1 to save the main views in light, dark and a narrow window")
