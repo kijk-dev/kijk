@@ -774,7 +774,7 @@ kbd { font: 11px/1 var(--code-font); padding: 1px 4px; border: 1px solid var(--b
 .md .job:hover { text-decoration: none; border-color: var(--modified); }
 .md .job:focus-visible { outline: 2px solid var(--busy); outline-offset: 1px; }
 .job.bad { border-color: color-mix(in srgb, var(--conflict) 55%, transparent); }
-.job.skip .jn, .job.wait .jn { color: var(--muted); }
+.job.skip .jn, .job.wait .jn, .job.cancel .jn { color: var(--muted); }
 .jn { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .ji { display: flex; flex: none; width: 15px; height: 15px; align-items: center; justify-content: center; }
 .ji svg { width: 14px; height: 14px; }

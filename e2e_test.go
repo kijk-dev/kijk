@@ -549,6 +549,7 @@ func TestBrowser(t *testing.T) {
 		b.waitFor("the description", `document.querySelector('.md.ov .desc strong')?.textContent === 'one' && document.querySelector('.md.ov .desc li')?.textContent === 'Retry up to five times.'`)
 		b.waitFor("the checks graph", `(d => d && [...d.querySelectorAll('.dagcol')].map(c => [...c.querySelectorAll('.job')].map(j => j.textContent).join('+')).join(' | ') === 'build | test (linux)+test (windows)')(document.querySelector('.md.ov .dag'))`)
 		b.waitFor("the failed job and the lines", `document.querySelector('.md.ov .job.bad')?.textContent === 'test (windows)' && document.querySelectorAll('.md.ov .dag .edges path').length === 2`)
+		b.waitFor("the checks summary", `[...document.querySelectorAll('.md.ov h2')].find(h => h.firstChild.textContent === 'Checks')?.querySelector('.muted').textContent === '1 failed · 1 cancelled'`)
 		b.waitFor("other checks", `[...document.querySelectorAll('.md.ov .ovlist.other li')].map(l => l.textContent).join('|').startsWith('Vercel – Preview')`)
 		b.waitFor("the end of the failed log", `document.querySelector('.md.ov .joblog .jlhead b')?.textContent === 'test (windows)' && document.querySelector('.md.ov .joblog pre')?.textContent.endsWith('--- FAIL: TestBackoffJitter (0.00s)') && !document.querySelector('.md.ov .joblog button')`)
 		b.waitFor("the conversation", `document.querySelector('.md.ov .thr.conv .cbody')?.textContent.trim() === 'Do we want the attempt number in the delivery log?'`)
