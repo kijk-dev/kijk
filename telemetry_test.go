@@ -118,7 +118,7 @@ func TestEventsCarryOnlyTheAgreedProperties(t *testing.T) {
 		}
 	}
 	slices.SortFunc(ev, func(a, b capturedEvent) int { return strings.Compare(a.Event, b.Event) })
-	want := []string{"$os", "agent_copies", "agents", "arch", "folders", "machines", "remote_agents", "version"}
+	want := []string{"$os", "agent_copies", "agents", "arch", "folders", "machines", "remote_agents", "reviews", "version"}
 	for _, at := range agents.Types {
 		want = append(want, at.Name+"_agents")
 	}
@@ -177,9 +177,11 @@ func TestActiveWithoutAgentScan(t *testing.T) {
 	}
 }
 
-// Copy for agent is counted by the local kijk, and kijk active carries the count since the one before.
+// Copy for agent and submitted reviews are counted by the local kijk, and kijk active carries the
+// counts since the one before.
 func TestAgentCopies(t *testing.T) {
 	agentCopies.Store(0)
+	reviews.Store(0)
 	srv := newServer("secret", 7717, nil, newHub(), &viewer.Roots{}, nil, nil, nil)
 	count := func(name string) int {
 		r := httptest.NewRequest("POST", "/api/count?name="+name, nil)
@@ -198,6 +200,11 @@ func TestAgentCopies(t *testing.T) {
 			t.Fatalf("count: %d", code)
 		}
 	}
+	for range 2 {
+		if code := count("review"); code != http.StatusOK {
+			t.Fatalf("count a review: %d", code)
+		}
+	}
 	if code := count("something-else"); code != http.StatusBadRequest {
 		t.Fatalf("another name: %d", code)
 	}
@@ -206,10 +213,11 @@ func TestAgentCopies(t *testing.T) {
 	tel.active(mon.Add(48*time.Hour), 0, false, &agentCounts{})
 	var got []any
 	for range 3 {
-		got = append(got, (<-tel.events).props["agent_copies"])
+		e := <-tel.events
+		got = append(got, e.props["agent_copies"], e.props["reviews"])
 	}
-	if fmt.Sprint(got) != "[0 4 0]" {
-		t.Fatalf("agent_copies on three days: %v", got)
+	if fmt.Sprint(got) != "[0 0 4 2 0 0]" {
+		t.Fatalf("agent_copies and reviews on three days: %v", got)
 	}
 }
 

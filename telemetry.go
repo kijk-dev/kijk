@@ -81,16 +81,21 @@ func (t *telemetry) send(name string, extra map[string]any) {
 	}
 }
 
-// agentCopies counts the uses of Copy for agent since the last "kijk active".
-var agentCopies atomic.Int64
+// agentCopies counts the uses of Copy for agent since the last "kijk active", reviews the reviews
+// submitted.
+var agentCopies, reviews atomic.Int64
 
 // countUse counts a use the page reports. Only names kijk knows are counted.
 func countUse(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Query().Get("name") != "agent-copy" {
+	switch r.URL.Query().Get("name") {
+	case "agent-copy":
+		agentCopies.Add(1)
+	case "review":
+		reviews.Add(1)
+	default:
 		http.Error(w, "unknown count", http.StatusBadRequest)
 		return
 	}
-	agentCopies.Add(1)
 	reply(w, struct{}{})
 }
 
@@ -117,7 +122,7 @@ func (t *telemetry) active(now time.Time, folders int, looking bool, counts *age
 		}
 	}
 	t.lastActive = day
-	props := map[string]any{"folders": folders, "agent_copies": agentCopies.Swap(0)}
+	props := map[string]any{"folders": folders, "agent_copies": agentCopies.Swap(0), "reviews": reviews.Swap(0)}
 	if counts != nil {
 		n := 0
 		for _, c := range counts.byType {

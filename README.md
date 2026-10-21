@@ -367,8 +367,8 @@ also sends the number of agents on your machine, in total and per agent type, an
 machines you saved and how many agents run on them. The count per agent type is
 `<type>_agents` for each type kijk shows, such as `claude_agents` for Claude Code and
 `codex_agents` for Codex. It never sends their names or addresses. It sends how many times you
-used Copy for agent since its last report, never the notes. kijk on a remote machine sends
-nothing.
+used Copy for agent and how many reviews you submitted since its last report, never the notes
+or the reviews. kijk on a remote machine sends nothing.
 
 To turn it off, set `KIJK_NO_TELEMETRY=1` or `DO_NOT_TRACK=1`, or start kijk with `-no-telemetry`.
 
