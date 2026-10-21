@@ -959,7 +959,7 @@ func TestBrowser(t *testing.T) {
 		mr["diffRefs"] = obj{"baseSha": main, "headSha": theirs, "startSha": main}
 		mr["approvedBy"], mr["discussions"] = obj{"nodes": []obj{}}, obj{"nodes": []obj{}}
 		forge.set(t, "glab-pr-12.json", ghData(obj{"currentUser": obj{"username": "you"}, "project": obj{"mergeRequest": mr}}))
-		forge.set(t, "glab-drafts.json", "[]")
+		forge.set(t, "glab-drafts.json", `[{"id":61,"note":"Thanks for this.","discussion_id":null,"position":null}]`)
 		forge.set(t, "glab-version-gitlab.com.json", `{"version":"17.4.1-ee"}`)
 		claude := t.TempDir()
 		claudeAgent(t, claude, repo, "Fix the login", "idle")
@@ -981,6 +981,8 @@ func TestBrowser(t *testing.T) {
 			box+`.querySelector('.why').textContent === 'Request changes needs GitLab 18.9. This server runs 17.4.' && `+
 			byText("#prs-pr .reviewbox .mode button", "Request changes")+`.dataset.tip === 'Request changes needs GitLab 18.9. This server runs 17.4.' && `+
 			fileBox("internal/webhook/retry.go")+`.querySelector('.addc')`)
+		// A draft is not a comment yet: the Overview row does not count it.
+		b.waitFor("a draft, not a comment", box+`.querySelector('.head').textContent === 'Your review1 draft · 1 from GitLab' && `+prsRow("Overview")+`.querySelector('.dir').textContent === ''`)
 		b.noErrors()
 
 		// Below 16.3 the merge request is read only, and the box's place says why.

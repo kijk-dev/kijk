@@ -3,7 +3,7 @@ import { lineCount, fileRow } from './git.js';
 import { FORGE, forgeMark, prChips } from './pr.js';
 import { onKey, keyLabel } from './keys.js';
 import { cachedView, loadView, onView, age } from './prdata.js';
-import { iconButton } from './boxes.js';
+import { iconButton, plural } from './boxes.js';
 import { avatar, threadCount } from './threads.js';
 import { goToChange, setupChanges } from './changes.js';
 import { setupOverview } from './overview.js';
@@ -431,7 +431,8 @@ export function overviewRow(n, res) {
   const parts = [];
   const open = (res?.threads || []).filter(t => !t.resolved && !t.outdated && !t.draft).length;
   if (open) parts.push(`${open} open ${open === 1 ? 'thread' : 'threads'}`);
-  else if (res?.comments?.length) parts.push(`${res.comments.length} ${res.comments.length === 1 ? 'comment' : 'comments'}`);
+  const said = (res?.comments || []).filter(c => !c.draft).length;
+  if (!open && said) parts.push(plural(said, 'comment'));
   li.append(svg(ICON.doc), el('span', 'name', 'Overview'), el('span', 'dir', parts.join(' · ')));
   li.onclick = () => {
     page.openTab({ kind: 'overview', n, path: '' }, true);
