@@ -595,6 +595,10 @@ func TestBrowser(t *testing.T) {
 		}
 		shots(b, "prs-local")
 
+		// After a reload with the PRs tab open, kijk asks about the pull request again by itself.
+		b.act("reload", chromedp.Reload())
+		b.waitFor("the thread after a reload", asked+`?.nextElementSibling?.matches('.thr:not(.note)')`)
+
 		// Copy for agent lists the open thread too, and marks it copied.
 		b.evalJS(`navigator.clipboard.writeText = t => (window.e2eClip = t, Promise.resolve())`)
 		b.click("Copy for agent", byText("#prs-branch .reviewbox button", "Copy for agent…"))

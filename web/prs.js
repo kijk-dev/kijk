@@ -99,7 +99,9 @@ function which() {
 export function prsStatus(status, pr) {
   st = status || st;
   line = pr;
-  if (maybeList() && !list && !listCall) loadList();
+  // The tab may have shown before kijk knew the forge, and then asked nothing.
+  if (!tabEl.hidden && !lastAsk && line?.forge) refresh();
+  else if (maybeList() && !list && !listCall) loadList();
   draw();
 }
 
