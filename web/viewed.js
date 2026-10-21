@@ -2,8 +2,9 @@ import { splitKey } from './api.js';
 import { cachedView, onView } from './prdata.js';
 
 // Viewed marks: per file, the blobs of its diff when you marked it, so a file that changed since
-// shows. One record per machine, forge repo and pull request, with the counts for the list:
-//   kijk.viewed:<machine>:<host>/<path>:<n> → {marks: {path: blobs}, files, viewed}
+// shows, and the number of its last mark change. One record per machine, forge repo and pull
+// request, with the counts for the list:
+//   kijk.viewed:<machine>:<host>/<path>:<n> → {marks: {path: blobs}, at: {path: seq}, seq, files, viewed}
 
 const PREFIX = 'kijk.viewed:';
 const kept = new Map(); // the marks while storage is blocked, until a reload
@@ -33,30 +34,33 @@ function stateIn(marks) {
   return f => (!marks[f.path] ? '' : marks[f.path] === f.blobs ? 'viewed' : 'changed');
 }
 
-// marksOf gives, for the answer res about pull request n, state(f): 'viewed', 'changed' or '',
-// and count, the files viewed now.
+// marksOf gives, for the answer res about pull request n, state(f): 'viewed', 'changed' or '';
+// at(f), which changes with each mark or clear of f; and count, the files viewed now.
 export function marksOf(root, n, res) {
   const rec = res?.forge ? read(repoKey(root, res.forge) + n) : null;
   const state = stateIn(rec?.marks || {});
   const files = res?.files || [];
-  return { state, count: files.filter(f => state(f) === 'viewed').length, files: files.length };
+  return { state, at: f => rec?.at?.[f.path] || 0, count: files.filter(f => state(f) === 'viewed').length, files: files.length };
 }
 
-function save(k, marks, files) {
-  // A mark of a file the pull request no longer changes goes, so the record does not grow.
-  for (const p of Object.keys(marks)) if (!files.some(f => f.path === p)) delete marks[p];
+function save(k, rec, files) {
+  // A file the pull request no longer changes loses its mark, so the record does not grow.
+  const keep = o => Object.fromEntries(Object.entries(o || {}).filter(([p]) => files.some(f => f.path === p)));
+  const marks = keep(rec.marks), at = keep(rec.at);
   const state = stateIn(marks);
-  write(k, Object.keys(marks).length ? { marks, files: files.length, viewed: files.filter(f => state(f) === 'viewed').length } : null);
+  write(k, Object.keys(at).length ? { marks, at, seq: rec.seq || 0, files: files.length, viewed: files.filter(f => state(f) === 'viewed').length } : null);
 }
 
 // setViewed marks file f of pull request n viewed, or clears its mark. False when it cannot.
 export function setViewed(root, n, res, f, on) {
   if (!res?.forge || !f.blobs) return false;
   const k = repoKey(root, res.forge) + n;
-  const marks = { ...read(k)?.marks };
+  const rec = read(k) || {};
+  const marks = { ...rec.marks };
   if (on) marks[f.path] = f.blobs;
   else delete marks[f.path];
-  save(k, marks, res.files);
+  const seq = (rec.seq || 0) + 1;
+  save(k, { marks, at: { ...rec.at, [f.path]: seq }, seq }, res.files);
   for (const fn of listeners) fn(root, n, f.path);
   return true;
 }
@@ -97,5 +101,5 @@ onView((root, n, res) => {
   const rec = read(k);
   if (!rec) return;
   const m = marksOf(root, n, res);
-  if (m.count !== rec.viewed || m.files !== rec.files) save(k, { ...rec.marks }, res.files);
+  if (m.count !== rec.viewed || m.files !== rec.files) save(k, rec, res.files);
 });

@@ -20,6 +20,7 @@ import { onKey, keyLabel } from './keys.js';
 //   drawn(v, b)            a box was drawn, optional
 //   marked(f)              the file has threads or notes, for Alt+↓ and Alt+↑
 //   viewed(f), setViewed(f, on)  the viewed mark: 'viewed', 'changed' since, or ''; optional
+//   viewedAt(f)            changes with each mark or clear of f, so a fold made before goes
 
 export const ICON = {
   plus: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>',
@@ -139,13 +140,14 @@ async function updateBoxes(v, change) {
   const a = anchor(v);
   const old = v.boxes;
   v.boxes = new Map();
+  let moved = false;
   for (const f of files) {
     let b = old.get(f.path);
     if (b && (b.f.orig !== f.orig || b.f.status !== f.status)) b = null;
     if (b) b.f = f;
     else b = newBox(v, f);
     v.boxes.set(f.path, b);
-    followMark(v, b);
+    moved = followMark(v, b, false) || moved;
     drawHead(v, b);
   }
   for (const [path, b] of old) if (v.boxes.get(path) !== b) v.near.unobserve(b.el);
@@ -153,8 +155,9 @@ async function updateBoxes(v, change) {
   v.end.textContent = files.length ? 'End of the changes' : 'No changes yet';
   if (els.length + 1 !== v.scroll.children.length || els.some((e, i) => v.scroll.children[i] !== e)) {
     v.scroll.replaceChildren(...els, v.end);
-    restore(v, a);
+    moved = true;
   }
+  if (moved) restore(v, a);
   const basis = v.src.basis();
   const changed = b => b.basis !== basis || change?.all || change?.paths?.includes(b.f.path) || (b.f.orig && change?.paths?.includes(b.f.orig));
   const now = [];
@@ -169,6 +172,7 @@ async function updateBoxes(v, change) {
 function newBox(v, f) {
   const b = { f, el: el('section', 'fbox'), head: el('div', 'fhead'), body: el('div', 'fbody'), loaded: false, context: 3, json: '', starts: [] };
   b.state = v.src.viewed?.(f) || '';
+  b.at = v.src.viewedAt?.(f) || 0;
   b.open = keptOpen(v, b) ?? startsOpen(b);
   b.note = el('div', 'fnote');
   // Until it is drawn, the box is as high as its diff will about be, so the scrollbar is right.
@@ -191,7 +195,7 @@ const startsOpen = b => b.state === 'changed' || !(b.state === 'viewed' || heavy
 function keptOpen(v, b) {
   const k = v.tab.folds?.[b.f.path];
   if (typeof k === 'boolean') return b.state ? undefined : k;
-  return k?.state === b.state ? k.open : undefined;
+  return k?.state === b.state && (k.at || 0) === b.at ? k.open : undefined;
 }
 
 function showOpen(v, b) {
@@ -206,19 +210,26 @@ function showOpen(v, b) {
 }
 
 // followMark folds a box that became viewed and opens one that is not viewed any more, as a file
-// that changed since. The view keeps its place; a box folded across its top scrolls to its header.
-function followMark(v, b) {
+// that changed since. It keeps the view's place unless place is false, when the caller keeps it; a
+// box folded across the top of the view scrolls to its header. True when the box folded or opened.
+function followMark(v, b, place = true) {
   const state = v.src.viewed?.(b.f) || '';
-  if (state === b.state) return;
+  const at = v.src.viewedAt?.(b.f) || 0;
+  if (state === b.state && at === b.at) return false;
   b.state = state;
+  b.at = at;
   const open = keptOpen(v, b) ?? startsOpen(b);
-  if (open === b.open) return showOpen(v, b);
-  const a = anchor(v);
+  if (open === b.open) {
+    showOpen(v, b);
+    return false;
+  }
+  const a = place && anchor(v);
   b.open = open;
   showOpen(v, b);
   if (a?.b === b && !open) v.scroll.scrollTop = b.el.offsetTop - 12;
-  else restore(v, a);
+  else if (place) restore(v, a);
   if (open && (!b.loaded || b.stale)) loadBox(v, b);
+  return true;
 }
 
 // marksChanged draws the boxes again after viewed marks changed.
@@ -232,7 +243,7 @@ export function marksChanged(v) {
 
 function fold(v, b, open) {
   b.open = open;
-  v.tab.folds = { ...v.tab.folds, [b.f.path]: v.src.viewed ? { open, state: b.state } : open };
+  v.tab.folds = { ...v.tab.folds, [b.f.path]: v.src.viewed ? { open, state: b.state, at: b.at } : open };
   v.save();
   drawHead(v, b);
   showOpen(v, b);

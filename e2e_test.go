@@ -1209,6 +1209,20 @@ func TestBrowser(t *testing.T) {
 		}
 		shots(b, "viewed-sidebar")
 
+		// A mark made again, after a reload with Changes not in front, still folds a file opened by hand.
+		b.click("the chevron of README.md", fileBox(readme)+`.querySelector('.fhead .fold')`)
+		b.waitFor("README.md open by hand", viewed(readme)+` && !`+shut(readme))
+		b.click("Overview", prsRow("Overview"))
+		b.waitFor("the Overview in front", `document.querySelector('.md.ov')`)
+		b.act("reload", chromedp.Reload())
+		b.waitFor("the sidebar after the reload", rowViewed("README.md"))
+		b.click("the box of README.md's row", rowCheck("README.md"))
+		b.waitFor("README.md cleared", `!`+rowViewed("README.md"))
+		b.click("the box of README.md's row", rowCheck("README.md"))
+		b.waitFor("README.md viewed again", rowViewed("README.md"))
+		b.click("retry.go in the list", prsRow("retry.go"))
+		b.waitFor("README.md folded", viewed(readme)+` && `+shut(readme))
+
 		// The list says how far you got.
 		b.click("back", `document.querySelector('#prs-pr .back')`)
 		b.waitFor("the count in the list, after the drafts", prRow(477)+`?.querySelector('.yours')?.textContent === '1 draft · 3/3 viewed'`)
@@ -1226,6 +1240,19 @@ func TestBrowser(t *testing.T) {
 		push(map[string]string{"go.sum": "example.com/a v1.0.0 h1:aaa=\nexample.com/e v0.2.0 h1:eee=\n"})
 		b.press("refreshPrs")
 		b.waitFor("go.sum open and changed", notViewed("go.sum")+` && !`+shut("go.sum")+` && `+fileBox("go.sum")+`.querySelector('.fhead .again')`)
+
+		// A push that opens a file above the view keeps the place.
+		b.click("the chevron of retry.go", fileBox(retry)+`.querySelector('.fhead .fold')`)
+		b.waitFor("retry.go open", `!`+shut(retry)+` && `+boxHas(retry, "add", "\t\tif !retryable(err) {"))
+		b.evalJS(`(s => s.scrollTop = ` + fileBox(retry) + `.offsetTop + 20)(document.querySelector('.allfiles'))`)
+		b.waitFor("the view inside retry.go", `document.querySelector('.allfiles').scrollTop > `+fileBox(retry)+`.offsetTop`)
+		at = fmt.Sprint(evalJS[float64](b, place))
+		push(map[string]string{".github/workflows/ci.yml": ciYml + "  lint:\n    runs-on: ubuntu-latest\n"})
+		b.press("refreshPrs")
+		b.waitFor("ci.yml open above, the view in place", notViewed(ci)+` && !`+shut(ci)+` && `+fileBox(ci)+`.querySelector('.ln') && Math.abs(`+place+` - `+at+`) < 2`)
+		b.waitFor("the Viewed box of ci.yml in place", still(check(ci)))
+		b.click("Viewed of ci.yml", check(ci))
+		b.waitFor("ci.yml viewed again", viewed(ci))
 		b.click("back", `document.querySelector('#prs-pr .back')`)
 
 		// Local mode has no marks; As on GitHub has.

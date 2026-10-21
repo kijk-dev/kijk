@@ -12,7 +12,6 @@ import { marksOf, setViewed, onViewed } from './viewed.js';
 
 let hooks = {}; // onTop(n, path), openFile(n, path)
 let view = null;
-const views = new Map(); // the last view of each pull request's Changes, for its tab's folds
 const goals = new Map(); // a file to scroll to once the Changes of a pull request show
 
 export function setupChanges(h) {
@@ -57,6 +56,7 @@ function source(v) {
     onTop: path => hooks.onTop?.(n, path),
     marked: f => threadsOn(v, f.path).length > 0,
     viewed: f => v.marks?.state(f) || '',
+    viewedAt: f => v.marks?.at(f) || 0,
     setViewed: (f, on) => setViewed(root, n, v.res, f, on),
   };
 }
@@ -66,7 +66,6 @@ export async function openChanges(viewer, root, tab, keep, save) {
   const v = boxView(viewer, root, tab, keep, save, {});
   v.n = tab.n;
   v.label = `Changes of #${tab.n}`;
-  views.set(`${root}\n${tab.n}`, v);
   Object.assign(v.src, source(v));
   v.reload = () => {}; // the forge diff does not follow the files on disk
   view = v;
@@ -84,14 +83,7 @@ onView((root, n, res) => {
   if (view && isCurrent(view) && view.root === root && view.n === n) show(view, res);
 });
 
-// A new mark drops the fold or open the user gave the box, also when Changes is not in front.
-onViewed((root, n, path) => {
-  const v = root && views.get(`${root}\n${n}`);
-  if (v?.tab.folds && path in v.tab.folds) {
-    const { [path]: _, ...rest } = v.tab.folds;
-    v.tab.folds = rest;
-    v.save();
-  }
+onViewed((root, n) => {
   if (!view || !isCurrent(view) || (root && (view.root !== root || view.n !== n))) return;
   view.marks = marksOf(view.root, view.n, view.res);
   marksChanged(view);
