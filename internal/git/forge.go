@@ -215,9 +215,17 @@ func toolNote(tool string, err error) string {
 }
 
 func runTool(name string, args ...string) ([]byte, error) {
+	return runToolIn(nil, name, args...)
+}
+
+// runToolIn runs gh or glab with stdin, for a body sent with --input -.
+func runToolIn(stdin []byte, name string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, name, args...)
+	if stdin != nil {
+		cmd.Stdin = bytes.NewReader(stdin)
+	}
 	cmd.Env = append(os.Environ(), "GH_PROMPT_DISABLED=1", "NO_PROMPT=1", "NO_COLOR=1", "GH_NO_UPDATE_NOTIFIER=1", "GLAB_CHECK_UPDATE=false")
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
