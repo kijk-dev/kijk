@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/kijk-dev/kijk/internal/gittest"
 )
@@ -246,5 +247,48 @@ func TestPRBaseMovesLater(t *testing.T) {
 	pr.MergeBase = "main"
 	if split, err := PRSplit(clone, pr, head); err != nil || !ValidHash(split) {
 		t.Errorf("split with a bad merge base: %q %v", split, err)
+	}
+}
+
+// The merge bases kijk keeps are bounded, as the split points of branches are.
+func TestMergeBaseCacheBounded(t *testing.T) {
+	_, clone, work := prOrigin(t)
+	head, base := rev(t, work, "retry"), rev(t, clone, "main")
+	if _, err := FetchPR(clone, "github", 7, head, "", "main"); err != nil {
+		t.Fatal(err)
+	}
+	splitCache.Lock()
+	clear(splitCache.m) // other tests made the same commits, in the same second
+	for i := 0; i < 150; i++ {
+		splitCache.m[strings.Repeat("x", i)] = "y"
+	}
+	splitCache.Unlock()
+	if _, err := MergeBase(clone, base, head); err != nil {
+		t.Fatal(err)
+	}
+	splitCache.Lock()
+	n := len(splitCache.m)
+	splitCache.Unlock()
+	if n > 101 {
+		t.Errorf("the cache holds %d entries", n)
+	}
+}
+
+// Files kept from a pull request's head go after a day, when kijk writes another.
+func TestPRFilePrunes(t *testing.T) {
+	_, clone, work := prOrigin(t)
+	if _, err := FetchPR(clone, "github", 7, rev(t, work, "retry"), "", "main"); err != nil {
+		t.Fatal(err)
+	}
+	cache := t.TempDir()
+	old := filepath.Join(cache, strings.Repeat("a", 40))
+	gittest.Write(t, filepath.Join(old, "x.go"), "old\n")
+	day := time.Now().Add(-48 * time.Hour)
+	os.Chtimes(old, day, day)
+	if _, err := PRFile(clone, 7, "retry.go", cache); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(old); err == nil {
+		t.Error("the old file is still kept")
 	}
 }

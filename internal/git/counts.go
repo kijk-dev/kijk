@@ -182,13 +182,18 @@ func splitPoint(root, base string) string {
 		return fork
 	}
 	fork, _ = Run(root, "merge-base", "HEAD", base)
+	keepSplit(key, fork)
+	return fork
+}
+
+// keepSplit keeps a split point; the cache starts over when it grows past 100.
+func keepSplit(key, fork string) {
 	splitCache.Lock()
+	defer splitCache.Unlock()
 	if len(splitCache.m) > 100 {
 		clear(splitCache.m)
 	}
 	splitCache.m[key] = fork
-	splitCache.Unlock()
-	return fork
 }
 
 // branchBase finds what a branch is compared with: the PR target, else the main line, and where

@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // A pull request's head lives in kijk's own ref, out of the user's branches; all worktrees of a
@@ -75,9 +76,7 @@ func MergeBase(root, base, head string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	splitCache.Lock()
-	splitCache.m[key] = fork
-	splitCache.Unlock()
+	keepSplit(key, fork)
 	return fork, nil
 }
 
@@ -138,8 +137,11 @@ func PRFile(root string, n int, path, dir string) (string, error) {
 	// The file keeps its name, so it shows and colors as the original does.
 	p := filepath.Join(dir, blob, filepath.Base(filepath.FromSlash(path)))
 	if _, err := os.Stat(p); err == nil {
+		now := time.Now()
+		os.Chtimes(filepath.Dir(p), now, now) // still in use: not pruned
 		return p, nil
 	}
+	pruneFiles(dir)
 	if size, _ := Run(root, "cat-file", "-s", blob); len(size) > 0 {
 		if n, _ := strconv.Atoi(size); n > MaxFileSize {
 			return "", errors.New("file too large")
@@ -189,4 +191,15 @@ func FileAt(root, commit, path string) (string, error) {
 	}
 	b, err := Raw(root, "show", commit+":"+path)
 	return string(b), err
+}
+
+// pruneFiles removes the files of pull requests that were not read for a day.
+func pruneFiles(dir string) {
+	entries, _ := os.ReadDir(dir)
+	for _, e := range entries {
+		info, err := e.Info()
+		if err == nil && e.IsDir() && ValidHash(e.Name()) && time.Since(info.ModTime()) > 24*time.Hour {
+			os.RemoveAll(filepath.Join(dir, e.Name()))
+		}
+	}
 }
