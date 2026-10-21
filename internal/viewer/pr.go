@@ -29,7 +29,7 @@ func (p *prRanges) setWrite(root string, n int, w git.Write) {
 	p.writes[root+"\n"+strconv.Itoa(n)] = w
 }
 
-func (p *prRanges) write(root string, n int) (git.Write, bool) {
+func (p *prRanges) rules(root string, n int) (git.Write, bool) {
 	p.Lock()
 	defer p.Unlock()
 	w, ok := p.writes[root+"\n"+strconv.Itoa(n)]
