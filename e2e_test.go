@@ -594,10 +594,25 @@ func TestBrowser(t *testing.T) {
 		}
 		shots(b, "prs-local")
 
+		// Copy for agent lists the open thread too, and marks it copied.
+		b.evalJS(`navigator.clipboard.writeText = t => (window.e2eClip = t, Promise.resolve())`)
+		b.click("Copy for agent", byText("#prs-branch .reviewbox button", "Copy for agent…"))
+		b.waitFor("notes and threads", `[...document.querySelectorAll('.copypanel .label')].map(l => l.textContent).join('|') === 'Agent notes|Threads on GitHub' && [...document.querySelectorAll('.copypanel li input')].filter(c => c.checked).length === 2`)
+		at := fmt.Sprint(lineOf(sessionGo("sess, ok := s.lookup(c.Value)", ""), "\tsess, ok := s.lookup(c.Value)"))
+		prompt := "Review notes for branch fix-login (PR #482).\nFix each one, then say what you changed.\n\n" +
+			session + ":" + at + "\n  Check the expiry in lookup too.\n\n" +
+			session + ":" + at + " (sanne on GitHub)\n  Does lookup also check the expiry?"
+		b.waitFor("the prompt with the thread", `document.querySelector('.copypanel pre')?.textContent === `+jsString(prompt))
+		b.click("Copy 2", byText(".copypanel button", "Copy 2"))
+		b.waitFor("on the clipboard", `window.e2eClip === `+jsString(prompt))
+		b.waitFor("the status bar", `document.querySelector('#statusbar').textContent.includes('Copied 1 note and 1 thread')`)
+		b.click("Copy for agent", byText("#prs-branch .reviewbox button", "Copy for agent…"))
+		b.waitFor("the thread copied", `(l => l?.classList.contains('used') && !l.querySelector('input').checked && l.querySelector('.where').textContent.includes('copied'))([...document.querySelectorAll('.copypanel li')].at(-1))`)
+		b.key("Escape", kb.Escape)
+
 		// A failed job of your own branch goes to the agent.
 		b.click("Overview", prsRow("Overview"))
 		b.waitFor("the failed job of #482", `document.querySelector('.md.ov .joblog .jlhead b')?.textContent === 'test (linux)'`)
-		b.evalJS(`navigator.clipboard.writeText = t => (window.e2eClip = t, Promise.resolve())`)
 		b.click("Copy for agent", `document.querySelector('.md.ov .joblog button')`)
 		b.waitFor("the failure on the clipboard", `window.e2eClip === `+jsString("CI job test (linux) failed on branch fix-login (PR #482).\nFix it, then say what you changed.\n\n=== RUN   TestResume\n    session_test.go:12: got nil session\n--- FAIL: TestResume (0.00s)"))
 		b.waitFor("the status bar", `document.querySelector('#statusbar').textContent.includes('Copied the failure of test (linux)')`)

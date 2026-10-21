@@ -159,7 +159,20 @@ function loadNotes() {
   if (k === notesKey) return;
   notesKey = k;
   try { notes = JSON.parse(localStorage.getItem(k)) || []; } catch { notes = []; }
+  try { copiedThreads = new Set(JSON.parse(localStorage.getItem(threadsKey())) || []); } catch { copiedThreads = new Set(); }
 }
+
+// The forge threads copied for the agent are kept by id, next to the notes.
+let copiedThreads = new Set();
+const threadsKey = () => notesKey.replace(/^kijk\.notes:/, 'kijk.copied-threads:');
+
+function saveCopiedThreads() {
+  try { localStorage.setItem(threadsKey(), JSON.stringify([...copiedThreads])); } catch { /* storage blocked */ }
+}
+
+// openThreads are the threads of the branch's pull request that still want an answer.
+const openThreads = () => (branchPR && branchPR.number === ownPR() ? branchPR.threads.filter(t => !t.resolved && !t.outdated) : []);
+const threadLines = new Map(); // thread id: the line on disk it shows under
 
 function saveNotes() {
   try {
@@ -358,7 +371,7 @@ function notesBox() {
   copy.dataset.k = 'copy';
   copy.innerHTML = ICON.copy;
   copy.append('Copy for agent…');
-  copy.disabled = !notes.length;
+  copy.disabled = !notes.length && !openThreads().length;
   copy.onclick = startCopy;
   box.append(copy);
   return box;
@@ -410,7 +423,10 @@ const branchSource = {
     const put = (key, e) => under.set(key, [...(under.get(key) || []), e]);
     const texts = new Map([...rows.filter(r => r.k !== '-'), ...extra].map(r => [r.n, r.t]));
     const redrawBox = () => redraw(v, [b.f.path]);
-    for (const [t, at] of th.at) put(`n:${at}`, threadEl(t, { redraw: redrawBox, line: at, foot: replyStrip(t, b.f.path, at, texts.get(at)) }));
+    for (const [t, at] of th.at) {
+      threadLines.set(t.id, at);
+      put(`n:${at}`, threadEl(t, { redraw: redrawBox, line: at, foot: replyStrip(t, b.f.path, at, texts.get(at)) }));
+    }
     for (const [n, at] of where) {
       if (texts.has(at)) put(`n:${at}`, noteEl(v, n));
       else end.push(noteEl(v, n));
@@ -719,7 +735,7 @@ onKey('addNote', () => {
 // ----- Copy for agent -----
 
 // prompt is the text the agent gets: two fixed lines, then each note under its file and line.
-function prompt(picked) {
+function prompt(picked, threads = []) {
   const f = prStatus?.forge;
   const p = prStatus?.pr || data.pr;
   const words = FORGE[f?.kind || 'github'];
@@ -727,6 +743,14 @@ function prompt(picked) {
   const out = [`Review notes for branch ${data.branch}${pr}.`, 'Fix each one, then say what you changed.'];
   for (const n of picked) {
     out.push('', `${n.path}:${n.line}`, ...n.body.split('\n').map(l => `  ${l}`));
+  }
+  for (const t of threads) {
+    const [first, ...replies] = t.comments;
+    out.push('', `${t.path}:${threadLines.get(t.id) || t.line} (${first.author} on ${words.name})`, ...first.body.split('\n').map(l => `  ${l}`));
+    for (const c of replies) {
+      const [l1, ...more] = c.body.split('\n');
+      out.push(`  ${c.author}: ${l1}`, ...more.map(l => `  ${l}`));
+    }
   }
   return out.join('\n');
 }
@@ -763,6 +787,24 @@ function openCopy(button) {
     list.append(li);
     return { n, check };
   });
+  const words = FORGE[prStatus?.forge?.kind] || FORGE.github;
+  const threadList = el('ul');
+  const tpicks = openThreads().sort((a, b) => a.path.localeCompare(b.path) || a.line - b.line).map(t => {
+    const used = copiedThreads.has(t.id);
+    const li = el('li', used ? 'used' : '');
+    const check = el('input');
+    check.type = 'checkbox';
+    check.checked = !used;
+    const where = `${t.path}:${threadLines.get(t.id) || t.line}`;
+    check.setAttribute('aria-label', `${where}, ${t.comments[0].author} on ${words.name}`);
+    const what = el('label', 'what');
+    what.append(el('span', 'where', `${where} · ${t.comments[0].author}${used ? ' · copied' : ''}`), el('span', 'body', t.comments[0].body.split('\n')[0]));
+    what.onclick = () => { check.checked = !check.checked; update(); };
+    check.onchange = update;
+    li.append(check, what);
+    threadList.append(li);
+    return { t, check };
+  });
   const pre = el('pre');
   pre.tabIndex = 0;
   const count = el('span', 'muted');
@@ -770,30 +812,38 @@ function openCopy(button) {
   const copy = el('button', 'tool');
   const acts = el('div', 'acts');
   acts.append(count, cancel, copy);
-  box.append(el('h2', null, 'Copy for agent'), el('div', 'label', 'Agent notes'), list, pre, acts);
+  box.append(el('h2', null, 'Copy for agent'));
+  if (all.length || !tpicks.length) box.append(el('div', 'label', 'Agent notes'), list);
+  if (tpicks.length) box.append(el('div', 'label', `Threads on ${words.name}`), threadList);
+  box.append(pre, acts);
   function picked() { return picks.filter(p => p.check.checked).map(p => p.n); }
+  function pickedThreads() { return tpicks.filter(p => p.check.checked).map(p => p.t); }
   function update() {
-    const k = picked().length;
-    pre.textContent = prompt(picked());
-    count.textContent = `${k} of ${all.length} picked`;
+    const k = picked().length + pickedThreads().length;
+    pre.textContent = prompt(picked(), pickedThreads());
+    count.textContent = `${k} of ${all.length + tpicks.length} picked`;
     copy.textContent = `Copy ${k}`;
     copy.disabled = !k;
   }
   update();
-  const markCopied = list => {
+  const markCopied = (list, threads) => {
     const at = Date.now();
     for (const n of list) n.copiedAt = at;
+    for (const t of threads) copiedThreads.add(t.id);
+    if (threads.length) saveCopiedThreads();
     close();
     notesChanged(new Set(list.map(n => n.path)));
-    page.say(`Copied ${plural(list.length, 'note')}`);
-    page.announce(`Copied ${plural(list.length, 'note')}`);
+    const said = `Copied ${plural(list.length, 'note')}${threads.length ? ` and ${plural(threads.length, 'thread')}` : ''}`;
+    page.say(said);
+    page.announce(said);
     fetch('/api/count?name=agent-copy', { method: 'POST' }).catch(() => {}); // the local kijk counts, also for a remote folder
   };
   const doCopy = async () => {
     const list = picked();
-    if (!list.length) return;
+    const threads = pickedThreads();
+    if (!list.length && !threads.length) return;
     try {
-      await navigator.clipboard.writeText(prompt(list));
+      await navigator.clipboard.writeText(prompt(list, threads));
     } catch {
       // The browser refused: keep the prompt selected, so the copy key copies it.
       getSelection().selectAllChildren(pre);
@@ -802,10 +852,10 @@ function openCopy(button) {
       page.announce(`Press ${mac ? '⌘C' : 'Ctrl+C'} to copy the prompt`);
       return;
     }
-    markCopied(list);
+    markCopied(list, threads);
   };
   const onCopy = () => {
-    if (getSelection().toString().trim() === pre.textContent.trim() && picked().length) setTimeout(() => markCopied(picked()));
+    if (getSelection().toString().trim() === pre.textContent.trim() && picked().length + pickedThreads().length) setTimeout(() => markCopied(picked(), pickedThreads()));
   };
   const outside = e => { if (!box.contains(e.target) && !e.target.closest?.('[data-k=copy]')) close(); };
   function close() {
@@ -841,5 +891,5 @@ function openCopy(button) {
   box.style.left = `${Math.max(8, Math.min(r.left, innerWidth - box.offsetWidth - 8))}px`;
   box.style.bottom = `${innerHeight - r.top + 6}px`;
   copyPanel = { close };
-  (picks[0]?.check || copy).focus();
+  (picks[0]?.check || tpicks[0]?.check || copy).focus();
 }
