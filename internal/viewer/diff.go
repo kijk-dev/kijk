@@ -7,18 +7,26 @@ import (
 	"github.com/kijk-dev/kijk/internal/git"
 )
 
-// diffReply adds the two pictures of a changed image or diagram to its diff.
+// diffReply adds the two pictures of a changed image or diagram to its diff, and in mode
+// "branch" the lines the upstream does not have.
 type diffReply struct {
 	git.DiffResult
-	Image   *imageSides   `json:"image,omitempty"`
-	Diagram *diagramSides `json:"diagram,omitempty"`
+	Image     *imageSides   `json:"image,omitempty"`
+	Diagram   *diagramSides `json:"diagram,omitempty"`
+	NotPushed [][2]int      `json:"notPushed,omitempty"`
 }
 
 // diff is git.Diff, plus mode "untracked": git has nothing to compare a new file with, so its
-// lines come from disk.
+// lines come from disk. Mode "branch" does the same for an untracked file.
 func diff(root, path, orig, mode, hash string, context int) (git.DiffResult, error) {
 	if mode != "untracked" {
-		return git.Diff(root, path, orig, mode, hash, context)
+		res, err := git.Diff(root, path, orig, mode, hash, context)
+		if err != nil || mode != "branch" || len(res.Hunks) > 0 || res.Binary {
+			return res, err
+		}
+		if tracked, _ := git.Run(root, "ls-files", "--", ":(literal)"+path); tracked != "" {
+			return res, nil
+		}
 	}
 	if !filepath.IsLocal(filepath.FromSlash(path)) || (orig != "" && !filepath.IsLocal(filepath.FromSlash(orig))) {
 		return git.DiffResult{}, git.ErrOutside

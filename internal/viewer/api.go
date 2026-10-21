@@ -40,6 +40,7 @@ func Register(mux *http.ServeMux, rts *Roots, o Options) {
 	mux.HandleFunc("GET /api/goto", a.gotoFile)
 	mux.HandleFunc("GET /api/status", a.status)
 	mux.HandleFunc("GET /api/diff", a.diff)
+	mux.HandleFunc("GET /api/branch", a.branch)
 	mux.HandleFunc("GET /api/folder-events", a.folderEvents)
 	mux.HandleFunc("POST /api/stage", a.gitAction(func(req actionRequest) (string, error) { return git.Stage(req.Root, req.Paths) }))
 	mux.HandleFunc("POST /api/unstage", a.gitAction(func(req actionRequest) (string, error) { return git.Unstage(req.Root, req.Paths) }))
@@ -78,6 +79,8 @@ func fail(w http.ResponseWriter, err error) {
 		http.Error(w, "Path is outside this folder", http.StatusForbidden)
 	case errors.Is(err, fs.ErrNotExist):
 		http.Error(w, "Not found", http.StatusNotFound)
+	case errors.Is(err, git.ErrNoBranch):
+		http.Error(w, "This branch has no branch changes", http.StatusNotFound)
 	case errors.Is(err, git.ErrBadHash), errors.Is(err, git.ErrBadMode):
 		http.Error(w, err.Error(), http.StatusBadRequest)
 	default:
@@ -326,13 +329,23 @@ func (a *api) diff(w http.ResponseWriter, r *http.Request) {
 	if err != nil || context < 0 {
 		context = 3
 	}
-	res, err := diff(root, q.Get("path"), q.Get("orig"), q.Get("mode"), q.Get("hash"), context)
+	mode, hash := q.Get("mode"), q.Get("hash")
+	if mode == "branch" {
+		if hash = git.BranchSplit(root, q.Get("target")); hash == "" {
+			fail(w, git.ErrNoBranch)
+			return
+		}
+	}
+	res, err := diff(root, q.Get("path"), q.Get("orig"), mode, hash, context)
 	if err != nil {
 		fail(w, err)
 		return
 	}
 	highlightDiff(q.Get("path"), &res)
 	out := diffReply{DiffResult: res}
+	if mode == "branch" {
+		out.NotPushed, _ = git.NotPushed(root, q.Get("path"))
+	}
 	if t := render.TypeOf(q.Get("path")); t != nil && t.Diff == render.DiffPictures {
 		switch t.Show {
 		case render.ShowImage:
@@ -342,6 +355,20 @@ func (a *api) diff(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	reply(w, out)
+}
+
+// branch answers the branch changes. A branch on the main line has none: 404.
+func (a *api) branch(w http.ResponseWriter, r *http.Request) {
+	root, _, ok := a.target(w, r)
+	if !ok {
+		return
+	}
+	b, err := git.BranchChanges(root, r.URL.Query().Get("target"))
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	reply(w, b)
 }
 
 type actionRequest struct {
