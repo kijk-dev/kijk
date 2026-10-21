@@ -436,10 +436,8 @@ function restore(v, a) {
   if (a?.b.el.isConnected) v.scroll.scrollTop = a.b.el.offsetTop + a.offset;
 }
 
-// updateView follows the branch changes: boxes come and go, and a box whose file changed fetches
-// its diff again, or when it is far from the screen, once it comes near. A commit leaves every diff
-// as it was; only a new split point or a push changes them all. A box redraws only when its diff
-// changed.
+// updateView follows the branch changes. A changed box fetches its diff when it is near the screen;
+// a commit changes no diff, but a new split point or a push changes them all.
 async function updateView(v, change) {
   if (!v.scroll || !data) return;
   const a = anchor(v);
@@ -574,10 +572,8 @@ async function fileLines(root, path) {
   return { texts: out.map(l => (Array.isArray(l) ? l.map(p => p[1]).join('') : l)), pieces: out };
 }
 
-// place puts each note of a file on its line: the same text at the same line, else the nearest line
-// with the same text, else it is outdated and stays at its line number, cut to the file's length.
-// It gives the line each note shows under (0: at the end of the box), and the lines to show
-// around the hunks for notes outside them.
+// place keeps each note on its line: the same text there, else the nearest line with that text, else
+// it is outdated. It gives the line each note shows under, and the lines notes need outside the hunks.
 async function place(v, b, rows) {
   const mine = notesOn(b.f.path);
   const byN = new Map(rows.filter(r => r.n && r.k !== '-').map(r => [r.n, r]));
