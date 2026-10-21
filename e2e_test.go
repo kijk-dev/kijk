@@ -1512,6 +1512,28 @@ func TestBrowser(t *testing.T) {
 		const missing = "kijk does not have the commit of your last review in this clone. All changes show."
 		b.waitFor("all changes, with why", bar+`?.firstChild.textContent === `+jsString(missing)+` && document.querySelector('#prs-pr .since-note')?.textContent === `+jsString(missing)+` && `+boxes+` === `+jsString(ci+" "+readme+" "+retry))
 
+		// GitHub takes a comment only near a change of the pull request: a line that changed since
+		// the review, but is far from every change of #477, says so.
+		const session = "internal/auth/session.go"
+		onMain := sessionGo("sess, ok := s.byID[c.Value]", "")
+		top := strings.Repeat("// The store.\n", 10)
+		commit(session, top+strings.Replace(onMain, "return 16 > 0", "return 16 > 1", 1), "Note the session store")
+		last := push(false)
+		commit(session, top+onMain, "Put check16 back")
+		push(false)
+		b.evalJS(`for (const k of Object.keys(localStorage)) if (k.startsWith('kijk.viewed:') && k.endsWith(':477')) localStorage.setItem(k, JSON.stringify({...JSON.parse(localStorage.getItem(k)), review: {head: ` + jsString(last) + `}}))`)
+		b.act("reload", chromedp.Reload())
+		b.click("Since your review", since)
+		far := boxRow(session, "func check16() bool {")
+		b.waitFor("only the line put back", boxes+` === `+jsString(session)+` && `+far)
+		b.hover("a line", far)
+		b.click("+", far+`.querySelector('.addc')`)
+		b.waitFor("the editor", `document.activeElement?.matches('#viewer textarea')`)
+		b.typeText("Why 16?")
+		b.press("submitNote")
+		b.waitFor("why GitHub refuses it", `document.querySelector('#viewer .thr.editing .error')?.textContent === 'GitHub takes a comment only within 3 lines of a change of the pull request.'`)
+		b.key("Escape", kb.Escape)
+
 		// Local mode on your own branch has no switch.
 		b.click("back", `document.querySelector('#prs-pr .back')`)
 		b.click("this branch", prRow(482))
