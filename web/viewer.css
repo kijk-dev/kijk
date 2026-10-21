@@ -759,6 +759,7 @@ button.pill:hover { background: color-mix(in srgb, var(--modified) 22%, var(--se
 .thr.draftonly:has(.thead)::before { background: var(--panel); }
 .thr .thead .tool { background: var(--bg); font-weight: 400; }
 .thr .error { margin: 6px 0 0 30px; font-size: 12px; color: var(--error); }
+.thr .thead + .error { margin: 8px 14px 0; }
 .thr .foot .error { margin: 0; flex: 0 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .thr .foot .error:empty { display: none; }
 kbd { font: 11px/1 var(--code-font); padding: 1px 4px; border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 3px; background: var(--bg); color: var(--muted); }

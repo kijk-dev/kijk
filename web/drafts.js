@@ -171,6 +171,7 @@ export function moveEditor(ed, rows, at) {
 // ----- What a thread box needs to write -----
 
 const editors = new Map(); // a draft being edited: its text box
+const failed = new Map(); // a thread or draft whose write the forge refused: why
 const strips = new Map(); // the reply strips of forge mode, kept across redraws so what is typed stays
 
 // threadOpts are the parts of a thread box that write: who wrote each draft where, its text box and
@@ -196,29 +197,38 @@ export function threadOpts(root, n, res, redraw) {
         redraw();
         box.focus();
       }),
-      iconButton(ICON.trash, 'Delete', async () => {
-        try {
-          await send(root, n, 'comment/delete', { id: c.id });
-          hooks.announce?.('Draft deleted');
-        } catch (err) {
-          hooks.announce?.(err.message);
-        }
-      }),
+      iconButton(ICON.trash, 'Delete', () => tried(key(c.id), redraw, async () => {
+        await send(root, n, 'comment/delete', { id: c.id });
+        hooks.announce?.('Draft deleted');
+      }).catch(() => {})), // the thread shows why
     ]),
   };
-  if (!can) return { drafts };
+  // A refusal shows in the thread, under its header.
+  const error = t => [t.id, ...t.comments.map(c => c.id)].map(id => failed.get(key(id))).find(Boolean) || '';
+  if (!can) return { drafts, error };
   return {
     drafts,
+    error,
     reply: t => replyStrip(root, n, res, t),
-    resolve: async (t, on) => {
-      try {
-        await send(root, n, 'resolve', { thread: t.id, resolved: on });
-        hooks.announce?.(on ? 'Thread resolved' : 'Thread open again');
-      } catch (err) {
-        hooks.announce?.(err.message);
-      }
-    },
+    resolve: (t, on) => tried(key(t.id), redraw, async () => {
+      await send(root, n, 'resolve', { thread: t.id, resolved: on });
+      hooks.announce?.(on ? 'Thread resolved' : 'Thread open again');
+    }),
   };
+}
+
+// tried runs a write; when the forge refuses it, its reason is kept under k and drawn.
+async function tried(k, redraw, write) {
+  const had = failed.delete(k);
+  try {
+    await write();
+    if (had) redraw();
+  } catch (err) {
+    failed.set(k, err.message);
+    hooks.announce?.(err.message);
+    redraw();
+    throw err;
+  }
 }
 
 // replyStrip is an open thread's reply box in forge mode: Enter adds the reply to your review.

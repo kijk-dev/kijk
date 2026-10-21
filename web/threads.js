@@ -60,9 +60,8 @@ export function comment(c, drafts) {
   return box;
 }
 
-// threadEl draws a thread. opts: {redraw(), line, foot, drafts, reply(t), resolve(t, on)}. foot
-// is the reply strip of Local mode; reply(t) gives the strip of forge mode, resolve(t, on) sends a
-// resolve. line is where the thread shows, when that is not its own line.
+// threadEl draws a thread. opts: {redraw(), line, foot, drafts, reply(t), resolve(t, on), error(t)}.
+// foot is Local mode's reply strip, reply(t) forge mode's; line is where it shows, if not its own.
 export function threadEl(t, opts) {
   const line = opts.line || t.line;
   if (t.resolved && !opened.has(t.id)) {
@@ -114,6 +113,8 @@ export function threadEl(t, opts) {
   }
   if (end.firstChild) head.append(end);
   box.append(head);
+  const why = opts.error?.(t);
+  if (why) box.append(el('p', 'error', why));
   if (t.outdated && t.was) box.append(el('span', 'was', t.was));
   for (const c of t.comments) box.append(comment(c, opts.drafts));
   const foot = opts.foot || (!t.draft && !t.resolved && t.canReply && opts.reply?.(t));
@@ -130,7 +131,7 @@ function resolveButton(t, text, on, opts) {
       await opts.resolve(t, on);
       if (on) opened.delete(t.id);
       else opened.add(t.id);
-    } finally {
+    } catch { /* the thread shows why */ } finally {
       b.disabled = false;
     }
   };
