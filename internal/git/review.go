@@ -26,12 +26,17 @@ type NewComment struct {
 // ErrHeadMoved: the pull request has commits kijk did not show, so a line may be another line now.
 var ErrHeadMoved = errors.New("has new commits. kijk shows them now; add your comment there.")
 
+// ErrBadInput is a write the page asked for that kijk refuses before any call.
+var ErrBadInput = errors.New("bad request")
+
+func badInput(what string) error { return fmt.Errorf("%w: %s", ErrBadInput, what) }
+
 // idRe is what ids from the forge look like; anything else is refused before a call.
 var idRe = regexp.MustCompile(`^[A-Za-z0-9_=+/:.-]{1,200}$`)
 
 func checkID(id string) error {
 	if !idRe.MatchString(id) || strings.HasPrefix(id, "-") {
-		return errors.New("bad id")
+		return badInput("bad id")
 	}
 	return nil
 }
@@ -77,14 +82,14 @@ func headMoved(f *forge, n int) error {
 // the pull request's head is no longer head, the one kijk showed.
 func AddComment(root string, n int, head string, c NewComment) (string, error) {
 	if strings.TrimSpace(c.Body) == "" {
-		return "", errors.New("the comment is empty")
+		return "", badInput("the comment is empty")
 	}
 	if c.Thread != "" {
 		if err := checkID(c.Thread); err != nil {
 			return "", err
 		}
 	} else if c.Path == "" || c.Line <= 0 || c.OldLine < 0 {
-		return "", errors.New("no line to comment on")
+		return "", badInput("no line to comment on")
 	}
 	f, tool, err := writer(root)
 	if err != nil {
@@ -105,7 +110,7 @@ func EditComment(root string, n int, id, body string) error {
 		return err
 	}
 	if strings.TrimSpace(body) == "" {
-		return errors.New("the comment is empty")
+		return badInput("the comment is empty")
 	}
 	f, tool, err := writer(root)
 	if err != nil {
@@ -166,7 +171,7 @@ var Verdicts = map[string]string{"comment": "COMMENT", "approve": "APPROVE", "ch
 // tells the page the summary is on the forge, also when a later step failed.
 func SubmitReview(root string, n int, head, verdict, body string) (summary string, err error) {
 	if Verdicts[verdict] == "" {
-		return "", errors.New("unknown verdict " + verdict)
+		return "", badInput("unknown verdict " + verdict)
 	}
 	f, tool, err := writer(root)
 	if err != nil {

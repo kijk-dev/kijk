@@ -49,7 +49,7 @@ func gitlabCanWrite(f *forge) (Write, error) {
 func discussion(thread string) (string, error) {
 	id := strings.TrimPrefix(thread, "gid://gitlab/Discussion/")
 	if !gitlabDiscussionRe.MatchString(id) {
-		return "", errors.New("bad thread id")
+		return "", badInput("bad thread id")
 	}
 	return id, nil
 }
@@ -114,7 +114,7 @@ func gitlabComment(f *forge, n int, head string, c NewComment) (string, error) {
 
 func gitlabEdit(f *forge, n int, id, body string) error {
 	if !gitlabNoteRe.MatchString(id) {
-		return errors.New("bad draft id")
+		return badInput("bad draft id")
 	}
 	if _, err := gitlabCanWrite(f); err != nil {
 		return err
@@ -125,7 +125,7 @@ func gitlabEdit(f *forge, n int, id, body string) error {
 
 func gitlabDelete(f *forge, n int, id string) error {
 	if !gitlabNoteRe.MatchString(id) {
-		return errors.New("bad draft id")
+		return badInput("bad draft id")
 	}
 	if _, err := gitlabCanWrite(f); err != nil {
 		return err
