@@ -405,9 +405,9 @@ func pipelineCI(status string) string {
 	switch strings.ToLower(status) {
 	case "success":
 		return "passed"
-	case "failed":
+	case "failed", "canceled": // as on GitHub, a cancelled run is not a pass
 		return "failed"
-	case "running", "pending", "created", "preparing", "waiting_for_resource", "scheduled":
+	case "running", "pending", "created", "preparing", "waiting_for_resource", "scheduled", "canceling":
 		return "running"
 	}
 	return ""

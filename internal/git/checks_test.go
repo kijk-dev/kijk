@@ -107,7 +107,8 @@ func TestCheckStates(t *testing.T) {
 			t.Errorf("runState(%s, %s) = %s, want %s", c.status, c.conclusion, got, c.want)
 		}
 	}
-	for status, want := range map[string]string{"CANCELED": "cancel", "canceling": "cancel", "SKIPPED": "skip", "MANUAL": "wait"} {
+	// A job still cancelling still runs.
+	for status, want := range map[string]string{"CANCELED": "cancel", "canceling": "run", "SKIPPED": "skip", "MANUAL": "wait"} {
 		if got := jobState(status); got != want {
 			t.Errorf("jobState(%s) = %s, want %s", status, got, want)
 		}
@@ -117,6 +118,12 @@ func TestCheckStates(t *testing.T) {
 		{"__typename":"CheckRun","name":"test","status":"COMPLETED","conclusion":"CANCELLED"}]}`))
 	if p.CI != "failed" || len(p.Failed) != 1 || p.Failed[0] != "test" {
 		t.Errorf("the PR line with a cancelled job: %s %v", p.CI, p.Failed)
+	}
+	// A GitLab pipeline reads the same: cancelled is not a pass, cancelling still runs.
+	for status, want := range map[string]string{"canceled": "failed", "CANCELED": "failed", "canceling": "running", "skipped": ""} {
+		if got := pipelineCI(status); got != want {
+			t.Errorf("pipelineCI(%s) = %q, want %q", status, got, want)
+		}
 	}
 }
 
