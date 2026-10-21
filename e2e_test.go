@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -621,7 +622,28 @@ func TestBrowser(t *testing.T) {
 		before := len(forge.calls())
 		b.press("refreshPrs")
 		forge.waitFor(t, before, "pullRequest(number")
+
+		// The PR line's title opens the PRs tab on its pull request; ↗ still goes to the website.
+		b.click("the Git tab", gitTab)
+		b.waitFor("the PR line", `document.querySelector('#prline .pr-title')?.textContent === 'Fix login redirect loop' && document.querySelector('#prline .pr-link')?.href === 'https://github.com/acme/review/pull/482'`)
+		b.click("the PR line's title", `document.querySelector('#prline .pr-title')`)
+		b.waitFor("the PRs tab on #482", prsTab+`.classList.contains('active') && !document.querySelector('#prs-branch').hidden && document.querySelector('#prs-branch .pr-num')?.textContent === '#482'`)
 		b.noErrors()
+
+		// kijk <PR link> opens the pull request in the folders window, in the clone kijk knows.
+		f := openPage(t, newTab(t, tab), k, "/?window=folders")
+		f.waitFor("the folders window", `document.title === 'kijk · Folders'`)
+		if out := runCmd(t, k.env, exe, "-port", fmt.Sprint(k.port), "-no-open", "https://github.com/acme/review/pull/477"); !strings.Contains(out, "Added review") {
+			t.Fatalf("kijk <PR link> said:\n%s", out)
+		}
+		f.waitFor("#477 in the folders window", `!document.querySelector('#prs-pr').hidden && document.querySelector('#prs-pr .pr-num')?.textContent === '#477' && (t => t?.firstChild.textContent === 'Changes' && t.querySelector('.muted')?.textContent === '#477')(document.querySelector('#filetabs .filetab.active'))`)
+		cmd := exec.Command(exe, "-port", fmt.Sprint(k.port), "-no-open", "https://github.com/acme/billing/pull/12")
+		cmd.Env = append(os.Environ(), k.env...)
+		out, err := cmd.CombinedOutput()
+		if cmd.ProcessState.ExitCode() != 1 || !strings.Contains(string(out), "No folder of github.com/acme/billing is in kijk. Add a folder of this repo first: kijk <folder>") {
+			t.Fatalf("a link to a repo kijk has no clone of: %v\n%s", err, out)
+		}
+		f.noErrors()
 	})
 
 	t.Run("shots", func(t *testing.T) {

@@ -1,6 +1,6 @@
 import { el, get, post, folderKey } from './api.js';
 import { refreshTip, tipSide } from './tip.js';
-import { openKey, openFolder, closeFolder, setMachine, setupFolder, showFetched, SERVER } from './folder.js';
+import { openKey, openFolder, openFolderPR, closeFolder, setMachine, setupFolder, showFetched, SERVER } from './folder.js';
 import { ago, lineCount } from './git.js';
 import { mac } from './keys.js';
 import { showKijk, showAgentErrors, showUndo, showSaid, restarting } from './status.js';
@@ -18,6 +18,7 @@ const foldersMode = params.get('window') === 'folders';
 const TITLE = foldersMode ? 'kijk · Folders' : 'kijk';
 const PANE = foldersMode ? 'folders' : 'agents';
 let arriving = params.get('open'); // a folder kijk <folder> just added, to open and flash
+let arrivingPR = Number(params.get('pr')) || 0; // with kijk <PR link>, the pull request to open in it
 if (arriving) history.replaceState(null, '', '/?window=folders');
 let openSeq = null; // the last open request seen; null until the first message of a connection
 let listError = '';
@@ -552,7 +553,10 @@ function openHint(n) {
 function showFolders(msg) {
   rows = (msg.folders || []).map(r => ({ ...r, key: r.root, machine: '', names: [r.repo] }));
   const req = msg.open || { seq: 0 };
-  if (openSeq !== null && req.seq > openSeq && req.root) arriving = req.root;
+  if (openSeq !== null && req.seq > openSeq && req.root) {
+    arriving = req.root;
+    arrivingPR = req.pr || 0;
+  }
   openSeq = req.seq;
   listError = msg.error || '';
   const current = openKey && rows.find(r => r.key === openKey);
@@ -573,6 +577,8 @@ function arrive(root) {
   const r = rows.find(x => x.key === root && !x.missing);
   if (!r) return render();
   open(r, true);
+  if (arrivingPR) openFolderPR(arrivingPR);
+  arrivingPR = 0;
   const li = rowEls.get(r.key);
   li.classList.remove('arrived');
   void li.offsetWidth; // restarts the flash when the row flashed a moment ago

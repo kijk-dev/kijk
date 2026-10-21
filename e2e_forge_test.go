@@ -52,7 +52,9 @@ if [ -n "$f" ] && [ -f "$d/$f" ]; then cat "$d/$f"; else echo '{}'; fi
 }
 
 // env puts the fake tools first on the PATH of a kijk.
-func (f *fakeForge) env() string { return "PATH=" + f.dir + string(os.PathListSeparator) + os.Getenv("PATH") }
+func (f *fakeForge) env() string {
+	return "PATH=" + f.dir + string(os.PathListSeparator) + os.Getenv("PATH")
+}
 
 func (f *fakeForge) set(t *testing.T, name string, answer any) {
 	t.Helper()
