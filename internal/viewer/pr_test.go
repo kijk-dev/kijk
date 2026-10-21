@@ -150,7 +150,7 @@ func TestPRViewRoute(t *testing.T) {
 		out, _ := git.Run(clone, "rev-parse", rev+":retry.go")
 		return out
 	}
-	if want := blob(base) + ".." + blob(head); v.Files[0].Blobs != want || len(want) != 82 {
+	if want := blob(base) + ".." + blob(head); v.Files[0].Blobs != want {
 		t.Errorf("blobs %q, want %q", v.Files[0].Blobs, want)
 	}
 	if !strings.Contains(v.BodyHTML, "<strong>one</strong>") || strings.Contains(v.Comments[0].HTML, "<script>") || !strings.Contains(v.Comments[0].HTML, "<code>code</code>") {

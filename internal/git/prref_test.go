@@ -202,11 +202,17 @@ func TestPRFileBlobs(t *testing.T) {
 
 	gittest.Run(t, work, "checkout", "-q", "retry")
 	gittest.Write(t, filepath.Join(work, "retry.go"), "package shop\n\nfunc retry() {\n\tfor i := 0; i < 5; i++ {\n\t}\n}\n")
+	gittest.Write(t, filepath.Join(work, "new.go"), "package shop\n")
+	gittest.Run(t, work, "add", "new.go")
 	gittest.Run(t, work, "commit", "-qam", "Retry five times")
 	again, err := PRFiles(work, split, rev(t, work, "retry"))
-	if err != nil || len(again) != 3 {
+	if err != nil || len(again) != 4 || again[1].Path != "new.go" {
 		t.Fatalf("files %s %v", paths(again), err)
 	}
+	if want := none + ".." + blob("retry", "new.go"); again[1].Blobs != want {
+		t.Errorf("new.go: blobs %q, want %q", again[1].Blobs, want)
+	}
+	again = append(again[:1], again[2:]...)
 	if again[0].Blobs != files[0].Blobs || again[1].Blobs != files[1].Blobs {
 		t.Errorf("blobs of files the commit left alone moved: %q %q", again[0].Blobs, again[1].Blobs)
 	}
