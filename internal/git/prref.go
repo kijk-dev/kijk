@@ -10,11 +10,13 @@ import (
 )
 
 // A pull request's head lives in kijk's own ref, out of the user's branches; all worktrees of a
-// repo share it.
-func prRef(n int) string { return "refs/kijk/pr/" + strconv.Itoa(n) }
+// repo share it. Its base, when kijk had to fetch it, has its own ref too.
+func prRef(n int) string   { return "refs/kijk/pr/" + strconv.Itoa(n) }
+func baseRef(n int) string { return "refs/kijk/base/" + strconv.Itoa(n) }
 
 // FetchPR makes refs/kijk/pr/<n> point at head, and fetches only when it does not. On GitHub the
-// forge diff starts at the target's tip, so when that base commit is missing its branch comes too.
+// forge diff starts at the target's tip, so when that commit is missing it goes to refs/kijk/base/<n>:
+// moving origin/<base> would change the Git tab's behind counts and graph.
 func FetchPR(root, kind string, n int, head, base, baseBranch string) (fetched bool, err error) {
 	if (head != "" && !ValidHash(head)) || (base != "" && !ValidHash(base)) || n <= 0 {
 		return false, ErrBadHash
@@ -30,9 +32,10 @@ func FetchPR(root, kind string, n int, head, base, baseBranch string) (fetched b
 	}
 	specs := []string{"+" + src + ":" + prRef(n)}
 	if kind == "github" && base != "" && !hasCommit(root, base) && validBranch(root, baseBranch) {
-		specs = append(specs, "+refs/heads/"+baseBranch+":refs/remotes/origin/"+baseBranch)
+		specs = append(specs, "+refs/heads/"+baseBranch+":"+baseRef(n))
 	}
-	out, err := network(root, append([]string{"fetch", "--no-tags", "--no-write-fetch-head", "origin"}, specs...)...)
+	// An empty refmap keeps git from also moving origin/<base> when it fetches that branch.
+	out, err := network(root, append([]string{"fetch", "--no-tags", "--no-write-fetch-head", "--refmap=", "origin"}, specs...)...)
 	if err != nil {
 		first, _, _ := strings.Cut(strings.TrimSpace(out), "\n")
 		if first == "" {
@@ -99,19 +102,20 @@ func PRFiles(root, base, head string) ([]change, error) {
 	return cs, nil
 }
 
-// DeletePRRef removes the ref of a pull request that closed.
+// DeletePRRef removes the refs of a pull request that closed.
 func DeletePRRef(root string, n int) {
 	Run(root, "update-ref", "-d", prRef(n))
+	Run(root, "update-ref", "-d", baseRef(n))
 }
 
 // SweepPRRefs removes the refs of pull requests that are not open any more.
 func SweepPRRefs(root string, open []int) {
-	out, err := Run(root, "for-each-ref", "--format=%(refname)", "refs/kijk/pr/")
+	out, err := Run(root, "for-each-ref", "--format=%(refname)", "refs/kijk/pr/", "refs/kijk/base/")
 	if err != nil || out == "" {
 		return
 	}
 	for _, ref := range strings.Split(out, "\n") {
-		n, err := strconv.Atoi(strings.TrimPrefix(ref, "refs/kijk/pr/"))
+		n, err := strconv.Atoi(ref[strings.LastIndex(ref, "/")+1:])
 		if err == nil && !slices.Contains(open, n) {
 			DeletePRRef(root, n)
 		}

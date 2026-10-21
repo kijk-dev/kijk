@@ -147,8 +147,10 @@ icon counts the pull requests that wait for your review.
 - kijk reads pull requests only. It does not comment, approve or merge.
 
 To diff a pull request, kijk fetches its head commit into your repo as `refs/kijk/pr/<number>`,
-with no checkout. These refs do not show in `git branch`. kijk fetches again only when the pull
-request moved, and deletes the ref when it closes.
+with no checkout. When the target branch on GitHub has commits you have not fetched, kijk puts
+them in `refs/kijk/base/<number>`, so your `origin/main` stays as it was. These refs do not show in
+`git branch`. kijk fetches again only when the pull request moved, and deletes the refs when it
+closes.
 
 ### Live updates
 
