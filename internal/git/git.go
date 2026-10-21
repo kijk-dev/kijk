@@ -562,8 +562,9 @@ type DiffResult struct {
 	Hunks  []Hunk `json:"hunks"`
 }
 
-// Diff returns the change of one file. mode is "unstaged", "staged", "commit" (with hash) or
-// "branch" (with the split point as hash: from there to the file on disk).
+// Diff returns the change of one file. mode is "unstaged", "staged", "commit" (with hash),
+// "branch" (with the split point as hash: from there to the file on disk) or "pr" (with
+// "<base>..<head>" as hash).
 func Diff(root, path, orig, mode, hash string, context int) (DiffResult, error) {
 	if !filepath.IsLocal(filepath.FromSlash(path)) || (orig != "" && !filepath.IsLocal(filepath.FromSlash(orig))) {
 		return DiffResult{}, ErrOutside
@@ -573,6 +574,12 @@ func Diff(root, path, orig, mode, hash string, context int) (DiffResult, error) 
 	case "unstaged":
 	case "staged":
 		args = append(args, "--cached")
+	case "pr":
+		base, head, ok := strings.Cut(hash, "..")
+		if !ok || !ValidHash(base) || !ValidHash(head) {
+			return DiffResult{}, ErrBadHash
+		}
+		args = append(args, base, head)
 	case "commit", "branch":
 		if !ValidHash(hash) {
 			return DiffResult{}, ErrBadHash
