@@ -13,7 +13,8 @@ import { onKey } from './keys.js';
 //   marks(res)             {line(l) → extra class, hunk(h) → a tag or null}, optional
 //   decorate(v, b, rows)   {extra, under, end}: rows needed outside the hunks, the elements under
 //                          a row by its key ('n:12' new side, 'o:7' old side), and those at the end
-//   onAdd(v, path, n, text) and addTip: the + on a line, optional
+//   onAdd(v, path, row) and addTip: the + on a line, optional; row is {k, o, n, t}. With addOld
+//                          removed lines get one too; addLabel names it ("Add a note on line")
 //   onTop(path)            the file at the top of the view changed
 //   drawn(v, b)            a box was drawn, optional
 //   marked(f)              the file has threads or notes, for Alt+↓ and Alt+↑
@@ -333,18 +334,20 @@ export async function drawBox(v, b) {
     h.lines.forEach((l, j) => {
       const row = line([l.o, l.n], l.x || l.t, `${l.k === '+' ? 'add ch-add' : l.k === '-' ? 'del' : ''}${marks.line?.(l) || ''}`);
       if (l.k !== ' ' && (j === 0 || h.lines[j - 1].k === ' ')) starts.push(row);
+      row.dataset.k = l.k;
+      if (l.o) row.dataset.o = l.o;
       if (l.k !== '-') {
         row.dataset.n = l.n;
         row.dataset.t = l.t;
-        if (v.src.onAdd) {
-          const add = el('button', 'addc');
-          add.innerHTML = ICON.plus;
-          add.tabIndex = -1;
-          add.setAttribute('aria-label', `Add a note on line ${l.n}`);
-          add.dataset.tip = v.src.addTip;
-          add.onclick = () => v.src.onAdd(v, b.f.path, l.n, l.t);
-          row.insertBefore(add, row.lastChild);
-        }
+      }
+      if (v.src.onAdd && (l.k !== '-' || v.src.addOld)) {
+        const add = el('button', 'addc');
+        add.innerHTML = ICON.plus;
+        add.tabIndex = -1;
+        add.setAttribute('aria-label', `${v.src.addLabel || 'Add a note on line'} ${l.k === '-' ? l.o : l.n}`);
+        add.dataset.tip = v.src.addTip;
+        add.onclick = () => v.src.onAdd(v, b.f.path, l);
+        row.insertBefore(add, row.lastChild);
       }
       if (v.cur?.path === b.f.path && v.cur.n === l.n && l.k !== '-') row.classList.add('cur');
       out.push(row);
@@ -425,6 +428,16 @@ const markKey = dir => () => {
 };
 onKey('nextNote', markKey(1));
 onKey('prevNote', markKey(-1));
+
+// The note key opens the view's editor on the current line: an agent note, or a comment.
+onKey('addNote', () => {
+  const v = last && isCurrent(last) ? last : null;
+  if (!v?.scroll || !v.src.onAdd || document.activeElement?.closest('textarea, input')) return false;
+  const row = curRow(v);
+  if (!row) return;
+  setCur(v, row);
+  v.src.onAdd(v, row.closest('.fbox').dataset.path, { k: row.dataset.k, o: Number(row.dataset.o) || 0, n: Number(row.dataset.n), t: row.dataset.t });
+});
 
 // goToBox scrolls to a file's box.
 export function goToBox(v, path, focus) {
