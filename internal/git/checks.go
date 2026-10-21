@@ -298,9 +298,9 @@ func jobState(status string) string {
 		return "ok"
 	case "FAILED":
 		return "bad"
-	case "RUNNING":
+	case "RUNNING", "CANCELING": // a job that is cancelling still runs
 		return "run"
-	case "CANCELED", "CANCELING":
+	case "CANCELED":
 		return "cancel"
 	case "SKIPPED":
 		return "skip"
