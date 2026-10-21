@@ -275,6 +275,10 @@ draft-54 legacy.go:3 old=true orig=3 resolved=false outdated=true was="" [draft]
 	if pr.Drafts != 5 {
 		t.Errorf("drafts %d, want 5", pr.Drafts)
 	}
+	// A reply to a comment not on a line says whom it answers.
+	if r := pr.Comments[2].ReplyTo; r != "tim" || pr.Comments[1].ReplyTo != "" {
+		t.Errorf("reply to %q", r)
+	}
 }
 
 // kijk asks a GitLab server its version once while it runs, and asks again after a failure.

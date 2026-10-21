@@ -895,6 +895,13 @@ func TestBrowser(t *testing.T) {
 			t.Fatal("Escape posted the review")
 		}
 
+		// Each row counts its own drafts from the website: here also the reply.
+		b.evalJS(`for (const k of Object.keys(localStorage)) if (k.startsWith('kijk.drafts:') && k.endsWith(':477')) localStorage.setItem(k, JSON.stringify(JSON.parse(localStorage.getItem(k)).filter(id => id !== 'C51')))`)
+		b.click("Submit review…", box+`.querySelector('button.primary')`)
+		b.waitFor("the website's reply counted", `[...`+dialog+`?.querySelectorAll('li') || []].map(l => l.textContent).slice(1, 3).join('|') === 'Comments2 on lines · 1 written on GitHub|Replies1, to tim on retry.go:15 · 1 written on GitHub'`)
+		b.key("Escape", kb.Escape)
+		b.waitFor("the check closed", `!document.querySelector('.confirm')`)
+
 		// Enter posts it all as one approving review.
 		b.evalJS(`window.e2eCounts = []; { const f = window.fetch; window.fetch = (u, o) => (String(u).includes('/api/count') && e2eCounts.push(String(u)), f(u, o)); }`)
 		b.click("Submit review…", box+`.querySelector('button.primary')`)

@@ -460,6 +460,7 @@ type PR struct {
 
 	rollup   *githubRollup // read into Checks once the head is in the repo
 	pipeline *gitlabPipeline
+	talk     map[string]string // GitLab: the discussions not on a line, by id, with their first author
 }
 
 type Reviewer struct {
@@ -475,6 +476,8 @@ type Comment struct {
 	HTML   string `json:"html,omitempty"` // set by the viewer
 	URL    string `json:"url,omitempty"`
 	Draft  bool   `json:"draft,omitempty"` // yours, sent with your review
+	// ReplyTo is whom a draft answers when it is a reply to a comment not on a line.
+	ReplyTo string `json:"replyTo,omitempty"`
 }
 
 // Thread is a discussion on a line of the diff.
@@ -626,7 +629,8 @@ func addGitlabDrafts(pr *PR, out []byte) error {
 			if i >= 0 {
 				pr.Threads[i].Comments = append(pr.Threads[i].Comments, c)
 			} else {
-				pr.Comments = append(pr.Comments, c) // a reply to a comment not on a line
+				c.ReplyTo = pr.talk[d.DiscussionID] // a reply to a comment not on a line
+				pr.Comments = append(pr.Comments, c)
 			}
 			continue
 		}
@@ -983,6 +987,12 @@ func parseGitlabPR(data []byte, pr *PR) error {
 			if th != nil {
 				th.Comments = append(th.Comments, c)
 			} else {
+				if pr.talk == nil {
+					pr.talk = map[string]string{}
+				}
+				if id := strings.TrimPrefix(d.ID, "gid://gitlab/Discussion/"); pr.talk[id] == "" {
+					pr.talk[id] = c.Author
+				}
 				pr.Comments = append(pr.Comments, c)
 			}
 		}
