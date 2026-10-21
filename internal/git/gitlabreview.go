@@ -147,41 +147,60 @@ func gitlabResolve(f *forge, n int, thread string, resolved bool) error {
 	return err
 }
 
-// gitlabSubmit posts the summary as a draft, publishes every draft of yours, also those written
-// on the website, then approves or requests changes. A later step that fails says what went out.
-func gitlabSubmit(f *forge, n int, head, verdict, body string) (summary string, err error) {
-	w, err := gitlabCanWrite(f)
-	if err != nil {
-		return "", err
-	}
-	if verdict == "changes" && !w.Changes {
-		return "", sayErr(w.Why)
+// gitlabSummary sets the summary: the oldest draft note that is not on a line and not a reply,
+// as addGitlabDrafts reads it. An empty body deletes it.
+func gitlabSummary(f *forge, n int, body string) error {
+	if _, err := gitlabCanWrite(f); err != nil {
+		return err
 	}
 	mr := gitlabMR(f, n)
-	if strings.TrimSpace(body) != "" {
-		out, err := gitlabREST(f, "POST", mr+"/draft_notes", map[string]any{"note": body})
-		if err != nil {
-			return "", err
-		}
-		var v struct {
-			ID int `json:"id"`
-		}
-		summary = "sent" // it is on the forge even when the answer cannot be read
-		if json.Unmarshal(out, &v) == nil && v.ID > 0 {
-			summary = strconv.Itoa(v.ID)
-		}
-	}
 	out, err := gitlabREST(f, "GET", mr+"/draft_notes", nil)
 	if err != nil {
-		return summary, err
+		return err
+	}
+	var ds []gitlabDraft
+	if err := json.Unmarshal(out, &ds); err != nil {
+		return err
+	}
+	id := 0
+	for _, d := range ds {
+		if d.general() && (id == 0 || d.ID < id) {
+			id = d.ID
+		}
+	}
+	switch {
+	case id != 0 && body == "":
+		_, err = gitlabREST(f, "DELETE", mr+"/draft_notes/"+strconv.Itoa(id), nil)
+	case id != 0:
+		_, err = gitlabREST(f, "PUT", mr+"/draft_notes/"+strconv.Itoa(id), map[string]any{"note": body})
+	case body != "":
+		_, err = gitlabREST(f, "POST", mr+"/draft_notes", map[string]any{"note": body})
+	}
+	return err
+}
+
+// gitlabSubmit publishes every draft of yours, the summary and those written on the website too,
+// then approves or requests changes. A later step that fails says what went out.
+func gitlabSubmit(f *forge, n int, head, verdict string) error {
+	w, err := gitlabCanWrite(f)
+	if err != nil {
+		return err
+	}
+	if verdict == "changes" && !w.Changes {
+		return sayErr(w.Why)
+	}
+	mr := gitlabMR(f, n)
+	out, err := gitlabREST(f, "GET", mr+"/draft_notes", nil)
+	if err != nil {
+		return err
 	}
 	var drafts []struct{}
 	if err := json.Unmarshal(out, &drafts); err != nil {
-		return summary, err
+		return err
 	}
 	if len(drafts) > 0 {
 		if _, err := gitlabREST(f, "POST", mr+"/draft_notes/bulk_publish", nil); err != nil {
-			return summary, err
+			return err
 		}
 	}
 	what := ""
@@ -209,7 +228,7 @@ func gitlabSubmit(f *forge, n int, head, verdict, body string) (summary string, 
 		}
 	}
 	if err != nil && len(drafts) > 0 {
-		return summary, sayErr("Your comments are posted, but " + what + " failed: " + toolErr("glab", err).Error())
+		return sayErr("Your comments are posted, but " + what + " failed: " + toolErr("glab", err).Error())
 	}
-	return summary, err
+	return err
 }

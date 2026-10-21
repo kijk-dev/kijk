@@ -455,7 +455,9 @@ type PR struct {
 	Threads   []Thread   `json:"threads"`
 	Checks    *Checks    `json:"checks,omitempty"`
 	Me        string     `json:"me,omitempty"`
-	Drafts    int        `json:"drafts"` // your comments not sent yet
+	Drafts    int        `json:"drafts"`              // your comments not sent yet
+	Summary   string     `json:"summary"`             // of your review, held on the forge until you submit it
+	SummaryID string     `json:"summaryId,omitempty"` // GitLab: its draft note
 	Write     Write      `json:"write"`
 
 	rollup   *githubRollup // read into Checks once the head is in the repo
@@ -607,24 +609,32 @@ func gitlabVersion(host string) string {
 	return v.Version
 }
 
+type gitlabDraft struct {
+	ID           int    `json:"id"`
+	Note         string `json:"note"`
+	DiscussionID string `json:"discussion_id"`
+	Position     *struct {
+		OldPath string `json:"old_path"`
+		NewPath string `json:"new_path"`
+		OldLine int    `json:"old_line"`
+		NewLine int    `json:"new_line"`
+		HeadSha string `json:"head_sha"`
+	} `json:"position"`
+}
+
+// general is a draft not on a line and not a reply; the oldest one is the summary of your review.
+func (d gitlabDraft) general() bool {
+	return d.DiscussionID == "" && (d.Position == nil || d.Position.NewLine == 0 && d.Position.OldLine == 0)
+}
+
 // addGitlabDrafts adds your draft notes: a reply goes into its thread, a draft on a line is a new
 // comment, any other is part of the conversation.
 func addGitlabDrafts(pr *PR, out []byte) error {
-	var ds []struct {
-		ID           int    `json:"id"`
-		Note         string `json:"note"`
-		DiscussionID string `json:"discussion_id"`
-		Position     *struct {
-			OldPath string `json:"old_path"`
-			NewPath string `json:"new_path"`
-			OldLine int    `json:"old_line"`
-			NewLine int    `json:"new_line"`
-			HeadSha string `json:"head_sha"`
-		} `json:"position"`
-	}
+	var ds []gitlabDraft
 	if err := json.Unmarshal(out, &ds); err != nil {
 		return err
 	}
+	slices.SortFunc(ds, func(a, b gitlabDraft) int { return a.ID - b.ID }) // the summary is the oldest one, as SetSummary picks it
 	for _, d := range ds {
 		c := Comment{ID: strconv.Itoa(d.ID), Author: pr.Me, Body: d.Note, Draft: true}
 		pr.Drafts++
@@ -639,8 +649,14 @@ func addGitlabDrafts(pr *PR, out []byte) error {
 			continue
 		}
 		p := d.Position
-		if p == nil || p.NewLine == 0 && p.OldLine == 0 {
-			pr.Comments = append(pr.Comments, c)
+		if d.general() {
+			if pr.SummaryID == "" {
+				// The first draft not on a line is the summary of your review.
+				pr.Drafts--
+				pr.Summary, pr.SummaryID = c.Body, c.ID
+			} else {
+				pr.Comments = append(pr.Comments, c)
+			}
 			continue
 		}
 		th := Thread{ID: "draft-" + c.ID, Path: cmp.Or(p.NewPath, p.OldPath), Line: p.NewLine, Draft: true, Comments: []Comment{c}}
@@ -663,6 +679,7 @@ const githubPRQuery = `query($owner: String!, $name: String!, $n: Int!) {
       reviewRequests(first: 30) { nodes { requestedReviewer { __typename ... on User { login } ... on Team { name } ... on Bot { login } ... on Mannequin { login } } } }
       latestReviews(first: 30) { nodes { author { login } state } }
       reviews(first: 50) { nodes { author { login } state body createdAt url } }
+      pending: reviews(states: PENDING, first: 1) { nodes { body viewerDidAuthor } }
       comments(first: 100) { nodes { author { login } body createdAt url } }
       reviewThreads(first: 100) { nodes { id isResolved isOutdated path line originalLine diffSide
         viewerCanReply viewerCanResolve viewerCanUnresolve
@@ -723,6 +740,12 @@ func parseGithubPRView(data []byte, pr *PR) error {
 				}
 				Reviews struct {
 					Nodes []githubCommentJSON
+				}
+				Pending struct {
+					Nodes []struct {
+						Body            string
+						ViewerDidAuthor bool
+					}
 				}
 				Comments struct {
 					Nodes []githubCommentJSON
@@ -788,6 +811,11 @@ func parseGithubPRView(data []byte, pr *PR) error {
 	}
 	for _, c := range p.Comments.Nodes {
 		pr.Comments = append(pr.Comments, c.comment())
+	}
+	for _, r := range p.Pending.Nodes {
+		if r.ViewerDidAuthor {
+			pr.Summary = r.Body
+		}
 	}
 	for _, r := range p.Reviews.Nodes {
 		if strings.TrimSpace(r.Body) != "" && r.State != "PENDING" {

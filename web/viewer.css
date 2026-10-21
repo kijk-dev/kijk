@@ -592,6 +592,9 @@ button.pill:hover { background: color-mix(in srgb, var(--modified) 22%, var(--se
 .reviewbox .mode button { flex: 1 1 auto; padding: 2px 4px; white-space: nowrap; }
 .reviewbox .mode button:disabled { color: color-mix(in srgb, var(--muted) 70%, var(--panel)); cursor: default; }
 .reviewbox .why { font-size: 12px; color: var(--muted); }
+.reviewbox .saved { margin-top: -2px; font-size: 12px; color: var(--muted); }
+.reviewbox .error { font-size: 12px; color: var(--error); }
+.reviewbox .error:empty { display: none; }
 .reviewbox textarea {
   font: inherit; resize: vertical; min-height: 40px; padding: 5px 8px; border-radius: 4px;
   border: 1px solid var(--edge); background: var(--bg); color: var(--text); caret-color: var(--modified);

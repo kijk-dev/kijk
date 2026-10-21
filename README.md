@@ -158,7 +158,9 @@ opens.
 - **Resolve** and **Unresolve** in a thread's header happen at once.
 - The box at the bottom of the sidebar counts your drafts, and has the verdict (Comment, Approve or
   Request changes) and a summary. "Comment on the pull request…" at the end of the Overview adds
-  its text to the summary.
+  its text to the summary. The summary is a draft too: Ctrl+Enter in the box, or Add to review,
+  saves it as the body of your pending review on GitHub, or as a draft note on GitLab. A summary
+  you wrote on the website shows there.
 - **Submit review…** first shows what goes out: the verdict, the comments, the replies and the
   summary. Enter posts them; everyone on the pull request sees them at once. Escape goes back, and
   nothing is lost.

@@ -12,10 +12,10 @@ import (
 
 // githubTarget is what a write on GitHub needs: the pull request's node, its head, and your
 // pending review, asked fresh so a review changed on the website is never lost or sent twice.
-type githubTarget struct{ id, head, review, reviewAt string }
+type githubTarget struct{ id, head, review, reviewAt, summary string }
 
 const githubTargetQuery = `query($owner: String!, $name: String!, $n: Int!) {
-  repository(owner: $owner, name: $name) { pullRequest(number: $n) { id headRefOid reviews(states: PENDING, first: 1) { nodes { id viewerDidAuthor commit { oid } } } } }
+  repository(owner: $owner, name: $name) { pullRequest(number: $n) { id headRefOid reviews(states: PENDING, first: 1) { nodes { id viewerDidAuthor body commit { oid } } } } }
 }`
 
 func githubTargetOf(f *forge, n int) (githubTarget, error) {
@@ -29,6 +29,7 @@ func githubTargetOf(f *forge, n int) (githubTarget, error) {
 						Nodes []struct {
 							ID              string
 							ViewerDidAuthor bool
+							Body            string
 							Commit          *struct{ Oid string }
 						}
 					}
@@ -45,7 +46,7 @@ func githubTargetOf(f *forge, n int) (githubTarget, error) {
 		t.id, t.head = p.ID, p.HeadRefOid
 		for _, r := range p.Reviews.Nodes {
 			if r.ViewerDidAuthor {
-				t.review = r.ID
+				t.review, t.summary = r.ID, r.Body
 				if r.Commit != nil {
 					t.reviewAt = r.Commit.Oid
 				}
@@ -119,7 +120,25 @@ func githubComment(f *forge, n int, head string, c NewComment) (string, error) {
 	return "", nil
 }
 
-func githubSubmit(f *forge, n int, head, verdict, body string) error {
+// githubSummary sets the body of your pending review, making the review when there is none.
+func githubSummary(f *forge, n int, head, body string) error {
+	t, err := githubTargetOf(f, n)
+	if err != nil {
+		return err
+	}
+	if t.review == "" {
+		if body == "" {
+			return nil
+		}
+		return mutate("gh", f, `mutation($pr: ID!, $commit: GitObjectID!, $body: String!) { addPullRequestReview(input: {pullRequestId: $pr, commitOID: $commit, body: $body}) { pullRequestReview { id } } }`,
+			map[string]any{"pr": t.id, "commit": cmp.Or(head, t.head), "body": body}, nil)
+	}
+	return mutate("gh", f, `mutation($review: ID!, $body: String!) { updatePullRequestReview(input: {pullRequestReviewId: $review, body: $body}) { pullRequestReview { id } } }`,
+		map[string]any{"review": t.review, "body": body}, nil)
+}
+
+// githubSubmit sends the pending review's own body along: the submit's body sets the review's text.
+func githubSubmit(f *forge, n int, head, verdict string) error {
 	t, err := githubTargetOf(f, n)
 	if err != nil {
 		return err
@@ -127,10 +146,10 @@ func githubSubmit(f *forge, n int, head, verdict, body string) error {
 	event := Verdicts[verdict]
 	if t.review != "" {
 		return mutate("gh", f, `mutation($review: ID!, $event: PullRequestReviewEvent!, $body: String!) { submitPullRequestReview(input: {pullRequestReviewId: $review, event: $event, body: $body}) { pullRequestReview { id } } }`,
-			map[string]any{"review": t.review, "event": event, "body": body}, nil)
+			map[string]any{"review": t.review, "event": event, "body": t.summary}, nil)
 	}
 	return mutate("gh", f, `mutation($pr: ID!, $commit: GitObjectID!, $event: PullRequestReviewEvent!, $body: String!) { addPullRequestReview(input: {pullRequestId: $pr, commitOID: $commit, event: $event, body: $body}) { pullRequestReview { id } } }`,
-		map[string]any{"pr": t.id, "commit": cmp.Or(head, t.head), "event": event, "body": body}, nil)
+		map[string]any{"pr": t.id, "commit": cmp.Or(head, t.head), "event": event, "body": ""}, nil)
 }
 
 func githubEdit(f *forge, id, body string) error {
