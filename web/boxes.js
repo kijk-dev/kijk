@@ -35,13 +35,6 @@ const generated = path => GENERATED.includes(path.split('/').pop()) || path.ends
 export const HEAD = 34; // px, a box's sticky header
 const AHEAD = 5 * LINE_HEIGHT + HEAD; // a jump puts its target this far below the top
 
-// svg is an icon in a span; markup is always one of the fixed strings in the code.
-export function svg(markup, cls) {
-  const s = el('span', cls);
-  s.innerHTML = markup;
-  return s;
-}
-
 export function iconButton(svg, label, act) {
   const b = el('button', 'icon-btn');
   b.innerHTML = svg; // a fixed string

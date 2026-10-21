@@ -70,7 +70,8 @@ func ListPRs(root, q string) PRList {
 	case q != "":
 		err = graphQL("glab", f, gitlabSearchQuery, map[string]any{"path": f.Path, "q": q}, &res, parseGitlabSearch)
 	default:
-		err = graphQL("glab", f, gitlabListQuery, map[string]any{"path": f.Path, "pp": f.Path}, &res, parseGitlabList)
+		// GitLab takes the project's path as an ID in one place and as a String in the other.
+		err = graphQL("glab", f, gitlabListQuery, map[string]any{"path": f.Path, "projectPath": f.Path}, &res, parseGitlabList)
 	}
 	if err != nil {
 		res.Note = toolNote(tool, err)
@@ -88,10 +89,10 @@ var oneWordRe = regexp.MustCompile(`^[A-Za-z0-9._/-]+$`)
 // githubSearchVars searches the text, and a single word also as an author and a head branch.
 func githubSearchVars(f *forge, q string) map[string]any {
 	text := githubRepoQuery(f) + " " + q
-	v := map[string]any{"q": text, "a": text, "h": text}
+	v := map[string]any{"text": text, "author": text, "branch": text}
 	if oneWordRe.MatchString(q) {
-		v["a"] = githubRepoQuery(f) + " author:" + q
-		v["h"] = githubRepoQuery(f) + " head:" + q
+		v["author"] = githubRepoQuery(f) + " author:" + q
+		v["branch"] = githubRepoQuery(f) + " head:" + q
 	}
 	return v
 }
@@ -157,11 +158,11 @@ const githubListQuery = `query($owner: String!, $name: String!, $asked: String!)
 }
 ` + githubRow
 
-const githubSearchQuery = `query($q: String!, $a: String!, $h: String!) {
+const githubSearchQuery = `query($text: String!, $author: String!, $branch: String!) {
   viewer { login }
-  t: search(query: $q, type: ISSUE, first: 30) { issueCount nodes { ...row } }
-  a: search(query: $a, type: ISSUE, first: 30) { nodes { ...row } }
-  h: search(query: $h, type: ISSUE, first: 30) { nodes { ...row } }
+  text: search(query: $text, type: ISSUE, first: 30) { issueCount nodes { ...row } }
+  author: search(query: $author, type: ISSUE, first: 30) { nodes { ...row } }
+  branch: search(query: $branch, type: ISSUE, first: 30) { nodes { ...row } }
 }
 ` + githubRow
 
@@ -256,15 +257,15 @@ func parseGithubSearch(data []byte, res *PRList) error {
 		Nodes      []githubRowJSON
 	}
 	var v struct {
-		Viewer  struct{ Login string }
-		T, A, H hits
+		Viewer               struct{ Login string }
+		Text, Author, Branch hits
 	}
 	if err := json.Unmarshal(data, &v); err != nil {
 		return err
 	}
 	res.Me = v.Viewer.Login
-	res.Total = v.T.IssueCount
-	for _, h := range []hits{v.T, v.A, v.H} {
+	res.Total = v.Text.IssueCount
+	for _, h := range []hits{v.Text, v.Author, v.Branch} {
 		addRows(res, githubRows(h.Nodes), false)
 	}
 	return nil
@@ -274,8 +275,8 @@ const gitlabRow = `fragment row on MergeRequest { iid title draft webUrl created
   diffStatsSummary { additions deletions } headPipeline { status }
   reviewers { nodes { username mergeRequestInteraction { approved } } } }`
 
-const gitlabListQuery = `query($path: ID!, $pp: String!) {
-  currentUser { username reviewRequestedMergeRequests(state: opened, first: 100, projectPath: $pp) { nodes { ...row } } }
+const gitlabListQuery = `query($path: ID!, $projectPath: String!) {
+  currentUser { username reviewRequestedMergeRequests(state: opened, first: 100, projectPath: $projectPath) { nodes { ...row } } }
   project(fullPath: $path) { mergeRequests(state: opened, first: 100, sort: UPDATED_DESC) { count nodes { ...row } } }
 }
 ` + gitlabRow
@@ -284,9 +285,9 @@ const gitlabListQuery = `query($path: ID!, $pp: String!) {
 const gitlabSearchQuery = `query($path: ID!, $q: String!) {
   currentUser { username }
   project(fullPath: $path) {
-    t: mergeRequests(state: opened, first: 30, search: $q) { count nodes { ...row } }
-    a: mergeRequests(state: opened, first: 30, authorUsername: $q) { nodes { ...row } }
-    h: mergeRequests(state: opened, first: 30, sourceBranches: [$q]) { nodes { ...row } }
+    text: mergeRequests(state: opened, first: 30, search: $q) { count nodes { ...row } }
+    author: mergeRequests(state: opened, first: 30, authorUsername: $q) { nodes { ...row } }
+    branch: mergeRequests(state: opened, first: 30, sourceBranches: [$q]) { nodes { ...row } }
   }
 }
 ` + gitlabRow
@@ -347,7 +348,7 @@ func parseGitlabSearch(data []byte, res *PRList) error {
 	}
 	var v struct {
 		CurrentUser *struct{ Username string }
-		Project     *struct{ T, A, H hits }
+		Project     *struct{ Text, Author, Branch hits }
 	}
 	if err := json.Unmarshal(data, &v); err != nil {
 		return err
@@ -358,8 +359,8 @@ func parseGitlabSearch(data []byte, res *PRList) error {
 	if v.CurrentUser != nil {
 		res.Me = v.CurrentUser.Username
 	}
-	res.Total = v.Project.T.Count
-	for _, h := range []hits{v.Project.T, v.Project.A, v.Project.H} {
+	res.Total = v.Project.Text.Count
+	for _, h := range []hits{v.Project.Text, v.Project.Author, v.Project.Branch} {
 		addRows(res, gitlabRows(h.Nodes, res.Me), false)
 	}
 	return nil

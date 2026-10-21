@@ -1,10 +1,9 @@
-import { el, get } from './api.js';
+import { el, get, svg } from './api.js';
 import { setView, isCurrent } from './view.js';
 import { cachedView, loadView, onView, age } from './prdata.js';
 import { avatar, comment } from './threads.js';
 import { FORGE } from './pr.js';
 import { mac } from './keys.js';
-import { svg } from './boxes.js';
 
 // The Overview tab of a pull request: title, reviewers, description, checks as graphs and the
 // conversation. Tab n 0 is the folder's own branch before it has a pull request.

@@ -36,7 +36,7 @@ func rows(prs []PRRow) string {
 // A search of several words cannot be an author or a branch.
 func TestSearchQualifiers(t *testing.T) {
 	f := &forge{Path: "acme/shop"}
-	if v := githubSearchVars(f, "retry webhooks"); v["a"] != v["q"] || v["h"] != v["q"] {
+	if v := githubSearchVars(f, "retry webhooks"); v["author"] != v["text"] || v["branch"] != v["text"] {
 		t.Errorf("vars %v", v)
 	}
 }
@@ -207,8 +207,8 @@ func TestListPRsSearch(t *testing.T) {
 		t.Fatalf("res = %+v", res)
 	}
 	a := strings.Join(args(), " ")
-	if !strings.Contains(a, "-f q=repo:acme/shop is:pr is:open webhook") || !strings.Contains(a, "-f a=repo:acme/shop is:pr is:open author:webhook") ||
-		!strings.Contains(a, "-f h=repo:acme/shop is:pr is:open head:webhook") || !strings.Contains(a, "--hostname github.com") {
+	if !strings.Contains(a, "-f text=repo:acme/shop is:pr is:open webhook") || !strings.Contains(a, "-f author=repo:acme/shop is:pr is:open author:webhook") ||
+		!strings.Contains(a, "-f branch=repo:acme/shop is:pr is:open head:webhook") || !strings.Contains(a, "--hostname github.com") {
 		t.Errorf("gh was called with %s", a)
 	}
 }

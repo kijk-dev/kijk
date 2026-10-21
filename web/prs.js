@@ -1,9 +1,9 @@
-import { el, get } from './api.js';
+import { el, get, svg } from './api.js';
 import { lineCount, fileRow } from './git.js';
 import { FORGE, forgeMark, prChips } from './pr.js';
 import { onKey, keyLabel } from './keys.js';
 import { cachedView, loadView, onView, age } from './prdata.js';
-import { iconButton, svg } from './boxes.js';
+import { iconButton } from './boxes.js';
 import { avatar, threadCount } from './threads.js';
 import { goToChange, setupChanges } from './changes.js';
 import { setupOverview } from './overview.js';

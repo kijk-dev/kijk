@@ -556,7 +556,9 @@ func TestBrowser(t *testing.T) {
 		}
 		b.click("Overview", prsRow("Overview"))
 		b.waitFor("the log not read yet", `document.querySelector('.md.ov .joblog pre')?.textContent.startsWith('gh: no answer for')`)
-		os.Rename(logFile+".later", logFile)
+		if err := os.Rename(logFile+".later", logFile); err != nil {
+			t.Fatal(err)
+		}
 		b.press("refreshPrs")
 		b.waitFor("the Overview tab", `(t => t?.firstChild.textContent === 'Overview' && t.querySelector('.muted')?.textContent === '#477')(document.querySelector('#filetabs .filetab.active'))`)
 		b.waitFor("title and meta", `document.querySelector('.md.ov h1')?.textContent === 'Retry webhook delivery with backoff #477' && document.querySelector('.md.ov .meta').textContent.includes('sanne wants to merge') && document.querySelector('.md.ov .meta').textContent.includes('· 2 commits')`)
