@@ -3,7 +3,7 @@ import { lineCount, fileRow } from './git.js';
 import { FORGE, forgeMark, prChips } from './pr.js';
 import { onKey, keyLabel } from './keys.js';
 import { cachedView, loadView, onView, age } from './prdata.js';
-import { iconButton, plural } from './boxes.js';
+import { iconButton, plural, markCurrent } from './boxes.js';
 import { avatar, threadCount } from './threads.js';
 import { goToChange, setupChanges } from './changes.js';
 import { setupOverview } from './overview.js';
@@ -541,6 +541,8 @@ onKey('refreshPrs', () => {
   refresh();
   page.announce(`Asking ${words().name} again`);
 });
+
+onKey('markViewed', () => markCurrent());
 
 onKey('prsBack', () => {
   if (!tabEl.contains(document.activeElement) || which().panel === 'list' || !maybeList()) return false;
