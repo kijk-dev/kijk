@@ -58,6 +58,7 @@ func TestFetchPR(t *testing.T) {
 	if rev(t, clone, base) != "" {
 		t.Fatal("the clone should not have the new main yet")
 	}
+	originMain := rev(t, clone, "origin/main")
 	fetched, err := FetchPR(clone, "github", 7, head, base, "main")
 	if err != nil || !fetched {
 		t.Fatalf("first fetch: %v %v", fetched, err)
@@ -65,9 +66,12 @@ func TestFetchPR(t *testing.T) {
 	if got := rev(t, clone, "refs/kijk/pr/7"); got != head {
 		t.Errorf("refs/kijk/pr/7 = %q, want %q", got, head)
 	}
-	// The base commit was missing, so its branch came along, as a fetch would get it.
-	if got := rev(t, clone, "origin/main"); got != base {
-		t.Errorf("origin/main = %q, want %q", got, base)
+	// The base commit was missing: it comes into kijk's own ref, and origin/main stays where it was.
+	if got := rev(t, clone, "refs/kijk/base/7"); got != base {
+		t.Errorf("refs/kijk/base/7 = %q, want %q", got, base)
+	}
+	if got := rev(t, clone, "origin/main"); got != originMain {
+		t.Errorf("origin/main moved to %q, want %q", got, originMain)
 	}
 	if out, _ := Run(clone, "branch", "--list"); out != "* main" {
 		t.Errorf("branches changed: %q", out)
@@ -105,6 +109,30 @@ func TestFetchPRMissing(t *testing.T) {
 	_, clone, _ := prOrigin(t)
 	if _, err := FetchPR(clone, "github", 99, strings.Repeat("a", 40), "", "main"); err == nil {
 		t.Error("a pull request the origin does not have should fail")
+	}
+}
+
+// A base that is missing locally still gives the forge's diff, with origin/main left alone.
+func TestPRDiffMissingBase(t *testing.T) {
+	_, clone, work := prOrigin(t)
+	head, base := rev(t, work, "retry"), rev(t, work, "main")
+	originMain := rev(t, clone, "origin/main")
+	if _, err := FetchPR(clone, "github", 7, head, base, "main"); err != nil {
+		t.Fatal(err)
+	}
+	split, err := PRSplit(clone, &PR{PRRow: PRRow{Number: 7, Base: "main"}, BaseOid: base}, head)
+	if err != nil || split != rev(t, work, "main~1") {
+		t.Fatalf("split %q %v", split, err)
+	}
+	files, err := PRFiles(clone, split, head)
+	if err != nil || paths(files) != "R names.go <- name.go, D old.go, M retry.go" {
+		t.Errorf("files %s %v", paths(files), err)
+	}
+	if got := rev(t, clone, "origin/main"); got != originMain {
+		t.Errorf("origin/main moved to %q", got)
+	}
+	if out, _ := Run(clone, "for-each-ref", "--format=%(refname)", "refs/remotes/"); out != "refs/remotes/origin/HEAD\nrefs/remotes/origin/main" {
+		t.Errorf("remote refs:\n%s", out)
 	}
 }
 
@@ -149,13 +177,13 @@ func TestDeletePRRefs(t *testing.T) {
 	gittest.Write(t, filepath.Join(repo, "a"), "a\n")
 	gittest.Run(t, repo, "add", ".")
 	gittest.Run(t, repo, "commit", "-qm", "a")
-	for _, r := range []string{"refs/kijk/pr/7", "refs/kijk/pr/8", "refs/kijk/pr/9", "refs/heads/keep", "refs/kijk/other"} {
+	for _, r := range []string{"refs/kijk/pr/7", "refs/kijk/pr/8", "refs/kijk/pr/9", "refs/kijk/base/7", "refs/kijk/base/8", "refs/kijk/base/9", "refs/kijk/base/10", "refs/heads/keep", "refs/kijk/other"} {
 		gittest.Run(t, repo, "update-ref", r, "HEAD")
 	}
 	DeletePRRef(repo, 9)
 	SweepPRRefs(repo, []int{8, 12})
 	out, _ := Run(repo, "for-each-ref", "--format=%(refname)")
-	if out != "refs/heads/keep\nrefs/heads/main\nrefs/kijk/other\nrefs/kijk/pr/8" {
+	if out != "refs/heads/keep\nrefs/heads/main\nrefs/kijk/base/8\nrefs/kijk/other\nrefs/kijk/pr/8" {
 		t.Errorf("refs left:\n%s", out)
 	}
 }
