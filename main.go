@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -84,6 +85,14 @@ func main() {
 		fmt.Println("kijk", kijkVersion)
 		return
 	}
+	if a.pr.Number > 0 {
+		clone := prClone(a.pr, savedFolderPaths(), localAgentFolders)
+		if clone == "" {
+			fmt.Fprintln(os.Stderr, "kijk:", noClone(a.pr))
+			os.Exit(1)
+		}
+		a.folders = []string{clone}
+	}
 	var adds []savedFolder
 	if len(a.folders) > 0 {
 		cwd, _ := os.Getwd()
@@ -96,7 +105,7 @@ func main() {
 	removeOldExe()
 	if s, ok := runningInstance(a.port); ok {
 		if a.foldersWindow {
-			os.Exit(toRunning(a.port, s.Token, adds, a.noOpen, os.Stdout, os.Stderr))
+			os.Exit(toRunning(a.port, s.Token, adds, a.pr.Number, a.noOpen, os.Stdout, os.Stderr))
 		}
 		url := uiURL(a.port, s.Token)
 		fmt.Println("kijk is already running at", url)
@@ -166,7 +175,7 @@ func main() {
 	}
 	addedNote := ""
 	if len(adds) > 0 {
-		added, err := fl.add(adds)
+		added, err := fl.addFor(adds, a.pr.Number)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "kijk:", err)
 			remove()
@@ -188,7 +197,7 @@ func main() {
 		fmt.Println(addedNote)
 	}
 	if a.foldersWindow {
-		url = foldersURL(a.port, token, adds)
+		url = foldersURL(a.port, token, adds, a.pr.Number)
 	}
 	if !a.noOpen {
 		openUI(url)
@@ -202,6 +211,7 @@ type cliArgs struct {
 	noOpen, version, noCheck, noTelemetry bool
 	folders                               []string // to add to the folders list
 	foldersWindow                         bool     // kijk <folder>… or kijk folders
+	pr                                    prLink   // kijk <PR link>
 	flags                                 []string // as given, for a restart
 }
 
@@ -215,7 +225,7 @@ func parseArgs(args []string) (cliArgs, error) {
 	fs.BoolVar(&a.noCheck, "no-update-check", false, "do not check GitHub for a new kijk version")
 	fs.BoolVar(&a.noTelemetry, "no-telemetry", false, "do not send anonymous usage events")
 	fs.Usage = func() {
-		fmt.Fprintln(fs.Output(), "usage: kijk [flags] [folder…]\n       kijk folders [flags]")
+		fmt.Fprintln(fs.Output(), "usage: kijk [flags] [folder…]\n       kijk [flags] <PR link>\n       kijk folders [flags]")
 		fs.PrintDefaults()
 	}
 	if len(args) > 0 && args[0] == "folders" {
@@ -229,6 +239,14 @@ func parseArgs(args []string) (cliArgs, error) {
 	if a.foldersWindow && fs.NArg() > 0 {
 		return a, errors.New("kijk folders takes no folder. To add one, run kijk <folder>")
 	}
+	if l, ok := parsePRLink(fs.Arg(0)); ok {
+		if fs.NArg() > 1 {
+			return a, errors.New("kijk <PR link> takes one link and no folder")
+		}
+		a.pr = l
+		a.foldersWindow = true
+		return a, nil
+	}
 	if fs.NArg() > 0 {
 		a.folders = fs.Args()
 		a.foldersWindow = true
@@ -236,10 +254,13 @@ func parseArgs(args []string) (cliArgs, error) {
 	return a, nil
 }
 
-func foldersURL(port int, token string, adds []savedFolder) string {
+func foldersURL(port int, token string, adds []savedFolder, pr int) string {
 	u := uiURL(port, token) + "&window=folders"
 	if len(adds) > 0 {
 		u += "&open=" + url.QueryEscape(adds[len(adds)-1].Path)
+	}
+	if pr > 0 {
+		u += "&pr=" + strconv.Itoa(pr)
 	}
 	return u
 }
@@ -294,7 +315,7 @@ func plural(n int, word string) string {
 
 // toRunning hands kijk <folder>… and kijk folders to the running kijk. It opens a folders window
 // only when none is open: kijk cannot bring an open window to the front.
-func toRunning(port int, token string, adds []savedFolder, noOpen bool, stdout, stderr io.Writer) int {
+func toRunning(port int, token string, adds []savedFolder, pr int, noOpen bool, stdout, stderr io.Writer) int {
 	var res foldersReply
 	var err error
 	if len(adds) == 0 {
@@ -304,7 +325,7 @@ func toRunning(port int, token string, adds []savedFolder, noOpen bool, stdout, 
 		for i, f := range adds {
 			paths[i] = cmp.Or(f.Open, f.Path)
 		}
-		err = callRunning(port, token, "POST", "/api/folders/add", map[string]any{"folders": paths}, &res)
+		err = callRunning(port, token, "POST", "/api/folders/add", map[string]any{"folders": paths, "pr": pr}, &res)
 	}
 	if err != nil {
 		fmt.Fprintln(stderr, "kijk:", err)
@@ -319,7 +340,7 @@ func toRunning(port int, token string, adds []savedFolder, noOpen bool, stdout, 
 		fmt.Fprintln(stderr, "kijk:", res.Error)
 	}
 	if !res.Window && !noOpen {
-		openUI(foldersURL(port, token, adds))
+		openUI(foldersURL(port, token, adds, pr))
 	}
 	return 0
 }

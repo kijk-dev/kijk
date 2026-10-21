@@ -194,6 +194,7 @@ type removedFolder struct {
 type openRequest struct {
 	Seq  int    `json:"seq"`
 	Root string `json:"root,omitempty"`
+	PR   int    `json:"pr,omitempty"` // a pull request to open in the PRs tab, from kijk <PR link>
 }
 
 func newFolderList(path string, rts *viewer.Roots) *folderList {
@@ -231,7 +232,10 @@ func (l *folderList) wakeLocked() {
 }
 
 // add adds the folders and asks the folders window to open the last one.
-func (l *folderList) add(fs []savedFolder) (added []bool, err error) {
+func (l *folderList) add(fs []savedFolder) (added []bool, err error) { return l.addFor(fs, 0) }
+
+// addFor is add, and opens pull request pr of the last folder when it is not 0.
+func (l *folderList) addFor(fs []savedFolder, pr int) (added []bool, err error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	for _, f := range fs {
@@ -240,7 +244,7 @@ func (l *folderList) add(fs []savedFolder) (added []bool, err error) {
 		added = append(added, a)
 	}
 	if len(fs) > 0 {
-		l.open = openRequest{l.open.Seq + 1, fs[len(fs)-1].Path}
+		l.open = openRequest{l.open.Seq + 1, fs[len(fs)-1].Path, pr}
 	}
 	l.changedLocked()
 	return added, l.saveErr

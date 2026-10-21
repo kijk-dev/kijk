@@ -105,6 +105,7 @@ func addFolders(fl *folderList, h *hub) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			Folders []string `json:"folders"`
+			PR      int      `json:"pr"`
 		}
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil || len(req.Folders) == 0 {
 			http.Error(w, "bad request", http.StatusBadRequest)
@@ -125,7 +126,7 @@ func addFolders(fl *folderList, h *hub) http.HandlerFunc {
 		}
 		res := foldersReply{Window: h.count(windowFolders) > 0}
 		var err error
-		if res.Added, err = fl.add(list); err != nil {
+		if res.Added, err = fl.addFor(list, max(req.PR, 0)); err != nil {
 			res.Error = err.Error()
 		}
 		reply(w, res)

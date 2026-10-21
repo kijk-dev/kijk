@@ -395,3 +395,27 @@ func webURL(s string) string {
 	}
 	return ""
 }
+
+// Origin is the host and project path of a folder's origin, as written in its config.
+func Origin(root string) (host, path string, ok bool) {
+	raw, err := Run(root, "config", "--get", "remote.origin.url")
+	if err != nil {
+		return "", "", false
+	}
+	return parseRemote(raw)
+}
+
+// MainClone is the folder of the main clone a worktree belongs to, or root itself.
+func MainClone(root string) string {
+	out, err := Run(root, "rev-parse", "--path-format=absolute", "--show-toplevel", "--git-common-dir")
+	if err != nil {
+		return root
+	}
+	top, common, _ := strings.Cut(out, "\n")
+	if filepath.Base(common) == ".git" && filepath.Dir(common) != top {
+		if _, err := os.Stat(filepath.Dir(common)); err == nil {
+			return filepath.FromSlash(filepath.Dir(common))
+		}
+	}
+	return filepath.FromSlash(top)
+}

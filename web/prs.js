@@ -61,6 +61,7 @@ export function setupPrs(p) {
 export function setPrsFolder(key, state) {
   folder = key;
   saved = { open: 'list', mode: 'local', ...state };
+  wanted = null;
   list = null;
   listCall = null;
   st = null;
@@ -123,14 +124,16 @@ export function openPR(n) {
   open(n);
 }
 
+// wanted is an item just opened. It shows in the viewer once kijk knows enough to show it, as when
+// kijk <PR link> opens a folder whose forge is not known yet.
+let wanted = null;
+
 function open(item) {
   if (item === ownNumber() && onBranch()) item = 'branch';
   saved.open = item;
   page.save();
+  wanted = item === 'list' ? null : item;
   draw();
-  showPrsItem();
-  const w = which();
-  if (w.panel === 'pr') load(w.n);
 }
 
 function setMode(mode) {
@@ -215,7 +218,17 @@ function search() {
 
 function draw() {
   if (!folder) return;
+  if (saved.open === ownNumber() && onBranch()) {
+    if (wanted === saved.open) wanted = 'branch';
+    saved.open = 'branch';
+  }
   const w = which();
+  if (wanted !== null && (wanted === 'branch' ? w.panel === 'branch' || w.mine : w.panel === 'pr' && w.n === wanted)) {
+    wanted = null;
+    showPrsItem();
+    if (w.panel === 'pr') load(w.n);
+  }
+  if (list?.note) wanted = null; // no list: the item cannot show
   listEl.hidden = w.panel !== 'list';
   branchEl.hidden = w.panel !== 'branch';
   prEl.hidden = w.panel !== 'pr';

@@ -4,7 +4,7 @@ import { refreshView, jumpChange, showMessage } from './view.js';
 import { setTabs, tabState, openTab, activeTab, recentFiles, closeActive, goPlace } from './tabs.js';
 import { showPR, FORGE } from './pr.js';
 import { setupReview, setBranchFolder, refreshBranch, showBranchPanel, focusBranchList } from './review.js';
-import { setupPrs, setPrsFolder, prsState, prsStatus, prsShown, showPrsItem, focusPrs, branchHead, overviewRow } from './prs.js';
+import { setupPrs, setPrsFolder, prsState, prsStatus, prsShown, showPrsItem, focusPrs, branchHead, overviewRow, openPR } from './prs.js';
 import { marks, showChanges, showGraph, revealHead, reviewKey, ago, lineCount } from './git.js';
 import { openFind, findAgain, openGotoLine, openGotoFile, openRecent } from './find.js';
 import { onKey, keyLabel, keyNames } from './keys.js';
@@ -139,7 +139,7 @@ export function openFolder(r, again) {
   gitNote.hidden = true;
   pr = cachedPR(r.key);
   upHash = null;
-  showPR(prLine, pr);
+  showPR(prLine, pr, openFolderPR);
   showPrsTab();
   refreshPR();
   selectTab('files');
@@ -253,7 +253,11 @@ async function refreshPR() {
   if (root !== openKey || call !== prCall) return;
   const before = prTarget();
   pr = res;
-  showPR(prLine, pr);
+  if (git?.git) {
+    prsBtn.hidden = !git.total && !pr?.forge;
+    if (prsEl.hidden === (shownTab() === 'prs')) selectTab(shownTab());
+  }
+  showPR(prLine, pr, openFolderPR);
   showPrsTab();
   if (prTarget() !== before) refreshGit();
   else showBranchPanel(git, pr, prTarget());
@@ -454,6 +458,14 @@ function showPrsTab() {
 function showCount(n) {
   waiting = n;
   showPrsTab();
+}
+
+// openFolderPR opens pull request n of the open folder in the PRs tab: from the PR line's title,
+// and for kijk <PR link>.
+export function openFolderPR(n) {
+  if (!openKey || offline) return;
+  openPR(n);
+  switchSidebar('prs');
 }
 
 function switchSidebar(tab) {
