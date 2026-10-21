@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/kijk-dev/kijk/internal/git"
 )
@@ -68,6 +69,17 @@ func (f *fakeForge) set(t *testing.T, name string, answer any) {
 	if err := os.WriteFile(filepath.Join(f.dir, name), b, 0o644); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// waitFor waits until a call after the first n holds text.
+func (f *fakeForge) waitFor(t *testing.T, n int, text string) {
+	t.Helper()
+	for end := time.Now().Add(10 * time.Second); time.Now().Before(end); time.Sleep(50 * time.Millisecond) {
+		if calls := f.calls(); len(calls) > n && strings.Contains(strings.Join(calls[n:], "\n"), text) {
+			return
+		}
+	}
+	t.Fatalf("no call with %q after call %d:\n%s", text, n, strings.Join(f.calls(), "\n"))
 }
 
 // calls are the tool calls so far, one line each.

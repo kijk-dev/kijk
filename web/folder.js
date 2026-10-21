@@ -80,6 +80,7 @@ export function setupFolder(p) {
   });
   setupPrs({
     announce: p.announce,
+    say: p.say,
     openTab: (t, pin) => { if (!offline) openTab({ ...t, num: FORGE[pr?.forge?.kind]?.num }, pin); },
     save: saveState,
     setCount: showCount,

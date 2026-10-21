@@ -45,12 +45,17 @@ let lastAsk = 0;
 let timer = 0;
 const failed = new Map(); // pull request number: why kijk could not read it
 
-// setupPrs tells the tab about the page: announce(text), openTab(tab, pin), save(), setCount(n),
-// openBranch(), openFile(n, path) and focusBranch().
+// setupPrs tells the tab about the page: announce(text), say(text), openTab(tab, pin), save(),
+// setCount(n), openBranch(), openFile(n, path) and focusBranch().
 export function setupPrs(p) {
   page = p;
   setupChanges({ onTop: (n, path) => selectFile(path), openFile: p.openFile });
-  setupOverview({ branch: () => ({ branch: st?.branch, base: st?.total?.base?.replace(/^origin\//, ''), ahead: st?.ahead, forge: line?.forge?.kind, create: line?.create }) });
+  setupOverview({
+    branch: () => ({ branch: st?.branch, base: st?.total?.base?.replace(/^origin\//, ''), ahead: st?.ahead, forge: line?.forge?.kind, create: line?.create }),
+    own: n => n === ownNumber() && onBranch(),
+    say: p.say,
+    announce: p.announce,
+  });
 }
 
 export function setPrsFolder(key, state) {
@@ -414,7 +419,10 @@ export function overviewRow(n, res) {
   if (open) parts.push(`${open} open ${open === 1 ? 'thread' : 'threads'}`);
   else if (res?.comments?.length) parts.push(`${res.comments.length} ${res.comments.length === 1 ? 'comment' : 'comments'}`);
   li.append(svg(ICON.doc), el('span', 'name', 'Overview'), el('span', 'dir', parts.join(' · ')));
-  li.onclick = () => page.openTab({ kind: 'overview', n, path: '' }, true);
+  li.onclick = () => {
+    page.openTab({ kind: 'overview', n, path: '' }, true);
+    selectFile('');
+  };
   return li;
 }
 
