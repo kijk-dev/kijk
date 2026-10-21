@@ -106,7 +106,7 @@ async function search(move) {
     });
   } else if (v && query && v.kind === 'file') {
     try {
-      const res = await get('find', { root: v.root, path: v.path, q: query });
+      const res = await get('find', { root: v.root, path: v.path, q: query, ...(v.pr ? { pr: v.pr } : {}) });
       list = res.matches.map(m => ({ key: m.l, f: m.f, t: m.t }));
       extra = !!res.more;
     } catch { /* shown as no matches */ }

@@ -54,3 +54,10 @@ export function el(tag, cls, text) {
   if (text != null) e.textContent = text;
   return e;
 }
+
+// svg is an icon in a span; markup is always one of the fixed strings in the code.
+export function svg(markup, cls) {
+  const s = el('span', cls);
+  s.innerHTML = markup;
+  return s;
+}

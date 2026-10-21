@@ -3,7 +3,7 @@ import { loadScript, loadModule } from '../diagram.js';
 const LIBRARY = "This diagram uses a PlantUML library kijk can't load yet";
 const ICONS = "This diagram uses PlantUML emoji or icons kijk can't load yet";
 const MAX_INCLUDES = 50;
-let drawing = null; // the PlantUML diagram being drawn: {base, root, path, includes, calls}
+let drawing = null; // the PlantUML diagram being drawn: {base, root, path, pr, includes, calls}
 
 // Libraries, emoji and icons would load as scripts from kijk's own server, which has none.
 globalThis.PLANTUML_STDLIB_LOADER = (url, ok, err) => err(/emoji|openiconic/.test(url) ? ICONS : LIBRARY);
@@ -15,7 +15,7 @@ globalThis.PLANTUML_FILE_LOADER = (path, from, ok, err) => {
   if (id == null) return err(`${path} is outside the folder`);
   if (++at.calls > MAX_INCLUDES) return err('Too many includes');
   at.includes.add(id);
-  fetch(`${at.base}/api/text?` + new URLSearchParams({ root: at.root, path: id }))
+  fetch(`${at.base}/api/text?` + new URLSearchParams({ root: at.root, path: id, ...(at.pr ? { pr: at.pr } : {}) }))
     .then(async r => {
       if (!r.ok) throw new Error((await r.text()).trim());
       return r.json();
@@ -46,12 +46,12 @@ export async function load() {
 }
 
 // Markdown hosts such as GitHub add @startuml and @enduml to a block that has none.
-export async function draw(text, { theme, base, root, path, maxChars }) {
+export async function draw(text, { theme, base, root, path, pr, maxChars }) {
   if ([...text].length > maxChars) return { error: 'Diagram too large to draw', includes: [] };
   const pu = await load();
   const lines = text.split(/\r?\n/);
   const wrapped = !lines.some(l => /^\s*@start/.test(l));
-  drawing = { base, root, path, includes: new Set(), calls: 0 };
+  drawing = { base, root, path, pr, includes: new Set(), calls: 0 };
   const includes = drawing.includes;
   const res = await new Promise(resolve => pu.renderToString(wrapped ? ['@startuml', ...lines, '@enduml'] : lines,
     svg => resolve({ svg, error: pictureError(svg, wrapped) }),
