@@ -1104,6 +1104,7 @@ func TestBrowser(t *testing.T) {
 		b.waitFor("none of three viewed", count("0 of 3 viewed"))
 		b.click("Viewed of README.md", check(readme))
 		b.waitFor("README.md viewed and folded", viewed(readme)+` && `+shut(readme))
+		b.waitFor("the focus kept in Changes, for V", `document.activeElement === document.querySelector('.allfiles')`)
 		b.waitFor("its row viewed, and the count", rowViewed("README.md")+` && `+count("1 of 3 viewed"))
 		b.click("the chevron of README.md", fileBox(readme)+`.querySelector('.fhead .fold')`)
 		b.waitFor("README.md open and still viewed", viewed(readme)+` && !`+shut(readme)+` && `+boxHas(readme, "add", "Webhooks retry five times."))

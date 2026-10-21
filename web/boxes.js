@@ -259,7 +259,10 @@ export function drawHead(v, b) {
     const box = el('input');
     box.type = 'checkbox';
     box.checked = b.state === 'viewed';
-    box.onchange = () => v.src.setViewed(b.f, box.checked);
+    box.onchange = () => {
+      v.src.setViewed(b.f, box.checked);
+      v.scroll.focus({ preventScroll: true }); // the header is drawn again; V keeps working
+    };
     check.append(box, ' Viewed');
     check.dataset.tip = `Viewed\n${keyLabel('markViewed')}`;
     parts.push(check);

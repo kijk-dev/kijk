@@ -1,32 +1,33 @@
 import { splitKey } from './api.js';
 import { cachedView, onView } from './prdata.js';
 
-// Viewed marks: for each file of a pull request you viewed, the blobs of its diff then. A file
-// whose blobs moved since changed after you viewed it. Kept in localStorage per machine, forge repo
-// and pull request, so every clone of a repo on a machine shares them:
+// Viewed marks: per file, the blobs of its diff when you marked it, so a file that changed since
+// shows. One record per machine, forge repo and pull request, with the counts for the list:
 //   kijk.viewed:<machine>:<host>/<path>:<n> → {marks: {path: blobs}, files, viewed}
-// files and viewed are the counts at the last answer, for the list of pull requests.
 
 const PREFIX = 'kijk.viewed:';
-const kept = new Map(); // what was written, also when storage is blocked
+const kept = new Map(); // the marks while storage is blocked, until a reload
 const listeners = new Set();
 
 const repoKey = (root, forge) => `${PREFIX}${splitKey(root).machine}:${forge?.host}/${forge?.path}:`;
 
+// Reads go to localStorage each time, so a mark made in the other kijk window shows too.
 function read(k) {
-  if (kept.has(k)) return kept.get(k);
-  let rec = null;
-  try { rec = JSON.parse(localStorage.getItem(k)); } catch { /* storage blocked */ }
-  kept.set(k, rec);
-  return rec;
+  try {
+    return JSON.parse(localStorage.getItem(k));
+  } catch {
+    return kept.get(k) || null;
+  }
 }
 
 function write(k, rec) {
-  kept.set(k, rec);
   try {
     if (rec) localStorage.setItem(k, JSON.stringify(rec));
     else localStorage.removeItem(k);
-  } catch { /* storage blocked: the marks last until a reload */ }
+  } catch {
+    if (rec) kept.set(k, rec);
+    else kept.delete(k);
+  }
 }
 
 function stateIn(marks) {
