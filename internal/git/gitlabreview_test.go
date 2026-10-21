@@ -110,32 +110,23 @@ func TestGitlabSubmit(t *testing.T) {
 	t.Cleanup(gitlabVersions.Clear)
 	drafts := gittest.Rule{Has: "gitlab.com " + mr7 + "/draft_notes", Out: `[{"id":61},{"id":62}]`} // the GET has no --method
 	publish := gittest.Rule{Has: mr7 + "/draft_notes/bulk_publish", Out: ``}
-	summary := gittest.Rule{Has: mr7 + "/draft_notes", Out: `{"id":63}`}
 	approve := gittest.Rule{Has: mr7 + "/approve", Out: `{}`}
 	changes := gittest.Rule{Has: "mergeRequestRequestChanges(input", Out: `{"data":{"mergeRequestRequestChanges":{"errors":[]}}}`}
 
-	// The summary goes as one more draft, then everything is published, then the approval.
-	calls := gittest.FakeToolCalls(t, "glab", glVersion("19.6.0"), publish, approve, changes, drafts, summary)
-	id, err := SubmitReview(repo, 7, "h1", "approve", "Looks good.")
-	if err != nil || id != "63" {
-		t.Fatalf("id %q, err %v", id, err)
+	// Every draft, the summary too, goes out with one publish, then the approval.
+	calls := gittest.FakeToolCalls(t, "glab", glVersion("19.6.0"), publish, approve, changes, drafts)
+	if err := SubmitReview(repo, 7, "h1", "approve"); err != nil {
+		t.Fatal(err)
 	}
 	c := calls()[1:]
-	if len(c) != 4 || !has(c[0], "--method", "POST", mr7+"/draft_notes") || body(t, c[0])["note"] != "Looks good." ||
-		!has(c[1], mr7+"/draft_notes") || has(c[1], "--method") || !has(c[2], "--method", "POST", mr7+"/draft_notes/bulk_publish") ||
-		!has(c[3], "--method", "POST", mr7+"/approve") || body(t, c[3])["sha"] != "h1" {
+	if len(c) != 3 || !has(c[0], mr7+"/draft_notes") || has(c[0], "--method") || !has(c[1], "--method", "POST", mr7+"/draft_notes/bulk_publish") ||
+		!has(c[2], "--method", "POST", mr7+"/approve") || body(t, c[2])["sha"] != "h1" {
 		t.Fatalf("calls %q", c)
-	}
-
-	// The summary went out even when GitLab's answer cannot be read, so it is reported as sent.
-	gittest.FakeToolCalls(t, "glab", publish, gittest.Rule{Has: "gitlab.com " + mr7 + "/draft_notes", Out: `[{"id":63}]`}, gittest.Rule{Has: mr7 + "/draft_notes", Out: `<html>`})
-	if id, err := SubmitReview(repo, 7, "h1", "comment", "Fine."); err != nil || id == "" {
-		t.Fatalf("id %q, err %v", id, err)
 	}
 
 	// Request changes with nothing to publish: no publish call.
 	calls = gittest.FakeToolCalls(t, "glab", publish, approve, changes, gittest.Rule{Has: mr7 + "/draft_notes", Out: `[]`})
-	if _, err := SubmitReview(repo, 7, "h1", "changes", ""); err != nil {
+	if err := SubmitReview(repo, 7, "h1", "changes"); err != nil {
 		t.Fatal(err)
 	}
 	if c := calls(); len(c) != 2 || !has(c[1], "-f", "iid=7", "path=acme/shop") {
@@ -143,21 +134,57 @@ func TestGitlabSubmit(t *testing.T) {
 	}
 
 	// The approval fails after the publish: kijk says what went out.
-	gittest.FakeToolCalls(t, "glab", publish, gittest.Rule{Has: "/approve", Err: "403 Forbidden\n", Exit: 1}, drafts, summary)
-	_, err = SubmitReview(repo, 7, "h1", "approve", "")
+	gittest.FakeToolCalls(t, "glab", publish, gittest.Rule{Has: "/approve", Err: "403 Forbidden\n", Exit: 1}, drafts)
+	err := SubmitReview(repo, 7, "h1", "approve")
 	if err == nil || err.Error() != "Your comments are posted, but the approval failed: glab: 403 Forbidden" {
 		t.Fatalf("err %v", err)
 	}
 	// The approval is for the head kijk showed; GitLab refuses it when that moved.
 	gittest.FakeToolCalls(t, "glab", publish, gittest.Rule{Has: "/approve", Err: "409 Conflict\n", Exit: 1}, drafts)
-	_, err = SubmitReview(repo, 7, "h1", "approve", "")
+	err = SubmitReview(repo, 7, "h1", "approve")
 	if err == nil || err.Error() != "Your comments are posted, but the approval failed: !7 has new commits. Look at them first." {
 		t.Fatalf("err %v", err)
 	}
 	// GitLab answers a refused Request changes with errors in the data.
 	gittest.FakeToolCalls(t, "glab", gittest.Rule{Has: "mergeRequestRequestChanges", Out: `{"data":{"mergeRequestRequestChanges":{"errors":["Not a reviewer"]}}}`}, gittest.Rule{Has: mr7 + "/draft_notes", Out: `[]`})
-	if _, err := SubmitReview(repo, 7, "h1", "changes", ""); err == nil || err.Error() != "glab: Not a reviewer" {
+	if err := SubmitReview(repo, 7, "h1", "changes"); err == nil || err.Error() != "glab: Not a reviewer" {
 		t.Fatalf("err %v", err)
+	}
+}
+
+// The summary is your first draft note with no line and no thread: kijk changes it, makes it, or
+// deletes it when it is cleared.
+func TestGitlabSummary(t *testing.T) {
+	repo := forgeRepo(t, "https://gitlab.com/acme/shop.git")
+	gitlabVersions.Clear()
+	t.Cleanup(gitlabVersions.Clear)
+	list := func(out string) gittest.Rule {
+		return gittest.Rule{Has: "gitlab.com " + mr7 + "/draft_notes", Out: out}
+	}
+	write := gittest.Rule{Has: mr7 + "/draft_notes", Out: `{"id":70}`}
+	have := `[{"id":61,"discussion_id":"ab12","position":null},{"id":62,"position":{"new_line":3}},{"id":53,"position":{"new_line":null,"old_line":null}},{"id":54,"position":null}]`
+
+	calls := gittest.FakeToolCalls(t, "glab", glVersion("17.4.0"), list(have), write)
+	if err := SetSummary(repo, 7, "h1", "Looks good."); err != nil {
+		t.Fatal(err)
+	}
+	c := calls()
+	if last := c[len(c)-1]; !has(last, "--method", "PUT", mr7+"/draft_notes/53") || body(t, last)["note"] != "Looks good." {
+		t.Fatalf("calls %q", c)
+	}
+	calls = gittest.FakeToolCalls(t, "glab", list(`[]`), write)
+	if err := SetSummary(repo, 7, "h1", "Looks good."); err != nil {
+		t.Fatal(err)
+	}
+	if c := calls(); len(c) != 2 || !has(c[1], "--method", "POST", mr7+"/draft_notes") || body(t, c[1])["note"] != "Looks good." || body(t, c[1])["position"] != nil {
+		t.Fatalf("calls %q", c)
+	}
+	calls = gittest.FakeToolCalls(t, "glab", list(have), write)
+	if err := SetSummary(repo, 7, "h1", ""); err != nil {
+		t.Fatal(err)
+	}
+	if c := calls(); len(c) != 2 || !has(c[1], "--method", "DELETE", mr7+"/draft_notes/53") {
+		t.Fatalf("calls %q", c)
 	}
 }
 
@@ -175,7 +202,7 @@ func TestGitlabOldServer(t *testing.T) {
 	}
 	gitlabVersions.Clear()
 	calls = gittest.FakeToolCalls(t, "glab", glVersion("17.4.0"), gittest.Rule{Out: `[]`})
-	if _, err := SubmitReview(repo, 7, "h1", "changes", ""); err == nil || err.Error() != "Request changes needs GitLab 18.9. This server runs 17.4." || len(calls()) != 1 {
+	if err := SubmitReview(repo, 7, "h1", "changes"); err == nil || err.Error() != "Request changes needs GitLab 18.9. This server runs 17.4." || len(calls()) != 1 {
 		t.Errorf("request changes on 17.4: %v, calls %q", err, calls())
 	}
 }

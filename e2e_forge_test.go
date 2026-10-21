@@ -38,6 +38,7 @@ case "$*" in
 *"addPullRequestReview("*) m=review ;;
 *"submitPullRequestReview("*) m=submit ;;
 *"updatePullRequestReviewComment("*) m=edit ;;
+*"updatePullRequestReview("*) m=update ;;
 *"deletePullRequestReviewComment("*) m=delete ;;
 *"unresolveReviewThread("*) m=unresolve ;;
 *"resolveReviewThread("*) m=resolve ;;

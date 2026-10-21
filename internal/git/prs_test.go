@@ -174,6 +174,10 @@ T5 go.mod:4 old=false orig=4 resolved=false outdated=false was="x" [draft] [draf
 	if pr.Drafts != 2 {
 		t.Errorf("drafts %d, want 2", pr.Drafts)
 	}
+	// The summary is the body of your pending review.
+	if pr.Summary != "Looks good, one question." {
+		t.Errorf("summary %q", pr.Summary)
+	}
 }
 
 func TestParseGitlabPRView(t *testing.T) {
@@ -269,14 +273,15 @@ draft-54 legacy.go:3 old=true orig=3 resolved=false outdated=true was="" [draft]
 	if got := threads(pr.Threads); got != want {
 		t.Errorf("threads\n%s\nwant\n%s", got, want)
 	}
-	if got, want := comments(pr.Comments), "tim: Do we want the attempt number in the log? | draft 53 you: Looks fine overall. | draft 55 you: Yes, please."; got != want {
+	if got, want := comments(pr.Comments), "tim: Do we want the attempt number in the log? | draft 55 you: Yes, please."; got != want {
 		t.Errorf("conversation %s\nwant %s", got, want)
 	}
-	if pr.Drafts != 5 {
-		t.Errorf("drafts %d, want 5", pr.Drafts)
+	// The first draft not on a line and not a reply is the summary of your review.
+	if pr.Drafts != 4 || pr.Summary != "Looks fine overall." || pr.SummaryID != "53" {
+		t.Errorf("drafts %d, summary %q %q", pr.Drafts, pr.Summary, pr.SummaryID)
 	}
 	// A reply to a comment not on a line says whom it answers.
-	if r := pr.Comments[2].ReplyTo; r != "tim" || pr.Comments[1].ReplyTo != "" {
+	if r := pr.Comments[1].ReplyTo; r != "tim" {
 		t.Errorf("reply to %q", r)
 	}
 }
@@ -341,7 +346,7 @@ func TestViewGitlabPR(t *testing.T) {
 		want            int
 		write           Write
 	}{
-		{"17.4.1-ee", string(drafts), 5, Write{OK: true, Approve: true, Why: "Request changes needs GitLab 18.9. This server runs 17.4."}},
+		{"17.4.1-ee", string(drafts), 4, Write{OK: true, Approve: true, Why: "Request changes needs GitLab 18.9. This server runs 17.4."}},
 		{"15.11.0", "", 0, Write{Note: "Reviews from kijk need GitLab 16.3. This server runs 15.11."}},
 		{"18.9.0", "", 0, Write{Note: "Cannot read your drafts: glab: 403 Forbidden"}},
 	} {

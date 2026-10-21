@@ -19,13 +19,13 @@ func forgeRepo(t *testing.T, remote string) string {
 
 // ghTarget is gh's answer about pull request 7: its node, its head, and a pending review when
 // review is set.
-func ghTarget(head, review string) gittest.Rule { return ghTargetAt(head, review, head) }
+func ghTarget(head, review string) gittest.Rule { return ghTargetAt(head, review, head, "") }
 
-// ghTargetAt is ghTarget with the pending review made on commit.
-func ghTargetAt(head, review, commit string) gittest.Rule {
+// ghTargetAt is ghTarget with the pending review made on commit, with body as its summary.
+func ghTargetAt(head, review, commit, body string) gittest.Rule {
 	nodes := "[]"
 	if review != "" {
-		nodes = fmt.Sprintf(`[{"id":%q,"viewerDidAuthor":true,"commit":{"oid":%q}}]`, review, commit)
+		nodes = fmt.Sprintf(`[{"id":%q,"viewerDidAuthor":true,"commit":{"oid":%q},"body":%q}]`, review, commit, body)
 	}
 	return gittest.Rule{Has: "headRefOid reviews(states: PENDING", Out: fmt.Sprintf(`{"data":{"repository":{"pullRequest":{"id":"PR_7","headRefOid":%q,"reviews":{"nodes":%s}}}}}`, head, nodes)}
 }
@@ -69,7 +69,7 @@ func TestGithubComment(t *testing.T) {
 	}
 
 	// Your pending review is on an older commit, whose lines may be other lines: nothing is written.
-	calls = gittest.FakeToolCalls(t, "gh", thread, ghTargetAt("aaa", "PRR_9", "old"))
+	calls = gittest.FakeToolCalls(t, "gh", thread, ghTargetAt("aaa", "PRR_9", "old", ""))
 	_, err = AddComment(repo, 7, "aaa", NewComment{Path: "retry.go", Line: 36, Body: "x"})
 	if err == nil || err.Error() != "Your pending review on #7 is on an older commit. Post it first, or finish it on GitHub." || len(calls()) != 1 {
 		t.Fatalf("err %v, calls %q", err, calls())
@@ -135,8 +135,9 @@ func TestGithubSubmit(t *testing.T) {
 	submit := gittest.Rule{Has: "submitPullRequestReview(input", Out: `{"data":{"submitPullRequestReview":{"pullRequestReview":{"id":"PRR_9"}}}}`}
 	add := gittest.Rule{Has: "addPullRequestReview(input", Out: `{"data":{"addPullRequestReview":{"pullRequestReview":{"id":"PRR_new"}}}}`}
 
-	calls := gittest.FakeToolCalls(t, "gh", submit, add, ghTarget("aaa", "PRR_9"))
-	if _, err := SubmitReview(repo, 7, "aaa", "approve", "Looks good."); err != nil {
+	// The summary is the body of the pending review on GitHub, sent again so it is not lost.
+	calls := gittest.FakeToolCalls(t, "gh", submit, add, ghTargetAt("aaa", "PRR_9", "aaa", "Looks good."))
+	if err := SubmitReview(repo, 7, "aaa", "approve"); err != nil {
 		t.Fatal(err)
 	}
 	if c := calls(); len(c) != 2 || !has(c[1], "review=PRR_9", "event=APPROVE", "body=Looks good.") {
@@ -145,21 +146,21 @@ func TestGithubSubmit(t *testing.T) {
 
 	// No drafts: one call makes the review and submits it, on the head kijk showed.
 	calls = gittest.FakeToolCalls(t, "gh", submit, add, ghTarget("bbb", ""))
-	if _, err := SubmitReview(repo, 7, "aaa", "changes", "Please split this."); err != nil {
+	if err := SubmitReview(repo, 7, "aaa", "changes"); err != nil {
 		t.Fatal(err)
 	}
-	if c := calls(); len(c) != 2 || !has(c[1], "pr=PR_7", "commit=aaa", "event=REQUEST_CHANGES", "body=Please split this.") {
+	if c := calls(); len(c) != 2 || !has(c[1], "pr=PR_7", "commit=aaa", "event=REQUEST_CHANGES", "body=") {
 		t.Fatalf("calls %q", c)
 	}
 
 	calls = gittest.FakeToolCalls(t, "gh", submit, ghTarget("aaa", "PRR_9"))
-	if _, err := SubmitReview(repo, 7, "aaa", "comment", ""); err != nil {
+	if err := SubmitReview(repo, 7, "aaa", "comment"); err != nil {
 		t.Fatal(err)
 	}
 	if c := calls(); !has(c[1], "event=COMMENT", "body=") {
 		t.Fatalf("calls %q", c)
 	}
-	if _, err := SubmitReview(repo, 7, "aaa", "merge", ""); err == nil || len(calls()) != 2 {
+	if err := SubmitReview(repo, 7, "aaa", "merge"); err == nil || len(calls()) != 2 {
 		t.Fatalf("a verdict kijk does not know: %v", err)
 	}
 }
@@ -173,5 +174,31 @@ func TestGithubWriteRefused(t *testing.T) {
 	_, err := AddComment(repo, 7, "aaa", NewComment{Path: "retry.go", Line: 900, Body: "x"})
 	if err == nil || err.Error() != "gh: pull_request_review_thread.line must be part of the diff" {
 		t.Fatalf("err %v", err)
+	}
+}
+
+// The summary is the body of your pending review: kijk makes the review with it, or changes it.
+func TestGithubSummary(t *testing.T) {
+	repo := forgeRepo(t, "git@github.com:acme/shop.git")
+	add := gittest.Rule{Has: "addPullRequestReview(input", Out: `{"data":{"addPullRequestReview":{"pullRequestReview":{"id":"PRR_new"}}}}`}
+	update := gittest.Rule{Has: "updatePullRequestReview(input", Out: `{"data":{"updatePullRequestReview":{"pullRequestReview":{"id":"PRR_9"}}}}`}
+	calls := gittest.FakeToolCalls(t, "gh", add, update, ghTarget("bbb", ""))
+	if err := SetSummary(repo, 7, "aaa", "Looks good."); err != nil {
+		t.Fatal(err)
+	}
+	if c := calls(); len(c) != 2 || !has(c[1], "pr=PR_7", "commit=aaa", "body=Looks good.") || strings.Contains(strings.Join(c[1].Args, " "), "event") {
+		t.Fatalf("calls %q", c)
+	}
+	calls = gittest.FakeToolCalls(t, "gh", add, update, ghTarget("aaa", "PRR_9"))
+	if err := SetSummary(repo, 7, "aaa", "Looks good, one question."); err != nil {
+		t.Fatal(err)
+	}
+	if c := calls(); len(c) != 2 || !has(c[1], "review=PRR_9", "body=Looks good, one question.") {
+		t.Fatalf("calls %q", c)
+	}
+	// No summary and no review: nothing to write.
+	calls = gittest.FakeToolCalls(t, "gh", add, update, ghTarget("aaa", ""))
+	if err := SetSummary(repo, 7, "aaa", "  "); err != nil || len(calls()) != 1 {
+		t.Fatalf("err %v, calls %q", err, calls())
 	}
 }

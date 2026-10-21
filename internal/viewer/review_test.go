@@ -48,6 +48,7 @@ func TestReviewRoutes(t *testing.T) {
 		{Has: "deletePullRequestReviewComment(input", Out: `{"data":{}}`},
 		{Has: "resolveReviewThread(input", Out: `{"data":{}}`},
 		{Has: "submitPullRequestReview(input", Out: `{"data":{}}`},
+		{Has: "updatePullRequestReview(input", Out: `{"data":{}}`},
 		{Has: "pullRequest(number", Out: prAnswer("OPEN", head, base)},
 	}
 	calls := gittest.FakeToolCalls(t, "gh", rules...)
@@ -85,15 +86,16 @@ func TestReviewRoutes(t *testing.T) {
 		{"/api/pr/comment/edit", map[string]any{"n": 7, "id": "C9", "body": "Why three?"}},
 		{"/api/pr/comment/delete", map[string]any{"n": 7, "id": "C9"}},
 		{"/api/pr/resolve", map[string]any{"n": 7, "thread": "T1", "resolved": true}},
-		{"/api/pr/submit", map[string]any{"n": 7, "verdict": "approve", "body": "Looks good."}},
+		{"/api/pr/summary", map[string]any{"n": 7, "body": "Looks good."}},
+		{"/api/pr/submit", map[string]any{"n": 7, "verdict": "approve"}},
 	} {
 		c.body["root"] = clone
 		if w := post(c.route, js(c.body)); w.Code != 200 {
 			t.Errorf("%s: %d %s", c.route, w.Code, w.Body.String())
 		}
 	}
-	if last := calls()[len(calls())-1]; !strings.Contains(strings.Join(last.Args, " "), "-f body=Looks good. -f event=APPROVE -f review=PRR_9") {
-		t.Fatalf("submit %q", last.Args)
+	if c := calls(); !strings.Contains(strings.Join(c[len(c)-3].Args, " "), "-f body=Looks good. -f review=PRR_9") || !strings.Contains(strings.Join(c[len(c)-1].Args, " "), "-f event=APPROVE -f review=PRR_9") {
+		t.Fatalf("summary and submit %q", c[len(c)-3:])
 	}
 
 	// Someone pushed: nothing is written, and the page is told to show the pull request again.
@@ -116,22 +118,6 @@ func TestReviewRoutes(t *testing.T) {
 		if w := post(c.route, c.body); w.Code != c.code {
 			t.Errorf("%s %.60s: %d %s, want %d", c.route, c.body, w.Code, w.Body.String(), c.code)
 		}
-	}
-}
-
-// On GitLab a submit that failed after the summary became a draft still says so, so the page does
-// not send the summary twice.
-func TestReviewSubmitPartly(t *testing.T) {
-	clone, _, _ := prRepo(t)
-	gittest.Run(t, clone, "remote", "set-url", "origin", "https://gitlab.com/acme/shop.git")
-	gittest.FakeToolCalls(t, "glab",
-		gittest.Rule{Has: "gitlab.com version", Out: `{"version":"18.9.0"}`},
-		gittest.Rule{Has: "gitlab.com projects/acme%2Fshop/merge_requests/7/draft_notes", Err: "500 Internal Server Error\n", Exit: 1},
-		gittest.Rule{Has: "projects/acme%2Fshop/merge_requests/7/draft_notes", Out: `{"id":63}`})
-	_, post := reviewServer(t, clone)
-	w := post("/api/pr/submit", fmt.Sprintf(`{"root":%q,"n":7,"verdict":"comment","body":"Looks good."}`, clone))
-	if w.Code != 200 || w.Body.String() != "{\"summary\":\"63\",\"error\":\"glab: 500 Internal Server Error\"}\n" {
-		t.Fatalf("%d %s", w.Code, w.Body.String())
 	}
 }
 

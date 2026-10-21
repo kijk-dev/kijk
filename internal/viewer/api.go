@@ -54,6 +54,7 @@ func Register(mux *http.ServeMux, rts *Roots, o Options) {
 	mux.HandleFunc("POST /api/pr/comment/edit", a.write(a.prEdit))
 	mux.HandleFunc("POST /api/pr/comment/delete", a.write(a.prDelete))
 	mux.HandleFunc("POST /api/pr/resolve", a.write(a.prResolve))
+	mux.HandleFunc("POST /api/pr/summary", a.write(a.prSummary))
 	mux.HandleFunc("POST /api/pr/submit", a.write(a.prSubmit))
 	mux.HandleFunc("GET /api/commit-files", a.commitFiles)
 	mux.HandleFunc("POST /api/fetch", a.gitAction(func(req actionRequest) (string, error) { return git.Fetch(req.Root) }))

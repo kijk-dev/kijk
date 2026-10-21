@@ -281,12 +281,12 @@ function replyStrip(root, n, res, t) {
   return s.foot;
 }
 
-// ----- The summary and the verdict, kept in the browser until Submit -----
+// ----- The verdict, kept in the browser; the summary is a draft on the forge like the rest -----
 
 const reviewKey = (root, n) => `kijk.review:${storeKey(root)}:${n}`;
 
 function review(root, n) {
-  const none = { summary: '', verdict: 'comment' };
+  const none = { verdict: 'comment' };
   try { return { ...none, ...JSON.parse(localStorage.getItem(reviewKey(root, n))) }; } catch { return none; }
 }
 
@@ -303,10 +303,17 @@ function liveParts(root, n) {
 function setReview(root, n, patch) {
   const r = { ...review(root, n), ...patch };
   try {
-    if (!r.summary && r.verdict === 'comment') localStorage.removeItem(reviewKey(root, n));
-    else localStorage.setItem(reviewKey(root, n), JSON.stringify(r));
+    if (r.verdict === 'comment') localStorage.removeItem(reviewKey(root, n));
+    else localStorage.setItem(reviewKey(root, n), JSON.stringify({ verdict: r.verdict }));
   } catch { /* storage blocked */ }
   for (const part of Object.values(liveParts(root, n))) if (part.isConnected) part.sync();
+}
+
+// saveSummary sets the summary on the forge: GitHub's pending review body, GitLab's draft note.
+async function saveSummary(root, n, body) {
+  await post('pr/summary', { root, n, body });
+  await loadView(root, n).catch(() => {});
+  hooks.announce?.('Summary saved');
 }
 
 // tally sorts your drafts: comments on lines, replies with whom and where they answer, and
@@ -341,7 +348,7 @@ function verdict(root, n, res) {
   return allowed(res, v) ? v : 'comment';
 }
 
-const nothing = (root, n, res) => verdict(root, n, res) === 'comment' && !tally(root, n, res).all && !review(root, n).summary.trim();
+const nothing = (root, n, res) => verdict(root, n, res) === 'comment' && !tally(root, n, res).all && !res.summary?.trim();
 
 // reviewBox is the box at the bottom of the sidebar: your drafts, the verdict, the summary and
 // Submit review…; or why kijk cannot write here. The box stays one element, so what is typed stays.
@@ -367,9 +374,30 @@ export function reviewBox(root, n, res) {
     area.rows = 2;
     area.placeholder = 'Summary (optional)';
     area.setAttribute('aria-label', 'Summary');
-    area.oninput = () => setReview(root, n, { summary: area.value });
+    // The summary goes to the forge when it is saved, not on every key.
+    const saved = el('div', 'saved', 'Not saved · Ctrl Enter saves it');
+    const error = el('div', 'error');
+    let known = ''; // the summary the forge had when the box last showed it
+    const dirty = () => area.value.trim() !== (box.res.summary || '').trim();
+    const save = async () => {
+      error.textContent = '';
+      try {
+        await saveSummary(root, n, area.value);
+      } catch (err) {
+        error.textContent = err.message;
+        hooks.announce?.(err.message);
+        throw err;
+      }
+    };
+    area.oninput = () => box.sync();
+    area.onkeydown = e => {
+      if (ctrlEnter(e)) {
+        e.preventDefault();
+        if (dirty()) save().catch(() => {});
+      }
+    };
     const submit = el('button', 'primary', 'Submit review…');
-    box.append(head, mode, why, area, submit);
+    box.append(head, mode, why, area, saved, error, submit);
     box.sync = () => {
       const r = box.res;
       const t = tally(root, n, r);
@@ -386,12 +414,20 @@ export function reviewBox(root, n, res) {
       }));
       why.textContent = r.write.why || '';
       why.hidden = !r.write.why;
-      const summary = review(root, n).summary;
-      if (area.value !== summary) area.value = summary;
-      submit.disabled = nothing(root, n, r);
+      // A new summary from the forge shows, unless the box holds text of its own not saved yet.
+      const forge = r.summary || '';
+      if (forge !== known && (area.value.trim() === known.trim() || area.value.trim() === forge.trim())) area.value = forge;
+      known = forge;
+      saved.hidden = !dirty();
+      submit.disabled = nothing(root, n, r) && !area.value.trim();
       submit.title = submit.disabled ? 'Nothing to post yet' : '';
     };
-    submit.onclick = () => openCheck(root, n, box.res);
+    submit.onclick = async () => {
+      if (dirty()) {
+        try { await save(); } catch { return; }
+      }
+      openCheck(root, n, box.res);
+    };
     parts.box = box;
   }
   box.res = res;
@@ -403,8 +439,9 @@ export function reviewBox(root, n, res) {
 export function summarySlot(root, n, res) {
   const parts = liveParts(root, n);
   const slot = el('div', 'c mine summary');
+  slot.res = res;
   slot.sync = () => {
-    const text = review(root, n).summary.trim();
+    const text = (slot.res.summary || '').trim();
     slot.hidden = !text;
     const who = el('div', 'who');
     who.append(avatar(res.me || 'you'), el('b', null, res.me || 'you'), el('span', 'chip draft', 'Draft'), el('span', 'muted', '· sent with your review'));
@@ -420,23 +457,37 @@ export function summarySlot(root, n, res) {
 // the summary, since GitHub holds a comment not on a line only as the body of a review.
 export function commentFoot(root, n, res) {
   const parts = liveParts(root, n);
-  if (parts.foot) return parts.foot; // kept, so what is typed stays when the Overview draws again
+  if (parts.foot) {
+    parts.foot.res = res;
+    return parts.foot; // kept, so what is typed stays when the Overview draws again
+  }
   const w = words(res);
   const foot = el('div', 'foot');
   parts.foot = foot;
+  foot.res = res;
   foot.sync = () => {};
   const input = el('input');
   input.placeholder = `Comment on the ${w.kind}…`;
   input.setAttribute('aria-label', `Comment on the ${w.kind}`);
   const add = el('button', 'tool', 'Add to review');
   add.dataset.tip = 'Add it to the summary of your review\nSent with Submit review';
-  const take = () => {
+  const error = el('span', 'error');
+  const take = async () => {
     const text = input.value.trim();
-    if (!text) return;
-    const summary = review(root, n).summary.trim();
-    setReview(root, n, { summary: summary ? `${summary}\n\n${text}` : text });
-    input.value = '';
-    hooks.announce?.('Added to the summary of your review');
+    if (!text || add.disabled) return;
+    const summary = (foot.res.summary || '').trim();
+    add.disabled = true;
+    error.textContent = '';
+    try {
+      await saveSummary(root, n, summary ? `${summary}\n\n${text}` : text);
+      if (input.value.trim() === text) input.value = '';
+      hooks.announce?.('Added to the summary of your review');
+    } catch (err) {
+      error.textContent = err.message;
+      hooks.announce?.(err.message);
+    } finally {
+      add.disabled = false;
+    }
   };
   add.onclick = take;
   input.onkeydown = e => {
@@ -445,7 +496,7 @@ export function commentFoot(root, n, res) {
       take();
     }
   };
-  foot.append(avatar(res.me || 'you'), input, add);
+  foot.append(avatar(res.me || 'you'), input, error, add);
   return foot;
 }
 
@@ -453,7 +504,6 @@ export function commentFoot(root, n, res) {
 
 function checkRows(root, n, res) {
   const w = words(res);
-  const r = review(root, n);
   const t = tally(root, n, res);
   const rows = [];
   const v = verdict(root, n, res);
@@ -473,7 +523,7 @@ function checkRows(root, n, res) {
     const k = t.replies.length;
     rows.push(['Replies', elsewhere(el('span', 'v', k > 2 ? String(k) : `${k}, to ${t.replies.map(r => r.to).join(' and ')}`), t.replies)]);
   }
-  if (r.summary.trim()) rows.push(['Summary', el('span', 'v', r.summary.trim().split('\n')[0])]);
+  if (res.summary?.trim()) rows.push(['Summary', el('span', 'v', res.summary.trim().split('\n')[0])]);
   return rows.map(([key, value]) => {
     const li = el('li');
     li.append(el('span', 'k', key), value);
@@ -513,28 +563,18 @@ function openCheck(root, n, res) {
     ok.disabled = cancel.disabled = true;
     error.hidden = true;
     note.textContent = 'Posting…';
-    const r = review(root, n);
-    let out;
     try {
-      out = await shown(root, n, res.at, 'pr/submit', { verdict: verdict(root, n, res), body: r.summary.trim() });
+      await shown(root, n, res.at, 'pr/submit', { verdict: verdict(root, n, res) });
     } catch (err) {
-      out = { error: err.message };
-    }
-    if (out.summary) {
-      // The summary is on the forge now, as a draft or posted, so it is not sent again.
-      remember(root, n, out.summary);
-      setReview(root, n, { summary: '' });
-    }
-    if (out.error) {
-      error.textContent = out.error;
+      error.textContent = err.message;
       error.hidden = false;
       note.textContent = `Everyone on the ${w.kind} sees it at once.`;
       ok.disabled = cancel.disabled = false;
-      hooks.announce?.(out.error);
+      hooks.announce?.(err.message);
       loadView(root, n).catch(() => {});
       return;
     }
-    setReview(root, n, { summary: '', verdict: 'comment' });
+    setReview(root, n, { verdict: 'comment' });
     close();
     const said = `Posted your review on ${w.num}${n}`;
     hooks.say?.(said);

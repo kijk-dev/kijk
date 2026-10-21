@@ -718,19 +718,26 @@ func TestBrowser(t *testing.T) {
 		}
 		same := func(ts []obj) []obj { return ts }
 		mine := func(body string) obj { return ghThread("T8", retry, errAt, 0, false, false, "", ghDraft("C50", body)) }
-		target := func(head, review string) obj {
+		// target is the answer a write asks first: the head, and your pending review with its summary.
+		targetWith := func(head, review, summary string) obj {
 			nodes := []obj{}
 			if review != "" {
-				nodes = []obj{{"id": review, "viewerDidAuthor": true, "commit": obj{"oid": head}}}
+				nodes = []obj{{"id": review, "viewerDidAuthor": true, "commit": obj{"oid": head}, "body": summary}}
 			}
 			return ghData(obj{"repository": obj{"pullRequest": obj{"id": "PR_477", "headRefOid": head, "reviews": obj{"nodes": nodes}}}})
+		}
+		target := func(head, review string) obj { return targetWith(head, review, "") }
+		// withSummary gives an answer about #477 your pending review's body.
+		withSummary := func(o obj, body string) obj {
+			o["data"].(obj)["repository"].(obj)["pullRequest"].(obj)["pending"] = obj{"nodes": []obj{{"body": body, "viewerDidAuthor": true}}}
+			return o
 		}
 		forge.set(t, "gh-pr-477.json", answer(same))
 		forge.set(t, "gh-target.json", target(theirs, ""))
 		forge.set(t, "gh-review.json", ghData(obj{"addPullRequestReview": obj{"pullRequestReview": obj{"id": "PRR_1"}}}))
 		forge.set(t, "gh-thread.json", ghData(obj{"addPullRequestReviewThread": obj{"thread": obj{"id": "T8", "comments": obj{"nodes": []obj{{"id": "C50"}}}}}}))
 		forge.set(t, "gh-reply.json", ghData(obj{"addPullRequestReviewThreadReply": obj{"comment": obj{"id": "C51"}}}))
-		for _, m := range []string{"edit", "delete", "resolve", "unresolve", "submit"} {
+		for _, m := range []string{"edit", "delete", "resolve", "unresolve", "submit", "update"} {
 			forge.set(t, "gh-"+m+".json", ghData(obj{}))
 		}
 		claude := t.TempDir()
@@ -868,11 +875,14 @@ func TestBrowser(t *testing.T) {
 		shots(b, "prs-drafts")
 
 		// The review box counts every draft, also the one from the website.
-		forge.set(t, "gh-pr-477.json", answer(func(ts []obj) []obj {
-			c := ts[0]["comments"].(obj)
-			c["nodes"] = append(c["nodes"].([]obj), ghDraft("C51", "Cap Retry-After at MaxDelay too."))
-			return append(ts, mine("Name the error: ev.ID."))
-		}))
+		full := func() obj {
+			return answer(func(ts []obj) []obj {
+				c := ts[0]["comments"].(obj)
+				c["nodes"] = append(c["nodes"].([]obj), ghDraft("C51", "Cap Retry-After at MaxDelay too."))
+				return append(ts, mine("Name the error: ev.ID."))
+			})
+		}
+		forge.set(t, "gh-pr-477.json", full())
 		b.press("refreshPrs")
 		box := `document.querySelector('#prs-pr .reviewbox')`
 		b.waitFor("the review box", box+`?.querySelector('.head').textContent === 'Your review3 drafts · 1 from GitHub' && `+
@@ -884,27 +894,49 @@ func TestBrowser(t *testing.T) {
 		b.waitFor("your drafts on the row", prRow(477)+`?.querySelector('.yours')?.textContent === '3 drafts' && !`+prRow(471)+`.querySelector('.yours')`)
 		b.click("#477", prRow(477))
 
-		// A comment on the pull request becomes the summary of the review.
+		// A comment on the pull request becomes the summary of the review: the body of the pending
+		// review on GitHub, so it lasts like every other draft.
+		const said = "Looks good, one question on Retry-After."
+		forge.after(t, "update", "gh-pr-477.json", withSummary(full(), said))
+		forge.after(t, "update", "gh-target.json", targetWith(theirs, "PRR_1", said))
+		n = len(forge.calls())
 		b.click("Overview", prsRow("Overview"))
 		foot := `document.querySelector('.md.ov .thr.conv .foot')`
 		b.waitFor("the comment box", foot+`?.querySelector('input').placeholder === 'Comment on the pull request…'`)
 		b.click("the comment box", foot+`.querySelector('input')`)
 		b.typeText("Looks good, one question on Retry-After.")
 		b.click("Add to review", byText(".md.ov .thr.conv .foot button", "Add to review"))
+		forge.waitFor(t, n, "updatePullRequestReview(input: {pullRequestReviewId: $review, body: $body}) { pullRequestReview { id } } } -f body="+said+" -f review=PRR_1")
 		b.waitFor("the summary in the box", box+`.querySelector('textarea').value === 'Looks good, one question on Retry-After.' && `+foot+`.querySelector('input').value === ''`)
-		b.waitFor("the summary as a draft", `(c => c?.querySelector('.chip.draft') && c.querySelector('.who').textContent.includes('· sent with your review') && c.querySelector('.cbody').textContent === 'Looks good, one question on Retry-After.')(document.querySelector('.md.ov .thr.conv .c.mine.summary'))`)
+		b.waitFor("the summary as a draft", `(c => c?.querySelector('.chip.draft') && c.querySelector('.who').textContent.includes('· sent with your review') && c.querySelector('.cbody').textContent === `+jsString(said)+`)(document.querySelector('.md.ov .thr.conv .c.mine.summary'))`)
 		shots(b, "prs-overview-review")
+
+		// The box saves its summary on Ctrl+Enter, not on every key.
+		const summary = said + " Thanks."
+		b.evalJS(`(a => { a.focus(); a.setSelectionRange(a.value.length, a.value.length) })(` + box + `.querySelector('textarea'))`)
+		n = len(forge.calls())
+		b.typeText(" Thanks.")
+		b.waitFor("not saved yet", box+`.querySelector('.saved').textContent === 'Not saved · Ctrl Enter saves it'`)
+		shots(b, "prs-summary-unsaved")
+		if strings.Contains(strings.Join(forge.calls()[n:], "\n"), "updatePullRequestReview(") {
+			t.Fatal("kijk saved the summary on a key press")
+		}
+		forge.after(t, "update", "gh-pr-477.json", withSummary(full(), summary))
+		forge.after(t, "update", "gh-target.json", targetWith(theirs, "PRR_1", summary))
+		b.press("submitNote")
+		forge.waitFor(t, n, "-f body="+summary+" -f review=PRR_1")
+		b.waitFor("saved", box+`.querySelector('.saved').hidden && `+box+`.querySelector('textarea').value === `+jsString(summary))
 
 		// The check lists what goes out; Escape goes back with nothing lost.
 		b.click("Approve", byText("#prs-pr .reviewbox .mode button", "Approve"))
 		b.click("Submit review…", box+`.querySelector('button.primary')`)
 		dialog := `document.querySelector('.confirm[role=dialog]')`
 		b.waitFor("the check", dialog+`?.querySelector('h2').textContent === 'Post your review on #477?' && `+dialog+`.querySelector('.sub').textContent === 'Retry webhook delivery with backoff · sanne' && `+
-			`[...`+dialog+`.querySelectorAll('li')].map(l => l.textContent).join('|') === 'Verdict✓ Approve|Comments2 on lines · 1 written on GitHub|Replies1, to tim on retry.go:15|SummaryLooks good, one question on Retry-After.' && `+
+			`[...`+dialog+`.querySelectorAll('li')].map(l => l.textContent).join('|') === 'Verdict✓ Approve|Comments2 on lines · 1 written on GitHub|Replies1, to tim on retry.go:15|Summary`+summary+`' && `+
 			dialog+`.querySelector('.acts .muted').textContent === 'Everyone on the pull request sees it at once.' && document.activeElement === `+dialog+`.querySelector('button.primary') && document.querySelector('.backdrop')`)
 		shots(b, "prs-check")
 		b.key("Escape", kb.Escape)
-		b.waitFor("the check closed, nothing lost", `!document.querySelector('.confirm') && !document.querySelector('.backdrop') && `+box+`.querySelector('textarea').value === 'Looks good, one question on Retry-After.' && `+box+`.querySelector('.mode button[aria-pressed=true]').textContent === 'Approve'`)
+		b.waitFor("the check closed, nothing lost", `!document.querySelector('.confirm') && !document.querySelector('.backdrop') && `+box+`.querySelector('textarea').value === `+jsString(summary)+` && `+box+`.querySelector('.mode button[aria-pressed=true]').textContent === 'Approve'`)
 		if strings.Contains(strings.Join(forge.calls(), "\n"), "submitPullRequestReview(") {
 			t.Fatal("Escape posted the review")
 		}
@@ -921,9 +953,10 @@ func TestBrowser(t *testing.T) {
 		b.click("Submit review…", box+`.querySelector('button.primary')`)
 		b.waitFor("the check", dialog)
 		forge.after(t, "submit", "gh-pr-477.json", pr477(theirs, main, same))
+		forge.after(t, "submit", "gh-target.json", target(theirs, ""))
 		n = len(forge.calls())
 		b.key("Enter", "\r")
-		forge.waitFor(t, n, "-f body=Looks good, one question on Retry-After. -f event=APPROVE -f review=PRR_1")
+		forge.waitFor(t, n, "-f body="+summary+" -f event=APPROVE -f review=PRR_1")
 		b.waitFor("posted", `!document.querySelector('.confirm') && document.querySelector('#statusbar').textContent.includes('Posted your review on #477') && `+
 			box+`.querySelector('.head').textContent === 'Your reviewno drafts yet' && `+box+`.querySelector('textarea').value === '' && `+box+`.querySelector('.mode button[aria-pressed=true]').textContent === 'Comment' && `+
 			box+`.querySelector('button.primary').disabled && window.e2eCounts.some(u => u.endsWith('name=review'))`)
@@ -996,7 +1029,8 @@ func TestBrowser(t *testing.T) {
 			byText("#prs-pr .reviewbox .mode button", "Request changes")+`.dataset.tip === 'Request changes needs GitLab 18.9. This server runs 17.4.' && `+
 			fileBox("internal/webhook/retry.go")+`.querySelector('.addc')`)
 		// A draft is not a comment yet: the Overview row does not count it.
-		b.waitFor("a draft, not a comment", box+`.querySelector('.head').textContent === 'Your review1 draft · 1 from GitLab' && `+prsRow("Overview")+`.querySelector('.dir').textContent === ''`)
+		b.waitFor("a summary from the website", box+`.querySelector('.head').textContent === 'Your reviewno drafts yet' && `+box+`.querySelector('textarea').value === 'Thanks for this.' && `+
+			`!`+box+`.querySelector('button.primary').disabled && `+prsRow("Overview")+`.querySelector('.dir').textContent === ''`)
 		b.noErrors()
 
 		// Below 16.3 the merge request is read only, and the box's place says why.

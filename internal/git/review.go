@@ -160,22 +160,36 @@ func Resolve(root string, n int, thread string, resolved bool) error {
 // Verdicts are the verdicts of a review, by the names the page sends.
 var Verdicts = map[string]string{"comment": "COMMENT", "approve": "APPROVE", "changes": "REQUEST_CHANGES"}
 
-// SubmitReview sends every draft, the verdict and the summary, for head, the head kijk showed. On
-// GitLab it gives the summary's draft id: the summary is on the forge, also when a later step failed.
-func SubmitReview(root string, n int, head, verdict, body string) (summary string, err error) {
+// SetSummary sets the summary of your review, a draft on the forge like the rest. head is the
+// head kijk showed, for a review that does not exist yet; an empty body clears the summary.
+func SetSummary(root string, n int, head, body string) error {
+	f, tool, err := writer(root)
+	if err != nil {
+		return err
+	}
+	if tool == "gh" {
+		err = githubSummary(f, n, head, strings.TrimSpace(body))
+	} else {
+		err = gitlabSummary(f, n, strings.TrimSpace(body))
+	}
+	return toolErr(tool, err)
+}
+
+// SubmitReview sends every draft, the summary and the verdict, for head, the head kijk showed.
+func SubmitReview(root string, n int, head, verdict string) error {
 	if Verdicts[verdict] == "" {
-		return "", badInput("unknown verdict " + verdict)
+		return badInput("unknown verdict " + verdict)
 	}
 	f, tool, err := writer(root)
 	if err != nil {
-		return "", err
+		return err
 	}
 	if tool == "gh" {
-		err = githubSubmit(f, n, head, verdict, body)
+		err = githubSubmit(f, n, head, verdict)
 	} else {
-		summary, err = gitlabSubmit(f, n, head, verdict, body)
+		err = gitlabSubmit(f, n, head, verdict)
 	}
-	return summary, toolErr(tool, err)
+	return toolErr(tool, err)
 }
 
 // mutate runs a GraphQL mutation. Unlike a query, any error fails it: a refused mutation answers
