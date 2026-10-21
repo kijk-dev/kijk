@@ -3,7 +3,7 @@ import { isCurrent } from './view.js';
 import { boxView, showBoxes, noBoxes, goToBox, redraw, drawBox } from './boxes.js';
 import { cachedView, loadView, onView } from './prdata.js';
 import { placeForge, threadCount } from './threads.js';
-import { lineEditor, threadOpts, writable } from './drafts.js';
+import { lineEditor, moveEditor, threadOpts, writable } from './drafts.js';
 import { keyLabel } from './keys.js';
 
 // The Changes tab of a pull request: its forge diff in file boxes, with its threads under their
@@ -42,7 +42,11 @@ function source(v) {
       const again = redrawFile(b.f.path);
       const placed = placeForge(`${n}:${b.f.path}`, rows, threadsOn(v, b.f.path), { redraw: again, ...threadOpts(root, n, v.res, again) });
       const e = v.editor;
-      if (e?.path === b.f.path) placed.under.set(e.key, [...(placed.under.get(e.key) || []), e.el]);
+      if (e?.path === b.f.path) {
+        moveEditor(e, rows, v.res.at);
+        if (e.row) placed.under.set(e.key, [...(placed.under.get(e.key) || []), e.el]);
+        else placed.top.push(e.el); // its line is gone: the text stays, at the top of the box
+      }
       return placed;
     },
     addOld: true,
@@ -96,7 +100,8 @@ function openEditor(v, path, l) {
   closeEditor(v);
   const f = v.res.files.find(x => x.path === path);
   if (!f) return;
-  v.editor = { path, ...lineEditor(v.root, v.n, v.res, f, l, () => closeEditor(v, true)) };
+  v.editor = lineEditor(v.root, v.n, v.res, f, l, () => closeEditor(v, true));
+  v.editor.path = path;
   const b = v.boxes.get(path);
   if (b?.loaded) drawBox(v, b);
 }
