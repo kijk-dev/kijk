@@ -27,6 +27,25 @@ var fakeNames = []string{"gh", "glab"}
 // arguments of the last call.
 func FakeTool(t *testing.T, name string, rules ...Rule) (args func() []string) {
 	t.Helper()
+	calls := FakeToolCalls(t, name, rules...)
+	return func() []string {
+		all := calls()
+		if len(all) == 0 {
+			return nil
+		}
+		return all[len(all)-1].Args
+	}
+}
+
+// Call is one call of a fake tool: its arguments, and what it read with --input -.
+type Call struct {
+	Args  []string
+	Stdin string
+}
+
+// FakeToolCalls is FakeTool, and gives every call so far.
+func FakeToolCalls(t *testing.T, name string, rules ...Rule) (calls func() []Call) {
+	t.Helper()
 	dir := t.TempDir()
 	exe, err := os.Executable()
 	if err != nil {
@@ -44,11 +63,16 @@ func FakeTool(t *testing.T, name string, rules ...Rule) (args func() []string) {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	return func() []string {
-		b, _ := os.ReadFile(filepath.Join(dir, "args.json"))
-		var a []string
-		json.Unmarshal(b, &a)
-		return a
+	return func() []Call {
+		b, _ := os.ReadFile(filepath.Join(dir, "calls.jsonl"))
+		var out []Call
+		for _, l := range strings.Split(strings.TrimSpace(string(b)), "\n") {
+			var c Call
+			if json.Unmarshal([]byte(l), &c) == nil {
+				out = append(out, c)
+			}
+		}
+		return out
 	}
 }
 
@@ -78,8 +102,18 @@ func RunFakeTool() {
 	}
 	dir := filepath.Dir(exe)
 	args := os.Args[1:]
-	b, _ := json.Marshal(args)
-	os.WriteFile(filepath.Join(dir, "args.json"), b, 0o644)
+	call := Call{Args: args}
+	for i, a := range args {
+		if a == "--input" && i+1 < len(args) && args[i+1] == "-" {
+			in, _ := io.ReadAll(os.Stdin)
+			call.Stdin = string(in)
+		}
+	}
+	b, _ := json.Marshal(call)
+	if f, err := os.OpenFile(filepath.Join(dir, "calls.jsonl"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644); err == nil {
+		f.Write(append(b, '\n'))
+		f.Close()
+	}
 	var rules []Rule
 	if b, err := os.ReadFile(filepath.Join(dir, "rules.json")); err == nil {
 		json.Unmarshal(b, &rules)

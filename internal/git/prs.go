@@ -113,9 +113,21 @@ func addRows(res *PRList, rows []PRRow, asked bool) {
 	}
 }
 
-// graphQL runs a query with gh or glab and hands the data to parse. Strings go as -f, numbers as
-// -F, in name order, so a call reads the same each time.
+// graphQL runs a query with gh or glab and hands the data to parse.
 func graphQL[T any](tool string, f *forge, query string, vars map[string]any, out *T, parse func([]byte, *T) error) error {
+	data, errs, err := callGraphQL(tool, f, query, vars)
+	if err != nil {
+		return err
+	}
+	if len(errs) > 0 && (len(data) == 0 || string(data) == "null") {
+		return errors.New(errs[0])
+	}
+	return parse(data, out)
+}
+
+// callGraphQL gives the data and the error messages of a GraphQL call. Strings go as -f, numbers
+// as -F, in name order, so a call reads the same each time.
+func callGraphQL(tool string, f *forge, query string, vars map[string]any) (json.RawMessage, []string, error) {
 	args := []string{"api", "graphql", "--hostname", f.Host, "-f", "query=" + query}
 	keys := make([]string, 0, len(vars))
 	for k := range vars {
@@ -132,7 +144,7 @@ func graphQL[T any](tool string, f *forge, query string, vars map[string]any, ou
 	}
 	b, err := runTool(tool, args...)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	var env struct {
 		Data   json.RawMessage `json:"data"`
@@ -141,12 +153,13 @@ func graphQL[T any](tool string, f *forge, query string, vars map[string]any, ou
 		} `json:"errors"`
 	}
 	if err := json.Unmarshal(b, &env); err != nil {
-		return err
+		return nil, nil, err
 	}
-	if len(env.Errors) > 0 && (len(env.Data) == 0 || string(env.Data) == "null") {
-		return errors.New(env.Errors[0].Message)
+	var errs []string
+	for _, e := range env.Errors {
+		errs = append(errs, e.Message)
 	}
-	return parse(env.Data, out)
+	return env.Data, errs, nil
 }
 
 const githubRow = `fragment row on PullRequest { number title isDraft url createdAt headRefName baseRefName
