@@ -166,8 +166,10 @@ func gitlabSubmit(f *forge, n int, head, verdict, body string) (summary string, 
 		var v struct {
 			ID int `json:"id"`
 		}
-		json.Unmarshal(out, &v)
-		summary = strconv.Itoa(v.ID)
+		summary = "sent" // it is on the forge even when the answer cannot be read
+		if json.Unmarshal(out, &v) == nil && v.ID > 0 {
+			summary = strconv.Itoa(v.ID)
+		}
 	}
 	out, err := gitlabREST(f, "GET", mr+"/draft_notes", nil)
 	if err != nil {

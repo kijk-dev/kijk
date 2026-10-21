@@ -127,6 +127,12 @@ func TestGitlabSubmit(t *testing.T) {
 		t.Fatalf("calls %q", c)
 	}
 
+	// The summary went out even when GitLab's answer cannot be read, so it is reported as sent.
+	gittest.FakeToolCalls(t, "glab", publish, gittest.Rule{Has: "gitlab.com " + mr7 + "/draft_notes", Out: `[{"id":63}]`}, gittest.Rule{Has: mr7 + "/draft_notes", Out: `<html>`})
+	if id, err := SubmitReview(repo, 7, "h1", "comment", "Fine."); err != nil || id == "" {
+		t.Fatalf("id %q, err %v", id, err)
+	}
+
 	// Request changes with nothing to publish: no publish call.
 	calls = gittest.FakeToolCalls(t, "glab", publish, approve, changes, gittest.Rule{Has: mr7 + "/draft_notes", Out: `[]`})
 	if _, err := SubmitReview(repo, 7, "h1", "changes", ""); err != nil {
