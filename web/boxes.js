@@ -21,6 +21,8 @@ import { onKey, keyLabel } from './keys.js';
 //   marked(f)              the file has threads or notes, for Alt+↓ and Alt+↑
 //   viewed(f), setViewed(f, on)  the viewed mark: 'viewed', 'changed' since, or ''; optional
 //   viewedAt(f)            changes with each mark or clear of f, so a fold made before goes
+//   viewable(f)            false when f cannot be marked viewed; optional
+//   banner()               an element above the boxes, or null; optional
 
 export const ICON = {
   plus: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>',
@@ -151,7 +153,8 @@ async function updateBoxes(v, change) {
     drawHead(v, b);
   }
   for (const [path, b] of old) if (v.boxes.get(path) !== b) v.near.unobserve(b.el);
-  const els = [...v.boxes.values()].map(b => b.el);
+  const banner = v.src.banner?.();
+  const els = [...(banner ? [banner] : []), ...[...v.boxes.values()].map(b => b.el)];
   v.end.textContent = files.length ? 'End of the changes' : 'No changes yet';
   if (els.length + 1 !== v.scroll.children.length || els.some((e, i) => v.scroll.children[i] !== e)) {
     v.scroll.replaceChildren(...els, v.end);
@@ -269,7 +272,7 @@ export function drawHead(v, b) {
   parts.push(el('span', 'grow'));
   b.el.classList.toggle('viewed', b.state === 'viewed');
   if (b.state === 'changed') parts.push(el('span', 'again', 'changed since you viewed it'));
-  if (v.src.setViewed) {
+  if (v.src.setViewed && v.src.viewable?.(f) !== false) {
     const check = el('label', 'check');
     const box = el('input');
     box.type = 'checkbox';
@@ -317,6 +320,11 @@ export async function loadBox(v, b) {
       res = { error: err.message };
     }
     if (!isCurrent(v) || v.boxes.get(b.f.path) !== b) return;
+    // The basis moved during the fetch, as when the switch moved before the box was first drawn.
+    if (b.basis !== v.src.basis()) {
+      b.again = true;
+      return;
+    }
     const json = b.basis + JSON.stringify(res); // the same diff on another branch has other notes
     if (b.loaded && json === b.json) return;
     b.json = json;
@@ -330,17 +338,22 @@ export async function loadBox(v, b) {
   }
 }
 
+// oldLineOf is the old line of new line n, which is outside the hunks: n moved by the hunks above.
+export function oldLineOf(hunks, n) {
+  let delta = 0; // old line minus new line after the last hunk above
+  for (const h of hunks) {
+    const end = h.newStart + h.lines.filter(l => l.k !== '-').length;
+    if (end > n) break;
+    delta = h.oldStart + h.lines.filter(l => l.k !== '+').length - end;
+  }
+  return n + delta;
+}
+
 // hunksWith adds one-line hunks for lines outside the diff's hunks, in line order.
 function hunksWith(hunks, extra) {
   const all = hunks.map(h => ({ ...h, lines: [...h.lines] }));
   for (const x of [...extra].sort((p, q) => p.n - q.n)) {
-    let delta = 0; // old line minus new line after the last hunk above
-    for (const h of all) {
-      const end = h.newStart + h.lines.filter(l => l.k !== '-').length;
-      if (end > x.n) break;
-      delta = h.oldStart + h.lines.filter(l => l.k !== '+').length - end;
-    }
-    const row = { ...x, o: x.n + delta };
+    const row = { ...x, o: oldLineOf(all, x.n) };
     const before = all.find(h => h.newStart + h.lines.filter(l => l.k !== '-').length === x.n);
     if (before) before.lines.push(row);
     else all.push({ oldStart: row.o, newStart: x.n, lines: [row] });

@@ -277,3 +277,65 @@ func TestForgeWords(t *testing.T) {
 		t.Errorf("github: %q %q", w, s)
 	}
 }
+
+// What changed since a reviewed head is diffed against the head kijk keeps for the pull request.
+func TestPRSinceRoute(t *testing.T) {
+	clone, head, base := prRepo(t)
+	fakeGh(t, listAnswer, prAnswer("OPEN", head, base), "")
+	get := prServer(t, clone)
+	if w := get("/api/pr/since", url.Values{"n": {"7"}, "from": {base}}); w.Code != http.StatusConflict {
+		t.Fatalf("before the pull request is open: %d %s", w.Code, w.Body.String())
+	}
+	if w := get("/api/pr/view", url.Values{"n": {"7"}}); w.Code != 200 {
+		t.Fatalf("view %d %s", w.Code, w.Body.String())
+	}
+	type since struct {
+		At      string
+		Commits int
+		Rebased bool
+		Missing bool
+		Files   []struct {
+			Path     string
+			Add, Del int
+		}
+	}
+	ask := func(from string) (since, int) {
+		var s since
+		w := get("/api/pr/since", url.Values{"n": {"7"}, "from": {from}})
+		if w.Code == 200 {
+			if err := json.Unmarshal(w.Body.Bytes(), &s); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return s, w.Code
+	}
+	if s, code := ask(base); code != 200 || s.At != head || s.Commits != 1 || len(s.Files) != 1 || s.Files[0].Path != "retry.go" || s.Files[0].Add != 2 {
+		t.Errorf("since the base: %d %+v", code, s)
+	}
+	if s, code := ask(head); code != 200 || s.Commits != 0 || len(s.Files) != 0 || s.Rebased {
+		t.Errorf("since the head: %d %+v", code, s)
+	}
+	if s, code := ask(strings.Repeat("ab", 20)); code != 200 || !s.Missing || s.Rebased || len(s.Files) != 0 {
+		t.Errorf("a commit kijk does not have: %d %+v", code, s)
+	}
+	for _, bad := range []string{"", "HEAD", "main", "abcd", base[:12]} {
+		if _, code := ask(bad); code != http.StatusBadRequest {
+			t.Errorf("from %q: %d", bad, code)
+		}
+	}
+
+	diff := func(from string) *httptest.ResponseRecorder {
+		return get("/api/diff", url.Values{"path": {"retry.go"}, "mode": {"pr"}, "pr": {"7"}, "from": {from}})
+	}
+	if w := diff(head); w.Code != 200 || strings.Contains(w.Body.String(), `"k":"+"`) {
+		t.Errorf("diff since the head: %d %s", w.Code, w.Body.String())
+	}
+	if w := diff(base); w.Code != 200 || !strings.Contains(w.Body.String(), `{"k":"+","n":4,"t":"\tfor i := 0; i `) {
+		t.Errorf("diff since the base: %d %s", w.Code, w.Body.String())
+	}
+	for _, bad := range []string{"HEAD", "abcd", base[:12]} {
+		if w := diff(bad); w.Code != http.StatusBadRequest {
+			t.Errorf("diff from %q: %d %s", bad, w.Code, w.Body.String())
+		}
+	}
+}

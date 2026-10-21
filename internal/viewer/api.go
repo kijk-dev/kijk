@@ -50,6 +50,7 @@ func Register(mux *http.ServeMux, rts *Roots, o Options) {
 	mux.HandleFunc("GET /api/prs", a.prs)
 	mux.HandleFunc("GET /api/pr/view", a.prView)
 	mux.HandleFunc("GET /api/pr/log", a.prLog)
+	mux.HandleFunc("GET /api/pr/since", a.prSince)
 	mux.HandleFunc("POST /api/pr/comment", a.write(a.prComment))
 	mux.HandleFunc("POST /api/pr/comment/edit", a.write(a.prEdit))
 	mux.HandleFunc("POST /api/pr/comment/delete", a.write(a.prDelete))
@@ -386,6 +387,13 @@ func (a *api) diff(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		hash = r[0] + ".." + r[1]
+		if from := q.Get("from"); from != "" {
+			if !git.FullHash(from) {
+				fail(w, git.ErrBadHash)
+				return
+			}
+			hash = from + ".." + r[1] // since the head of your last review
+		}
 	}
 	res, err := diff(root, q.Get("path"), q.Get("orig"), mode, hash, context)
 	if err != nil {

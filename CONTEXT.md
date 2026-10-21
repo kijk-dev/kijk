@@ -116,6 +116,10 @@ _Avoid_: comment chain, conversation (the conversation is the comments not on a 
 A per-file mark that says you have read that file's diff in a pull request. It clears when the file changes again after you marked it.
 _Avoid_: seen, read, checked
 
+**Last review**:
+The head commit of a pull request when you last posted a review in kijk, or marked every file viewed. kijk keeps it on this machine. "Since your review" shows what changed after it.
+_Avoid_: last seen, reviewed commit
+
 **Telemetry**:
 The anonymous usage events kijk sends about itself: that it started, that it ran on a day, its version, operating system, how many folders are in the folders window, how many times Copy for agent was used, how many reviews were submitted, and, on a day kijk looked for agents, how many agents of each agent type run on the local machine and how many remote machines and agents on them it sees. Never folder paths, names, code, or an IP address. On by default, and the user can turn it off.
 _Avoid_: analytics, tracking, usage stats
