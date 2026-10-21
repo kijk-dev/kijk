@@ -48,9 +48,15 @@ func writer(root string) (*forge, string, error) {
 	return f, tool, nil
 }
 
+// sayErr is an error kijk words itself, passed on as it is.
+type sayErr string
+
+func (e sayErr) Error() string { return string(e) }
+
 // toolErr says a failed gh or glab call as the PR line does, with a missing login named.
 func toolErr(tool string, err error) error {
-	if err == nil || errors.Is(err, ErrHeadMoved) {
+	var said sayErr
+	if err == nil || errors.Is(err, ErrHeadMoved) || errors.As(err, &said) {
 		return err
 	}
 	if note := toolNote(tool, err); note != "" {
@@ -156,21 +162,22 @@ func Resolve(root string, n int, thread string, resolved bool) error {
 var Verdicts = map[string]string{"comment": "COMMENT", "approve": "APPROVE", "changes": "REQUEST_CHANGES"}
 
 // SubmitReview sends your review: every draft, the verdict and the summary. head is the head kijk
-// showed, for a review that has no drafts yet.
-func SubmitReview(root string, n int, head, verdict, body string) error {
+// showed, for a review that has no drafts yet. On GitLab the summary goes as a draft first; its id
+// tells the page the summary is on the forge, also when a later step failed.
+func SubmitReview(root string, n int, head, verdict, body string) (summary string, err error) {
 	if Verdicts[verdict] == "" {
-		return errors.New("unknown verdict " + verdict)
+		return "", errors.New("unknown verdict " + verdict)
 	}
 	f, tool, err := writer(root)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if tool == "gh" {
 		err = githubSubmit(f, n, head, verdict, body)
 	} else {
-		err = gitlabSubmit(f, n, verdict, body)
+		summary, err = gitlabSubmit(f, n, verdict, body)
 	}
-	return toolErr(tool, err)
+	return summary, toolErr(tool, err)
 }
 
 // mutate runs a GraphQL mutation. Unlike a query, any error fails it: a refused mutation answers

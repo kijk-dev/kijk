@@ -126,7 +126,7 @@ func TestGithubSubmit(t *testing.T) {
 	add := gittest.Rule{Has: "addPullRequestReview(input", Out: `{"data":{"addPullRequestReview":{"pullRequestReview":{"id":"PRR_new"}}}}`}
 
 	calls := gittest.FakeToolCalls(t, "gh", submit, add, ghTarget("aaa", "PRR_9"))
-	if err := SubmitReview(repo, 7, "aaa", "approve", "Looks good."); err != nil {
+	if _, err := SubmitReview(repo, 7, "aaa", "approve", "Looks good."); err != nil {
 		t.Fatal(err)
 	}
 	if c := calls(); len(c) != 2 || !has(c[1], "review=PRR_9", "event=APPROVE", "body=Looks good.") {
@@ -135,7 +135,7 @@ func TestGithubSubmit(t *testing.T) {
 
 	// No drafts: one call makes the review and submits it, on the head kijk showed.
 	calls = gittest.FakeToolCalls(t, "gh", submit, add, ghTarget("bbb", ""))
-	if err := SubmitReview(repo, 7, "aaa", "changes", "Please split this."); err != nil {
+	if _, err := SubmitReview(repo, 7, "aaa", "changes", "Please split this."); err != nil {
 		t.Fatal(err)
 	}
 	if c := calls(); len(c) != 2 || !has(c[1], "pr=PR_7", "commit=aaa", "event=REQUEST_CHANGES", "body=Please split this.") {
@@ -143,13 +143,13 @@ func TestGithubSubmit(t *testing.T) {
 	}
 
 	calls = gittest.FakeToolCalls(t, "gh", submit, ghTarget("aaa", "PRR_9"))
-	if err := SubmitReview(repo, 7, "aaa", "comment", ""); err != nil {
+	if _, err := SubmitReview(repo, 7, "aaa", "comment", ""); err != nil {
 		t.Fatal(err)
 	}
 	if c := calls(); !has(c[1], "event=COMMENT", "body=") {
 		t.Fatalf("calls %q", c)
 	}
-	if err := SubmitReview(repo, 7, "aaa", "merge", ""); err == nil || len(calls()) != 2 {
+	if _, err := SubmitReview(repo, 7, "aaa", "merge", ""); err == nil || len(calls()) != 2 {
 		t.Fatalf("a verdict kijk does not know: %v", err)
 	}
 }
