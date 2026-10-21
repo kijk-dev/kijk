@@ -108,6 +108,10 @@ _Avoid_: feedback, approval (an approval is one kind of verdict)
 A comment you leave on your own branch changes for the agent, not for people. It stays in kijk, never goes to the forge, and you hand it to the agent by copying it.
 _Avoid_: local comment, draft (a draft is part of a review not yet submitted)
 
+**Thread**:
+A discussion on a line of a pull request, on its forge: a reviewer's comment and the replies to it. It is open, resolved, or outdated when its lines changed after it was written.
+_Avoid_: comment chain, conversation (the conversation is the comments not on a line)
+
 **Viewed mark**:
 A per-file mark that says you have read that file's diff in a pull request. It clears when the file changes again after you marked it.
 _Avoid_: seen, read, checked
