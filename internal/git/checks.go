@@ -68,7 +68,7 @@ type CheckGroup struct {
 type Job struct {
 	ID    string   `json:"id"` // for its log; empty when kijk cannot read one
 	Name  string   `json:"name"`
-	State string   `json:"state"` // "ok", "bad", "run", "skip" or "wait"
+	State string   `json:"state"` // "ok", "bad", "cancel", "run", "skip" or "wait"
 	Time  string   `json:"time,omitempty"`
 	URL   string   `json:"url,omitempty"`
 	Stage string   `json:"stage,omitempty"`
@@ -184,13 +184,12 @@ func needsFromFile(root, head, path string, g *CheckGroup) {
 	g.Graph = true
 }
 
+// runState reads a GitHub check run. The PR line and the Overview both use it, so they agree.
 func runState(status, conclusion string) string {
 	switch status {
 	case "IN_PROGRESS":
 		return "run"
 	case "COMPLETED":
-	case "":
-		return "wait"
 	default: // queued, waiting, pending, requested
 		return "wait"
 	}
@@ -199,8 +198,10 @@ func runState(status, conclusion string) string {
 		return "ok"
 	case "FAILURE", "TIMED_OUT", "STARTUP_FAILURE", "ACTION_REQUIRED":
 		return "bad"
+	case "CANCELLED":
+		return "cancel"
 	}
-	return "skip" // skipped, cancelled, stale
+	return "skip" // skipped, stale
 }
 
 func statusState(state string) string {
@@ -299,7 +300,9 @@ func jobState(status string) string {
 		return "bad"
 	case "RUNNING":
 		return "run"
-	case "SKIPPED", "CANCELED", "CANCELING":
+	case "CANCELED", "CANCELING":
+		return "cancel"
+	case "SKIPPED":
 		return "skip"
 	}
 	return "wait" // created, pending, manual, scheduled, waiting for a resource

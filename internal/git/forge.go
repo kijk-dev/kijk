@@ -10,7 +10,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -279,13 +278,16 @@ func parseGithubPR(out []byte) (*pullRequest, error) {
 	}
 	running := false
 	for _, c := range v.StatusCheckRollup {
-		name := c.Name + c.Context // a check run has a name, a commit status a context
-		switch {
-		case c.Status != "" && c.Status != "COMPLETED", c.State == "PENDING", c.State == "EXPECTED":
+		// A check run has a name, a status and a conclusion; a commit status a context and a state.
+		state := runState(c.Status, c.Conclusion)
+		if c.Context != "" {
+			state = statusState(c.State)
+		}
+		switch state {
+		case "run", "wait":
 			running = true
-		case slices.Contains([]string{"FAILURE", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE"}, c.Conclusion),
-			c.State == "FAILURE", c.State == "ERROR":
-			p.Failed = append(p.Failed, name)
+		case "bad", "cancel":
+			p.Failed = append(p.Failed, c.Name+c.Context)
 		}
 	}
 	switch {

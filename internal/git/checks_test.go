@@ -96,6 +96,30 @@ other: Vercel – Preview=ok ci/legacy=bad`
 	}
 }
 
+// The PR line and the Overview read a check the same way: a cancelled job is not a pass.
+func TestCheckStates(t *testing.T) {
+	for _, c := range []struct{ status, conclusion, want string }{
+		{"COMPLETED", "SUCCESS", "ok"}, {"COMPLETED", "NEUTRAL", "ok"}, {"COMPLETED", "FAILURE", "bad"},
+		{"COMPLETED", "TIMED_OUT", "bad"}, {"COMPLETED", "CANCELLED", "cancel"}, {"COMPLETED", "SKIPPED", "skip"},
+		{"COMPLETED", "STALE", "skip"}, {"IN_PROGRESS", "", "run"}, {"QUEUED", "", "wait"}, {"", "", "wait"},
+	} {
+		if got := runState(c.status, c.conclusion); got != c.want {
+			t.Errorf("runState(%s, %s) = %s, want %s", c.status, c.conclusion, got, c.want)
+		}
+	}
+	for status, want := range map[string]string{"CANCELED": "cancel", "canceling": "cancel", "SKIPPED": "skip", "MANUAL": "wait"} {
+		if got := jobState(status); got != want {
+			t.Errorf("jobState(%s) = %s, want %s", status, got, want)
+		}
+	}
+	p, _ := parseGithubPR([]byte(`{"number":1,"state":"OPEN","statusCheckRollup":[
+		{"__typename":"CheckRun","name":"build","status":"COMPLETED","conclusion":"SUCCESS"},
+		{"__typename":"CheckRun","name":"test","status":"COMPLETED","conclusion":"CANCELLED"}]}`))
+	if p.CI != "failed" || len(p.Failed) != 1 || p.Failed[0] != "test" {
+		t.Errorf("the PR line with a cancelled job: %s %v", p.CI, p.Failed)
+	}
+}
+
 func TestGitlabChecks(t *testing.T) {
 	var p gitlabPipeline
 	err := json.Unmarshal([]byte(`{"iid":"9123","status":"FAILED","path":"/acme/shop/-/pipelines/77","duration":370,

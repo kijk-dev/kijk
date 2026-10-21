@@ -280,6 +280,7 @@ func reviewForge(t *testing.T, f *fakeForge, repo, origin string, ownThread bool
 			ghCheck(302, "test (linux)", "COMPLETED", "SUCCESS", 1284, ".github/workflows/ci.yml"),
 			ghCheck(303, "test (windows)", "COMPLETED", "FAILURE", 1284, ".github/workflows/ci.yml"),
 			ghCheck(304, "Vercel – Preview", "COMPLETED", "SUCCESS", 0, ""),
+			ghCheck(305, "Docs preview", "COMPLETED", "CANCELLED", 0, ""),
 		}))
 	f.set(t, "gh-log-303.txt", "2026-10-21T10:00:01.0000000Z === RUN   TestBackoffJitter\n2026-10-21T10:00:02.0000000Z     backoff_test.go:41: delay 1.204s outside [0.5s, 1.2s]\n2026-10-21T10:00:03.0000000Z --- FAIL: TestBackoffJitter (0.00s)\n")
 }

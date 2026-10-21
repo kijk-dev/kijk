@@ -23,7 +23,7 @@ const ICON = {
   wait: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
   copy: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>',
 };
-const STATE = { ok: 'Passed', bad: 'Failed', run: 'Running', skip: 'Skipped', wait: 'Waiting' };
+const STATE = { ok: 'Passed', bad: 'Failed', cancel: 'Cancelled', run: 'Running', skip: 'Skipped', wait: 'Waiting' };
 const REVIEW = { approved: ['ok', ICON.check, 'Approved'], commented: ['', ICON.msg, 'Commented'], changes: ['bad', ICON.x, 'Changes requested'], requested: ['', ICON.wait, 'Review requested'] };
 
 function svg(markup, cls) {
@@ -38,7 +38,7 @@ function jobIcon(state) {
     s.append(el('span', 'rundot'));
     return s;
   }
-  return svg({ ok: ICON.check, bad: ICON.x, skip: ICON.skip, wait: ICON.wait }[state] || ICON.wait, `ji ${{ ok: 'ok', bad: 'bad' }[state] || 'skip'}`);
+  return svg({ ok: ICON.check, bad: ICON.x, skip: ICON.skip, cancel: ICON.skip, wait: ICON.wait }[state] || ICON.wait, `ji ${{ ok: 'ok', bad: 'bad' }[state] || 'skip'}`);
 }
 
 export function setupOverview(h) {
@@ -140,8 +140,9 @@ function checks(v, res, words) {
   }
   const jobs = [...c.groups.flatMap(g => g.jobs), ...(c.other || [])];
   const count = st => jobs.filter(j => j.state === st).length;
-  const said = [count('bad') && `${count('bad')} failed`, count('run') && `${count('run')} running`].filter(Boolean);
-  head.append(el('span', 'muted', said.length ? said.join(' · ') : count('wait') ? 'waiting' : 'all passed'));
+  const said = [['bad', 'failed'], ['cancel', 'cancelled'], ['run', 'running'], ['wait', 'waiting'], ['skip', 'skipped']]
+    .filter(([st]) => count(st)).map(([st, word]) => `${count(st)} ${word}`);
+  head.append(el('span', 'muted', said.length ? said.join(' · ') : 'all passed'));
   const out = [head];
   if (c.groups.some(g => g.graph)) {
     const mode = el('span', 'mode h2mode');
@@ -242,7 +243,7 @@ function drawEdges(v) {
         const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
         path.setAttribute('d', `M${x1} ${y1} C${mx} ${y1} ${mx} ${y2} ${x2} ${y2}`);
         // A job that did not run, or waits, has a dashed line to it.
-        if (j.classList.contains('skip') || j.classList.contains('wait')) path.classList.add('dim');
+        if (j.matches('.skip, .wait, .cancel')) path.classList.add('dim');
         paths.push(path);
       }
     }
