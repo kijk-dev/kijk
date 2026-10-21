@@ -101,16 +101,16 @@ func PRFiles(root, base, head string) ([]change, error) {
 	return cs, nil
 }
 
-// Since is what changed in a pull request from a head you reviewed to the head now.
+// Since is what changed in a pull request from the head of your last review to the head now.
 type Since struct {
 	Files   []change `json:"files"`
 	Commits int      `json:"commits"`
-	Rebased bool     `json:"rebased,omitempty"` // the reviewed head is not in the history now
-	Missing bool     `json:"missing,omitempty"` // this repo does not have the reviewed head
+	Rebased bool     `json:"rebased,omitempty"` // the head of your last review is not in the history now
+	Missing bool     `json:"missing,omitempty"` // this repo does not have the head of your last review
 }
 
-// PRSince lists the files that changed from the reviewed head from to head, limited to files the
-// pull request changes at either head, so a merge of the target does not bring the target's files.
+// PRSince lists the files that changed from from, the head of your last review, to head. Only files
+// the pull request changes at either head count, so a merge of the target does not bring its files.
 func PRSince(root, split, from, head string) (Since, error) {
 	s := Since{Files: []change{}}
 	if !ValidHash(split) || !FullHash(from) || !ValidHash(head) {

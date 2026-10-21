@@ -1,6 +1,6 @@
 import { el, get } from './api.js';
 import { isCurrent } from './view.js';
-import { boxView, showBoxes, noBoxes, goToBox, redraw, drawBox, marksChanged } from './boxes.js';
+import { boxView, showBoxes, noBoxes, goToBox, redraw, drawBox, marksChanged, oldLineOf } from './boxes.js';
 import { cachedView, loadView, onView } from './prdata.js';
 import { placeForge, threadCount } from './threads.js';
 import { lineEditor, moveEditor, threadOpts, writable } from './drafts.js';
@@ -45,13 +45,7 @@ async function forgeRow(v, f, row) {
   const same = hunks.flatMap(h => h.lines).find(l => l.k !== '-' && l.n === row.n);
   if (same) return { k: same.k, o: same.o, n: same.n, t: same.t };
   if (v.res.forge?.kind === 'github') throw new Error('GitHub takes a comment only within 3 lines of a change of the pull request.');
-  let delta = 0; // old line minus new line below the last hunk above the row
-  for (const h of hunks) {
-    const end = h.newStart + h.lines.filter(l => l.k !== '-').length;
-    if (end > row.n) break;
-    delta = h.oldStart + h.lines.filter(l => l.k !== '+').length - end;
-  }
-  return { k: ' ', o: row.n + delta, n: row.n, t: row.t };
+  return { k: ' ', o: oldLineOf(hunks, row.n), n: row.n, t: row.t };
 }
 
 function source(v) {
@@ -68,7 +62,7 @@ function source(v) {
       const again = redrawFile(b.f.path);
       let threads = threadsOn(v, b.f.path);
       if (v.from) {
-        // The left side is the reviewed head: only threads on a shown line of the head now.
+        // The left side is the head of your last review: only threads on a shown line of the head now.
         const lines = new Set(rows.filter(r => r.k !== '-').map(r => r.n));
         threads = threads.filter(t => t.outdated || (!t.old && lines.has(t.line)));
       }
@@ -150,7 +144,7 @@ async function show(v, res) {
   v.bar = sh.since?.answer ? sinceBar(v.root, v.n, sh.since, sh.files) : null;
   v.scroll?.setAttribute('aria-label', v.from ? `Changes of #${v.n} since your review` : v.label);
   v.src.onAdd = writable(res) ? (v2, path, l) => openEditor(v, path, l) : null;
-  // The forge knows no line of the reviewed head.
+  // The forge knows no line of the head of your last review.
   v.src.addOld = !v.from;
   // GitHub takes a comment only on a line of its own diff, which shows 3 lines around a change.
   v.src.addNear = res.forge?.kind === 'github' ? 3 : 0;
@@ -172,9 +166,8 @@ function openEditor(v, path, l) {
   closeEditor(v);
   const f = prFile(v, { path });
   if (!f) return;
-  v.editor = lineEditor(v.root, v.n, v.res, f, l, () => closeEditor(v, true));
+  v.editor = lineEditor(v.root, v.n, v.res, f, l, () => closeEditor(v, true), row => (v.from ? forgeRow(v, f, row) : null));
   v.editor.path = path;
-  v.editor.toForge = row => (v.from ? forgeRow(v, f, row) : null);
   const b = v.boxes.get(path);
   if (b?.loaded) drawBox(v, b);
 }
