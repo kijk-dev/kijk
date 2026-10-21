@@ -667,6 +667,7 @@ func TestBrowser(t *testing.T) {
 		// The PR line's title opens the PRs tab on its pull request; ↗ still goes to the website.
 		b.click("the Git tab", gitTab)
 		b.waitFor("the PR line", `document.querySelector('#prline .pr-title')?.textContent === 'Fix login redirect loop' && document.querySelector('#prline .pr-link')?.href === 'https://github.com/acme/review/pull/482'`)
+		b.waitFor("the website link's tooltip", `(a => a.dataset.tip === 'Open on GitHub' && !a.title)([...document.querySelectorAll('#prline .pr-link')].at(-1))`)
 		b.click("the PR line's title", `document.querySelector('#prline .pr-title')`)
 		b.waitFor("the PRs tab on #482", prsTab+`.classList.contains('active') && !document.querySelector('#prs-branch').hidden && document.querySelector('#prs-branch .pr-num')?.textContent === '#482'`)
 		b.noErrors()

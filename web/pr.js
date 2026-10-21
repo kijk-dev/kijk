@@ -60,7 +60,7 @@ export function showPR(line, res, open) {
     title.removeAttribute('target');
     title.tabIndex = 0;
     title.setAttribute('role', 'link');
-    title.title = 'Open in the PRs tab';
+    title.dataset.tip = 'Open in the PRs tab';
     title.onclick = e => {
       e.preventDefault();
       open(p.number);
@@ -68,7 +68,7 @@ export function showPR(line, res, open) {
     title.onkeydown = e => { if (e.key === 'Enter') title.onclick(e); };
   }
   top.append(el('span', 'pr-num', `${h.num}${p.number}`), title, link('pr-link', p.url, '↗'));
-  top.lastChild.title = `Open on ${h.name}`;
+  top.lastChild.dataset.tip = `Open on ${h.name}`;
   top.lastChild.setAttribute('aria-label', `Open on ${h.name}`);
   const chips = prChips(p, h, res.default);
   line.replaceChildren(top, ...(chips ? [chips] : []));
