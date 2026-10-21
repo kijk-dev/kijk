@@ -61,7 +61,7 @@ func (a *api) write(run func(req writeRequest) (any, error)) http.HandlerFunc {
 
 // refused says why the forge would refuse a write, by what it last said kijk may write.
 func refused(p *prRanges, req writeRequest) string {
-	can, known := p.write(req.Root, req.N)
+	can, known := p.rules(req.Root, req.N)
 	switch {
 	case !known:
 		return ""

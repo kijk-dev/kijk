@@ -430,7 +430,7 @@ export function overviewRow(n, res) {
   li.dataset.path = '';
   const parts = [];
   const open = (res?.threads || []).filter(t => !t.resolved && !t.outdated && !t.draft).length;
-  if (open) parts.push(`${open} open ${open === 1 ? 'thread' : 'threads'}`);
+  if (open) parts.push(plural(open, 'open thread'));
   const said = (res?.comments || []).filter(c => !c.draft).length;
   if (!open && said) parts.push(plural(said, 'comment'));
   li.append(svg(ICON.doc), el('span', 'name', 'Overview'), el('span', 'dir', parts.join(' · ')));
