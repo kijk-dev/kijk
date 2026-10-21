@@ -1,8 +1,9 @@
 import { el, get, storeKey } from './api.js';
-import { line, setView, isCurrent, LINE_HEIGHT } from './view.js';
-import { lineCount, ago, kind, fileRow } from './git.js';
+import { isCurrent } from './view.js';
+import { lineCount, ago, fileRow } from './git.js';
 import { forgeMark, FORGE } from './pr.js';
 import { onKey, keyLabel, mac } from './keys.js';
+import { boxView, showBoxes, noBoxes, redraw, drawBox, iconButton, setCur, curRow, stepMarks, goToBox, plural } from './boxes.js';
 
 // The PRs tab for the folder's own branch: the panel in the sidebar, the Branch changes view, agent
 // notes and Copy for agent. It asks no forge; the pull request is what the PR line already knows.
@@ -13,23 +14,9 @@ const ICON = {
   local: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10.1 2.18a9.93 9.93 0 0 1 3.8 0"/><path d="M17.6 3.71a9.95 9.95 0 0 1 2.69 2.7"/><path d="M21.82 10.1a9.93 9.93 0 0 1 0 3.8"/><path d="M20.29 17.6a9.95 9.95 0 0 1-2.7 2.69"/><path d="M13.9 21.82a9.94 9.94 0 0 1-3.8 0"/><path d="M6.4 20.29a9.95 9.95 0 0 1-2.69-2.7"/><path d="M2.18 13.9a9.93 9.93 0 0 1 0-3.8"/><path d="M3.71 6.4a9.95 9.95 0 0 1 2.7-2.69"/></svg>',
   msg: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>',
   copy: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>',
-  plus: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>',
-  chev: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>',
-  doc: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/></svg>',
   edit: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21.17 6.81a1 1 0 0 0-3.99-3.99L3.84 16.17a2 2 0 0 0-.5.83l-1.32 4.35a.5.5 0 0 0 .62.62l4.35-1.32a2 2 0 0 0 .83-.5z"/></svg>',
   trash: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>',
 };
-
-const num = n => n.toLocaleString('en-US');
-const plural = (n, word) => `${num(n)} ${word}${n === 1 ? '' : 's'}`;
-
-// Files whose diff nobody reads start folded.
-const BIG = 2000;
-const GENERATED = ['go.sum', 'package-lock.json', 'yarn.lock', 'pnpm-lock.yaml', 'Cargo.lock'];
-const lines = f => (f.add || 0) + (f.del || 0);
-const generated = path => GENERATED.includes(path.split('/').pop()) || path.endsWith('.min.js');
-const HEAD = 34; // px, a box's sticky header
-const AHEAD = 5 * LINE_HEIGHT + HEAD; // a jump puts its target this far below the top
 
 const panel = document.getElementById('prs');
 let page = null;
@@ -159,13 +146,7 @@ function notesChanged(paths) {
   saveNotes();
   drawPanel();
   const v = openView();
-  if (!v) return;
-  for (const path of paths) {
-    const b = v.boxes.get(path);
-    if (!b) continue;
-    drawHead(v, b);
-    if (b.loaded) drawBox(v, b);
-  }
+  if (v) redraw(v, paths);
 }
 
 // ----- The panel -----
@@ -350,18 +331,6 @@ function notesBox() {
   return box;
 }
 
-function iconButton(svg, label, act) {
-  const b = el('button', 'icon-btn');
-  b.innerHTML = svg; // a fixed string
-  b.setAttribute('aria-label', label);
-  b.dataset.tip = label;
-  b.onclick = e => {
-    e.stopPropagation();
-    act();
-  };
-  return b;
-}
-
 // goTo scrolls the Branch changes view to a file's box, opening the view first when it is not.
 function goTo(path, focus) {
   selectRow(path);
@@ -371,207 +340,86 @@ function goTo(path, focus) {
     page.openBranch();
     return;
   }
-  const b = v.boxes.get(path);
-  if (b) v.scroll.scrollTop = b.el.offsetTop - 12;
-  if (focus) v.scroll.focus({ preventScroll: true });
+  goToBox(v, path, focus);
 }
 
-// ----- The Branch changes view: one box per file, drawn when it comes near the screen -----
+// ----- The Branch changes view: the boxes of the branch changes -----
+
+// The source of the Branch changes boxes: the branch changes, their marks for work not pushed, and
+// the notes.
+const branchSource = {
+  files: () => data?.files || [],
+  basis,
+  fetch: (f, context) => get('diff', { root: folder, path: f.path, orig: f.orig || '', mode: 'branch', target, context }),
+  headParts: f => {
+    const n = notesOn(f.path).length;
+    return [f.notPushed && dashed(NOT_PUSHED), n && noteCount(n)];
+  },
+  openFile: f => page.openFile(f.path),
+  marks: res => {
+    const np = res.notPushed || [];
+    const notPushed = n => np.some(([from, to]) => n >= from && n <= to);
+    return {
+      line: l => (l.k === '+' && notPushed(l.n) ? ' np' : ''),
+      hunk: h => {
+        const added = h.lines.filter(l => l.k === '+');
+        if (!added.length || !added.every(l => notPushed(l.n))) return null;
+        const tag = el('span', 'np-tag');
+        tag.innerHTML = ICON.local;
+        tag.append('Not pushed');
+        tag.dataset.tip = "Not pushed yet\nReviewers don't see these lines";
+        return tag;
+      },
+    };
+  },
+  decorate: async (v, b, rows) => {
+    const { extra, where } = await place(v, b, rows);
+    const under = new Map();
+    const end = [];
+    const put = (key, e) => under.set(key, [...(under.get(key) || []), e]);
+    const lines = new Set(rows.filter(r => r.k !== '-').map(r => r.n).concat(extra.map(x => x.n)));
+    for (const [n, at] of where) {
+      if (lines.has(at)) put(`n:${at}`, noteEl(v, n));
+      else end.push(noteEl(v, n));
+    }
+    if (v.editor?.path === b.f.path && !v.editor.id) put(`n:${v.editor.n}`, v.editor.el);
+    return { extra, under, end };
+  },
+  onAdd: (v, path, n, text) => openEditor(v, path, n, text),
+  addTip: `Note for the agent\n${keyLabel('addNote')}`,
+  onTop: path => selectRow(path),
+  drawn: (v, b) => {
+    if (v.editor?.path === b.f.path) v.editor.el.querySelector('textarea')?.focus({ preventScroll: true });
+  },
+  marked: f => notesOn(f.path).length > 0,
+};
 
 // openBranch shows the Branch changes tab. tab.folds keeps the boxes the user folded or opened;
 // save stores the tab.
 export async function openBranch(viewer, root, tab, keep, save) {
-  const v = { kind: 'branch', viewer, root, tab, save, keep, boxes: new Map() };
+  const v = boxView(viewer, root, tab, keep, save, branchSource);
+  v.label = 'Branch changes';
   view = v;
-  setView(v);
   v.reload = change => { if (isCurrent(v)) load(change); };
-  v.jump = dir => {
-    step(v, dir, b => b.starts);
-    return true;
-  };
   if (root !== folder) return;
   // Draw what is known at once, then check it: the branch may have changed while the tab was hidden.
   if (data) await build(v);
   if (isCurrent(v)) await load();
 }
 
-// build draws the view of the branch changes in data; noChanges says there are none.
+// build draws the view of the branch changes in data, and scrolls to a file asked for before.
 async function build(v) {
-  const scroll = el('div', 'allfiles');
-  scroll.tabIndex = 0;
-  scroll.setAttribute('aria-label', 'Branch changes');
-  v.scroll = scroll;
-  v.end = el('p', 'fend');
-  v.viewer.replaceChildren(scroll);
-  // Two screens ahead, so a box is drawn before it shows.
-  v.near = new IntersectionObserver(entries => {
-    for (const e of entries) {
-      const b = e.target.box;
-      b.near = e.isIntersecting;
-      if (b.near && b.open && (!b.loaded || b.stale)) loadBox(v, b);
-    }
-  }, { root: scroll, rootMargin: '200% 0px' });
-  await updateView(v);
-  if (v.keep?.scrollTop) scroll.scrollTop = v.keep.scrollTop;
-  v.keep = null;
-  if (goal) {
-    goTo(goal);
-    goal = '';
-  }
-  let frame = 0;
-  scroll.addEventListener('scroll', () => {
-    cancelAnimationFrame(frame);
-    frame = requestAnimationFrame(() => {
-      const a = anchor(v);
-      if (a) selectRow(a.b.f.path);
-    });
-  });
-  scroll.addEventListener('keydown', e => viewKey(v, e));
-  scroll.addEventListener('click', e => {
-    const row = e.target.closest('.ln[data-n]');
-    if (row && !e.target.closest('button')) setCur(v, row);
-  });
+  v.goal = goal;
+  goal = '';
+  await showBoxes(v);
 }
 
 function noChanges(v) {
-  v.near?.disconnect();
-  v.scroll = null;
-  v.boxes = new Map();
-  v.editor = null;
-  v.viewer.replaceChildren(el('p', 'empty', error || 'This branch has no branch changes'));
+  noBoxes(v, error || 'This branch has no branch changes');
 }
 
-// anchor is the box at the top of the view and how far it is scrolled, so a redraw keeps it there.
-function anchor(v) {
-  const top = v.scroll.scrollTop;
-  for (const b of v.boxes.values()) {
-    if (b.el.offsetTop + b.el.offsetHeight > top + 12) return { b, offset: top - b.el.offsetTop };
-  }
-  return null;
-}
-
-function restore(v, a) {
-  if (a?.b.el.isConnected) v.scroll.scrollTop = a.b.el.offsetTop + a.offset;
-}
-
-// updateView follows the branch changes. A changed box fetches its diff when it is near the screen;
-// a commit changes no diff, but a new split point or a push changes them all.
 async function updateView(v, change) {
-  if (!v.scroll || !data) return;
-  const a = anchor(v);
-  const old = v.boxes;
-  v.boxes = new Map();
-  for (const f of data.files) {
-    let b = old.get(f.path);
-    if (b && (b.f.orig !== f.orig || b.f.status !== f.status)) b = null;
-    if (b) b.f = f;
-    else b = newBox(v, f);
-    v.boxes.set(f.path, b);
-    drawHead(v, b);
-  }
-  for (const [path, b] of old) if (v.boxes.get(path) !== b) v.near.unobserve(b.el);
-  const els = [...v.boxes.values()].map(b => b.el);
-  v.end.textContent = data.files.length ? 'End of the changes' : 'No changes yet';
-  if (els.length + 1 !== v.scroll.children.length || els.some((e, i) => v.scroll.children[i] !== e)) {
-    v.scroll.replaceChildren(...els, v.end);
-    restore(v, a);
-  }
-  const changed = b => b.basis !== basis() || change?.all || change?.paths.includes(b.f.path) || (b.f.orig && change?.paths.includes(b.f.orig));
-  const now = [];
-  for (const b of v.boxes.values()) {
-    if (!b.loaded || !changed(b)) continue;
-    if (b.near && b.open) now.push(loadBox(v, b));
-    else b.stale = true;
-  }
-  await Promise.all(now);
-}
-
-function newBox(v, f) {
-  const b = { f, el: el('section', 'fbox'), head: el('div', 'fhead'), body: el('div', 'fbody'), loaded: false, context: 3, json: '', starts: [] };
-  b.open = v.tab.folds?.[f.path] ?? !(generated(f.path) || lines(f) > BIG);
-  b.note = el('div', 'fnote');
-  // Until it is drawn, the box is as high as its diff will about be, so the scrollbar is right.
-  // The browser skips painting a box far from the screen, and then takes this height for it too.
-  const height = Math.min(lines(f) + 8, 5000) * LINE_HEIGHT;
-  b.body.style.height = `${height}px`;
-  b.el.style.containIntrinsicSize = `auto ${height + HEAD}px`;
-  b.el.append(b.head, b.note, b.body);
-  b.el.dataset.path = f.path;
-  b.el.box = b;
-  showOpen(v, b);
-  v.near.observe(b.el);
-  return b;
-}
-
-function showOpen(v, b) {
-  b.el.classList.toggle('shut', !b.open);
-  b.body.hidden = !b.open;
-  b.note.hidden = b.open || !(generated(b.f.path) || lines(b.f) > BIG);
-  if (!b.note.hidden) {
-    const show = el('button', 'more', 'Show');
-    show.onclick = () => fold(v, b, true);
-    b.note.replaceChildren(el('span', null, `${generated(b.f.path) ? 'Generated file' : 'Large diff'}, ${plural(lines(b.f), 'line')} · `), show);
-  }
-}
-
-function fold(v, b, open) {
-  b.open = open;
-  v.tab.folds = { ...v.tab.folds, [b.f.path]: open };
-  v.save();
-  drawHead(v, b);
-  showOpen(v, b);
-  if (open && !b.loaded) loadBox(v, b);
-}
-
-function drawHead(v, b) {
-  const f = b.f;
-  const slash = f.path.lastIndexOf('/');
-  const name = f.path.slice(slash + 1);
-  const chev = iconButton(ICON.chev, `${b.open ? 'Fold' : 'Open'} ${name}`, () => fold(v, b, !b.open));
-  chev.classList.add('fold');
-  chev.setAttribute('aria-expanded', b.open);
-  const path = el('span', 'fpath');
-  path.title = f.orig ? `${f.orig} → ${f.path}` : f.path;
-  path.append(el('span', 'muted', slash < 0 ? '' : f.path.slice(0, slash + 1)), el('b', f.status === 'D' ? 'deleted' : null, name));
-  const parts = [chev, el('span', `letter ${kind(f.status)}`, f.status), path];
-  if (f.notPushed) parts.push(dashed(NOT_PUSHED));
-  const lc = lineCount(f.add, f.del);
-  if (lc) parts.push(lc);
-  const n = notesOn(f.path).length;
-  if (n) parts.push(noteCount(n));
-  parts.push(el('span', 'grow'));
-  if (f.status !== 'D') parts.push(iconButton(ICON.doc, 'Open the whole file', () => page.openFile(f.path)));
-  b.head.replaceChildren(...parts);
-}
-
-// loadBox fetches a box's diff and draws it when it changed. A call during a fetch fetches again
-// after it, so a change that came in the meantime is not lost.
-async function loadBox(v, b) {
-  if (b.loading) {
-    b.again = true;
-    return b.loading;
-  }
-  b.loading = (async () => {
-    b.basis = basis();
-    b.stale = false;
-    let res;
-    try {
-      res = await get('diff', { root: v.root, path: b.f.path, orig: b.f.orig || '', mode: 'branch', target, context: b.context });
-    } catch (err) {
-      res = { error: err.message };
-    }
-    if (!isCurrent(v) || v.boxes.get(b.f.path) !== b) return;
-    const json = basis() + JSON.stringify(res); // the same diff on another branch has other notes
-    if (b.loaded && json === b.json) return;
-    b.json = json;
-    b.res = res;
-    await drawBox(v, b);
-  })();
-  try { await b.loading; } finally { b.loading = null; }
-  if (b.again) {
-    b.again = false;
-    await loadBox(v, b);
-  }
+  if (data) await showBoxes(v, change);
 }
 
 // fileLines reads a file on disk: its text per line, and its colored pieces. A file that is gone
@@ -654,104 +502,6 @@ async function placeAll() {
   });
   if (moved.size) notesChanged(moved);
   return true;
-}
-
-// hunksWith adds one-line hunks for lines with a note outside the diff's hunks, in line order.
-function hunksWith(hunks, extra) {
-  const all = hunks.map(h => ({ ...h, lines: [...h.lines] }));
-  for (const x of extra.sort((p, q) => p.n - q.n)) {
-    let delta = 0; // old line minus new line after the last hunk above
-    for (const h of all) {
-      const end = h.newStart + h.lines.filter(l => l.k !== '-').length;
-      if (end > x.n) break;
-      delta = h.oldStart + h.lines.filter(l => l.k !== '+').length - end;
-    }
-    const row = { ...x, o: x.n + delta };
-    const before = all.find(h => h.newStart + h.lines.filter(l => l.k !== '-').length === x.n);
-    if (before) before.lines.push(row);
-    else all.push({ oldStart: row.o, newStart: x.n, lines: [row] });
-  }
-  return all.sort((p, q) => p.newStart - q.newStart);
-}
-
-async function drawBox(v, b) {
-  const res = b.res;
-  const draw = b.draws = (b.draws || 0) + 1; // a newer draw of the box wins over one still waiting
-  b.loaded = true;
-  b.body.style.height = '';
-  if (res.error || res.binary || res.folder || !res.hunks.length) {
-    const say = res.error || (res.binary ? 'Binary file changed' : res.folder ? 'Folder with its own git repository'
-      : b.f.orig ? `Renamed from ${b.f.orig}, no content changes` : 'No content changes');
-    b.body.replaceChildren(el('p', 'fempty', say));
-    b.starts = [];
-    return;
-  }
-  const { extra, where } = await place(v, b, res.hunks.flatMap(h => h.lines));
-  if (!isCurrent(v) || draw !== b.draws) return;
-  const np = res.notPushed || [];
-  const notPushed = n => np.some(([from, to]) => n >= from && n <= to);
-  const hunks = hunksWith(res.hunks, extra);
-  let maxNo = 0;
-  for (const l of hunks.flatMap(h => h.lines)) maxNo = Math.max(maxNo, l.o || 0, l.n || 0);
-  b.body.style.setProperty('--gutter', `${String(maxNo).length + 2}ch`);
-  const out = [];
-  const starts = [];
-  const placed = new Set();
-  hunks.forEach((h, i) => {
-    const added = h.lines.filter(l => l.k === '+');
-    const sep = el('div', 'ln sep');
-    sep.append(el('span', 'gut'));
-    const tx = el('span', 'tx');
-    const count = k => h.lines.filter(l => l.k !== k).length;
-    tx.append(`@@ -${h.oldStart},${count('+')} +${h.newStart},${count('-')} @@`);
-    if (added.length && added.every(l => notPushed(l.n))) {
-      const tag = el('span', 'np-tag');
-      tag.innerHTML = ICON.local;
-      tag.append('Not pushed');
-      tag.dataset.tip = "Not pushed yet\nReviewers don't see these lines";
-      tx.append(tag);
-    }
-    if (i > 0 || h.newStart > 1 || h.oldStart > 1) {
-      const more = el('button', 'more', 'Show more lines');
-      more.onclick = () => {
-        b.context += 20;
-        loadBox(v, b);
-      };
-      tx.append(more);
-    }
-    sep.append(tx);
-    out.push(sep);
-    h.lines.forEach((l, j) => {
-      const local = l.k === '+' && notPushed(l.n);
-      const row = line([l.o, l.n], l.x || l.t, `${l.k === '+' ? 'add ch-add' : l.k === '-' ? 'del' : ''}${local ? ' np' : ''}`);
-      if (l.k !== ' ' && (j === 0 || h.lines[j - 1].k === ' ')) starts.push(row);
-      if (l.k !== '-') {
-        row.dataset.n = l.n;
-        row.dataset.t = l.t;
-        const add = el('button', 'addc');
-        add.innerHTML = ICON.plus;
-        add.tabIndex = -1;
-        add.setAttribute('aria-label', `Add a note on line ${l.n}`);
-        add.dataset.tip = `Note for the agent\n${keyLabel('addNote')}`;
-        add.onclick = () => openEditor(v, b.f.path, l.n, l.t);
-        row.insertBefore(add, row.lastChild);
-      }
-      if (v.cur?.path === b.f.path && v.cur.n === l.n && l.k !== '-') row.classList.add('cur');
-      out.push(row);
-      if (l.k === '-') return;
-      for (const [n, at] of where) {
-        if (at !== l.n || placed.has(n)) continue;
-        placed.add(n);
-        out.push(noteEl(v, n));
-      }
-      if (v.editor?.path === b.f.path && v.editor.n === l.n && !v.editor.id) out.push(v.editor.el);
-    });
-  });
-  // A note with no line left on disk, as on a deleted file, shows at the end of the box.
-  for (const n of where.keys()) if (!placed.has(n)) out.push(noteEl(v, n));
-  b.body.replaceChildren(...out);
-  b.starts = starts;
-  if (v.editor?.path === b.f.path) v.editor.el.querySelector('textarea')?.focus({ preventScroll: true });
 }
 
 function noteEl(v, n) {
@@ -849,62 +599,7 @@ function closeEditor(v) {
   if (b?.loaded) drawBox(v, b);
 }
 
-// ----- Keys: the current line, a note on it, and jumps across boxes -----
-
-function setCur(v, row) {
-  v.scroll.querySelector('.ln.cur')?.classList.remove('cur');
-  row.classList.add('cur');
-  v.cur = { path: row.closest('.fbox').dataset.path, n: Number(row.dataset.n) };
-}
-
-// curRow is the current line: the one last clicked or moved to, else the first changed line in view.
-function curRow(v) {
-  const cur = v.scroll.querySelector('.ln.cur');
-  if (cur) return cur;
-  const top = v.scroll.scrollTop + HEAD;
-  const rows = [...v.scroll.querySelectorAll('.fbox:not(.shut) .ln[data-n]')];
-  return rows.find(r => r.classList.contains('add') && offsetIn(v, r) >= top) || rows.find(r => offsetIn(v, r) >= top) || rows[0];
-}
-
-const offsetIn = (v, e) => e.getBoundingClientRect().top - v.scroll.getBoundingClientRect().top + v.scroll.scrollTop;
-
-function viewKey(v, e) {
-  if (e.target !== v.scroll || e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
-  if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
-  const rows = [...v.scroll.querySelectorAll('.fbox:not(.shut) .ln[data-n]')];
-  const cur = v.scroll.querySelector('.ln.cur');
-  const at = rows.indexOf(cur);
-  const next = cur ? rows[at + (e.key === 'ArrowDown' ? 1 : -1)] : curRow(v);
-  if (!next) return;
-  e.preventDefault();
-  setCur(v, next);
-  const y = offsetIn(v, next);
-  if (y < v.scroll.scrollTop + HEAD + 12) v.scroll.scrollTop = y - HEAD - 12;
-  else if (y + LINE_HEIGHT > v.scroll.scrollTop + v.scroll.clientHeight) v.scroll.scrollTop = y + LINE_HEIGHT - v.scroll.clientHeight;
-}
-
-// step jumps to the next (dir 1) or previous (dir -1) element that pick(box) gives, across open
-// boxes, drawing a box on the way when it is not drawn yet. has(box) skips a box without drawing it.
-async function step(v, dir, pick, has = () => true) {
-  if (!v.scroll) return;
-  const at = v.scroll.scrollTop + AHEAD;
-  const boxes = [...v.boxes.values()].filter(b => b.open);
-  for (const b of dir > 0 ? boxes : boxes.reverse()) {
-    const top = b.el.offsetTop;
-    if (dir > 0 ? top + b.el.offsetHeight < at : top > at) continue;
-    if (!b.loaded) {
-      if (!has(b)) continue;
-      await loadBox(v, b);
-      if (!isCurrent(v)) return;
-    }
-    const ys = pick(b).map(e => offsetIn(v, e));
-    const y = dir > 0 ? ys.find(y => y > at + 1) : ys.findLast(y => y < at - 1);
-    if (y != null) {
-      v.scroll.scrollTop = Math.max(0, y - AHEAD);
-      return;
-    }
-  }
-}
+// ----- Keys: a note on the current line, and the next or previous note -----
 
 const typing = () => !!document.activeElement?.closest('textarea, input');
 
@@ -920,7 +615,7 @@ onKey('addNote', () => {
 const noteKey = dir => () => {
   const v = openView();
   if (!v?.scroll || typing()) return false;
-  step(v, dir, b => [...b.body.querySelectorAll('.thr.note')], b => notesOn(b.f.path).length > 0);
+  stepMarks(v, dir);
 };
 onKey('nextNote', noteKey(1));
 onKey('prevNote', noteKey(-1));
