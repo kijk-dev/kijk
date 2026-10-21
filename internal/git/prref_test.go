@@ -176,6 +176,48 @@ func TestPRDiff(t *testing.T) {
 	}
 }
 
+// A file's blobs say which version of it the forge diff shows: they move only when the file does.
+func TestPRFileBlobs(t *testing.T) {
+	_, _, work := prOrigin(t)
+	split, head := rev(t, work, "main~1"), rev(t, work, "retry")
+	files, err := PRFiles(work, split, head)
+	if err != nil || len(files) != 3 {
+		t.Fatalf("files %s %v", paths(files), err)
+	}
+	blob := func(rev, path string) string {
+		out, _ := Run(work, "rev-parse", rev+":"+path)
+		return out
+	}
+	none := strings.Repeat("0", 40)
+	want := []string{
+		blob(split, "name.go") + ".." + blob(head, "names.go"),
+		blob(split, "old.go") + ".." + none,
+		blob(split, "retry.go") + ".." + blob(head, "retry.go"),
+	}
+	for i, f := range files {
+		if f.Blobs != want[i] {
+			t.Errorf("%s: blobs %q, want %q", f.Path, f.Blobs, want[i])
+		}
+	}
+
+	gittest.Run(t, work, "checkout", "-q", "retry")
+	gittest.Write(t, filepath.Join(work, "retry.go"), "package shop\n\nfunc retry() {\n\tfor i := 0; i < 5; i++ {\n\t}\n}\n")
+	gittest.Run(t, work, "commit", "-qam", "Retry five times")
+	again, err := PRFiles(work, split, rev(t, work, "retry"))
+	if err != nil || len(again) != 3 {
+		t.Fatalf("files %s %v", paths(again), err)
+	}
+	if again[0].Blobs != files[0].Blobs || again[1].Blobs != files[1].Blobs {
+		t.Errorf("blobs of files the commit left alone moved: %q %q", again[0].Blobs, again[1].Blobs)
+	}
+	if again[2].Blobs == files[2].Blobs || !strings.HasPrefix(again[2].Blobs, blob(split, "retry.go")+"..") {
+		t.Errorf("retry.go blobs %q after the commit", again[2].Blobs)
+	}
+	if again[2].Add != 4 || again[2].Del != 1 {
+		t.Errorf("retry.go counts: +%d -%d", again[2].Add, again[2].Del)
+	}
+}
+
 func TestDeletePRRefs(t *testing.T) {
 	gittest.Isolate(t)
 	repo := gittest.Repo(t)

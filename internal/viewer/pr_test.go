@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kijk-dev/kijk/internal/git"
 	"github.com/kijk-dev/kijk/internal/gittest"
 )
 
@@ -117,7 +118,7 @@ type prView struct {
 	Split    string
 	At       string
 	Error    string
-	Files    []struct{ Path, Status string }
+	Files    []struct{ Path, Status, Blobs string }
 	Comments []struct{ HTML string }
 	Threads  []struct {
 		Line int
@@ -144,6 +145,13 @@ func TestPRViewRoute(t *testing.T) {
 	}
 	if revParse(t, clone, "refs/kijk/pr/7") != head {
 		t.Error("the head was not fetched")
+	}
+	blob := func(rev string) string {
+		out, _ := git.Run(clone, "rev-parse", rev+":retry.go")
+		return out
+	}
+	if want := blob(base) + ".." + blob(head); v.Files[0].Blobs != want || len(want) != 82 {
+		t.Errorf("blobs %q, want %q", v.Files[0].Blobs, want)
 	}
 	if !strings.Contains(v.BodyHTML, "<strong>one</strong>") || strings.Contains(v.Comments[0].HTML, "<script>") || !strings.Contains(v.Comments[0].HTML, "<code>code</code>") {
 		t.Errorf("rendered %q %q", v.BodyHTML, v.Comments[0].HTML)
