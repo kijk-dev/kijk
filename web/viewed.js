@@ -66,7 +66,7 @@ export function setViewed(root, n, res, f, on) {
   else delete marks[f.path];
   const seq = (rec.seq || 0) + 1;
   let review = rec.review;
-  // Every file viewed counts as a review of this head.
+  // Every file viewed: keep this head as your last review.
   if (on && res.at && res.files.every(x => stateIn(marks)(x) === 'viewed')) review = { head: res.at, time: Date.now() };
   save(k, { marks, at: { ...rec.at, [f.path]: seq }, seq, review }, res.files);
   tell(root, n, f.path);

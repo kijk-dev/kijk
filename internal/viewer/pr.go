@@ -172,8 +172,7 @@ func (a *api) prView(w http.ResponseWriter, r *http.Request) {
 
 type sinceReply struct {
 	git.Since
-	From string `json:"from"`
-	At   string `json:"at"`
+	At string `json:"at"` // the head it was diffed with
 }
 
 // prSince answers what changed in a pull request since from, the head of your last review, up to
@@ -198,7 +197,7 @@ func (a *api) prSince(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
-	reply(w, sinceReply{Since: s, From: from, At: rg[1]})
+	reply(w, sinceReply{Since: s, At: rg[1]})
 }
 
 // threadTexts adds each thread's line as it is at the head, so a thread can find its line on disk.

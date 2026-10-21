@@ -6,7 +6,7 @@ import { placeForge, threadCount } from './threads.js';
 import { lineEditor, moveEditor, threadOpts, writable } from './drafts.js';
 import { keyLabel } from './keys.js';
 import { marksOf, setViewed, onViewed } from './viewed.js';
-import { shown, sinceBar, onSince } from './since.js';
+import { shown, sinceBar, onSince, ownFile } from './since.js';
 
 // The Changes tab of a pull request: its forge diff in file boxes, with its threads under their
 // lines, and a + on each line that starts a comment for your review. Since your review, it shows
@@ -22,8 +22,7 @@ export function setupChanges(h) {
 
 const threadsOn = (v, path) => (v.res?.threads || []).filter(t => t.path === path);
 
-// A file since your review is marked viewed as the pull request's own file of that path.
-const prFile = (v, f) => v.res?.files.find(x => x.path === f.path);
+const prFile = (v, f) => ownFile(v.res)(f);
 
 // diffOf is the diff of file f in pull request v.n: its forge diff, or since the head from.
 async function diffOf(v, f, context, from) {
@@ -121,8 +120,8 @@ onView((root, n, res) => {
 onViewed((root, n) => {
   if (!view || !isCurrent(view) || (root && (view.root !== root || view.n !== n)) || !view.res) return;
   view.marks = marksOf(view.root, view.n, view.res);
-  // A mark that made every file viewed is a review: what shows may change.
-  if (shownKey(view, shown(view.root, view.n, view.res)) !== view.shownKey) show(view, view.res);
+  // A mark that made every file viewed moves your last review: what shows may change.
+  if (shownKey(shown(view.root, view.n, view.res)) !== view.shownKey) show(view, view.res);
   else marksChanged(view);
 });
 
@@ -130,7 +129,7 @@ onSince((root, n) => {
   if (view && isCurrent(view) && view.root === root && view.n === n && view.res) show(view, view.res);
 });
 
-const shownKey = (v, sh) => [sh.from, sh.since?.on, sh.since?.answer ? 1 : 0, (sh.files || []).map(f => f.path + f.blobs).join()].join('\n');
+const shownKey = sh => [sh.from, sh.since?.on, sh.since?.answer ? 1 : 0, (sh.files || []).map(f => f.path + f.blobs).join()].join('\n');
 
 async function show(v, res) {
   const before = v.res;
@@ -145,7 +144,7 @@ async function show(v, res) {
     v.editor.keep();
     v.editor = null;
   }
-  v.shownKey = shownKey(v, sh);
+  v.shownKey = shownKey(sh);
   v.files = sh.files;
   v.from = sh.from;
   v.bar = sh.since?.answer ? sinceBar(v.root, v.n, sh.since, sh.files) : null;

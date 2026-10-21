@@ -56,7 +56,7 @@ onView((root, n) => {
 
 // sinceOf is null when pull request n has no reviewed head, or is at it; else {on, from, time,
 // answer}, where answer is null while kijk asks.
-export function sinceOf(root, n, res) {
+function sinceOf(root, n, res) {
   const r = res?.at && res.forge ? reviewOf(root, n, res.forge) : null;
   if (!r?.head || r.head === res.at) {
     on.delete(key(root, n));
@@ -66,6 +66,16 @@ export function sinceOf(root, n, res) {
   if (!answers.has(k)) ask(root, n, r.head, res.at, k, res.forge);
   const a = answers.get(k);
   return { on: on.has(key(root, n)), from: r.head, time: r.time, answer: a?.then ? null : a || null };
+}
+
+// ownFile gives, for a file that shows, the pull request's own file of that path, which holds its
+// viewed mark.
+const owned = new WeakMap();
+export function ownFile(res) {
+  if (!res) return () => undefined;
+  if (!owned.has(res)) owned.set(res, new Map((res.files || []).map(f => [f.path, f])));
+  const m = owned.get(res);
+  return f => m.get(f.path);
 }
 
 // shown is what Changes and the file list show: {files, since, from}. files is null while kijk asks;
@@ -80,7 +90,7 @@ export function shown(root, n, res) {
   return { files: a.files, since, from: since.from };
 }
 
-export function setSince(root, n, yes) {
+function setSince(root, n, yes) {
   if (yes) on.add(key(root, n));
   else on.delete(key(root, n));
   tell(root, n);
@@ -96,10 +106,10 @@ export function sinceParts(root, n, res, pick) {
   group.setAttribute('role', 'group');
   group.setAttribute('aria-label', 'Which changes');
   const a = s.answer;
-  const ago = age(new Date(s.time || 0).toISOString());
-  const count = a && !why(a) ? ` · ${plural(a.commits, 'new commit')}` : '';
+  const ago = s.time ? `\nReviewed ${age(new Date(s.time).toISOString())} ago` : '';
+  const count = a && !why(a) ? `${ago ? ' · ' : '\n'}${plural(a.commits, 'new commit')}` : '';
   const kind = (FORGE[res.forge?.kind] || FORGE.github).kind;
-  for (const [yes, text, tip] of [[false, 'All changes', `All changes\nEvery file of the ${kind}`], [true, 'Since your review', `Only what changed since your review\nReviewed ${ago} ago${count}`]]) {
+  for (const [yes, text, tip] of [[false, 'All changes', `All changes\nEvery file of the ${kind}`], [true, 'Since your review', `Only what changed since your review${ago}${count}`]]) {
     const b = el('button', null, text);
     b.setAttribute('aria-pressed', yes === s.on);
     b.dataset.tip = tip;
