@@ -138,8 +138,8 @@ icon counts the pull requests that wait for your review.
 - Check **Viewed** on a file, or press V, when you have read it. A viewed file folds, and V goes on
   to the next file not viewed. The sidebar counts them ("4 of 9 viewed"), and the list of pull
   requests too ("4/9 viewed"). When a push changes a file you viewed, the mark clears, the file
-  opens and says "changed since you viewed it". kijk keeps the marks in the browser on this machine, for all clones of the repo. They
-  do not go to GitHub or GitLab.
+  opens and says "changed since you viewed it". kijk keeps the marks in the browser on this
+  machine, for all clones of the repo. They do not go to GitHub or GitLab.
 - **Overview** shows the description, the reviewers and what they said, the conversation, and
   the checks. The checks of each GitHub workflow or GitLab pipeline are a graph: each job a pill,
   with lines to the jobs it needs. The first three failed jobs show the last lines of their logs.
