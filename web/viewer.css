@@ -571,6 +571,10 @@ button.pill:hover { background: color-mix(in srgb, var(--modified) 22%, var(--se
 .prfiles .item.ov { gap: 7px; }
 .prfiles .item.ov svg { width: 13px; height: 13px; color: var(--muted); flex: none; }
 .prfiles .item.ov .dir { margin-left: auto; }
+.prfiles .item .seen { flex: none; margin: 0 0 0 4px; accent-color: var(--modified); cursor: pointer; }
+.prfiles .item.viewed .name { color: var(--muted); }
+.prfiles .item .again { flex: none; font-size: 11px; font-style: italic; color: var(--modified); }
+.viewedcount { margin-left: auto; font-weight: 400; text-transform: none; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
 
 /* The agent notes box at the bottom of the tab. */
 .reviewbox { flex: none; display: flex; flex-direction: column; gap: 6px; padding: 8px 12px; border-top: 1px solid var(--border); }

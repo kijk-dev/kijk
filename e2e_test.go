@@ -1093,8 +1093,18 @@ func TestBrowser(t *testing.T) {
 		b.waitFor("nothing viewed yet", notViewed(ci)+` && `+notViewed(readme)+` && `+notViewed(retry))
 
 		// Checked in its header, a file folds; its chevron still opens it.
+		rowCheck := func(name string) string { return prsRow(name) + `?.querySelector('input.seen')` }
+		rowViewed := func(name string) string {
+			return `(` + prsRow(name) + `?.matches('.viewed') && ` + rowCheck(name) + `.checked)`
+		}
+		count := func(text string) string {
+			return `document.querySelector('#prs-pr .prfiles h3 .viewedcount')?.textContent === ` + jsString(text)
+		}
+		b.waitFor("a Viewed box on each row", `[...document.querySelectorAll('#prs-pr .prfiles li[data-path]:not(.ov)')].every(r => (c => c && !c.checked && c.tabIndex === -1 && c.getAttribute('aria-label') === 'Viewed' && c.dataset.tip === 'Viewed\nV')(r.querySelector('input.seen')))`)
+		b.waitFor("none of three viewed", count("0 of 3 viewed"))
 		b.click("Viewed of README.md", check(readme))
 		b.waitFor("README.md viewed and folded", viewed(readme)+` && `+shut(readme))
+		b.waitFor("its row viewed, and the count", rowViewed("README.md")+` && `+count("1 of 3 viewed"))
 		b.click("the chevron of README.md", fileBox(readme)+`.querySelector('.fhead .fold')`)
 		b.waitFor("README.md open and still viewed", viewed(readme)+` && !`+shut(readme)+` && `+boxHas(readme, "add", "Webhooks retry five times."))
 
@@ -1138,12 +1148,34 @@ func TestBrowser(t *testing.T) {
 		b.press("refreshPrs")
 		b.waitFor("retry.go changed since viewed", notViewed(retry)+` && !`+shut(retry)+` && `+fileBox(retry)+`.querySelector('.fhead .again')?.textContent === 'changed since you viewed it'`)
 		b.waitFor("ci.yml still viewed", viewed(ci)+` && `+shut(ci)+` && !`+fileBox(ci)+`.querySelector('.again')`)
+		b.waitFor("the row of retry.go changed", `!`+rowViewed("retry.go")+` && `+prsRow("retry.go")+`.querySelector('.again')?.textContent === 'changed' && `+prsRow("retry.go")+`.querySelector('.again').dataset.tip === 'Changed since you viewed it' && `+count("1 of 3 viewed"))
 		shots(b, "viewed-changes")
 		b.click("Viewed of retry.go", check(retry))
 		b.waitFor("retry.go viewed again", viewed(retry)+` && `+shut(retry)+` && !`+fileBox(retry)+`.querySelector('.again')`)
+		b.waitFor("its row too", rowViewed("retry.go")+` && !`+prsRow("retry.go")+`.querySelector('.again') && `+count("2 of 3 viewed"))
+
+		// V in the sidebar: on a viewed row it clears the mark; on another it marks and goes to the next.
+		b.evalJS(prsRow("ci.yml") + `.focus()`)
+		b.press("markViewed")
+		b.waitFor("ci.yml not viewed", notViewed(ci)+` && !`+rowViewed("ci.yml")+` && `+count("1 of 3 viewed")+` && document.activeElement === `+prsRow("ci.yml"))
+		b.press("markViewed")
+		b.waitFor("ci.yml viewed, README.md next", viewed(ci)+` && `+rowViewed("ci.yml")+` && document.activeElement === `+prsRow("README.md")+` && `+prsRow("README.md")+`.matches('.selected')`)
+		// A click on a row's box marks the file and does not open it.
+		before := evalJS[float64](b, `document.querySelector('.allfiles').scrollTop`)
+		b.click("the box of README.md's row", rowCheck("README.md"))
+		b.waitFor("all three viewed", viewed(readme)+` && `+shut(readme)+` && `+rowViewed("README.md")+` && `+count("3 of 3 viewed"))
+		if after := evalJS[float64](b, `document.querySelector('.allfiles').scrollTop`); after > before {
+			t.Fatalf("Changes scrolled from %v to %v", before, after)
+		}
+		shots(b, "viewed-sidebar")
+
+		// The list says how far you got, also after a reload, from the marks kept.
+		b.click("back", `document.querySelector('#prs-pr .back')`)
+		b.waitFor("the count in the list", prRow(477)+`?.querySelector('.yours')?.textContent === '3/3 viewed'`)
+		b.act("reload", chromedp.Reload())
+		b.waitFor("the count after a reload", prRow(477)+`?.querySelector('.yours')?.textContent === '3/3 viewed'`)
 
 		// Local mode has no marks; As on GitHub has.
-		b.click("back", `document.querySelector('#prs-pr .back')`)
 		b.click("this branch", prRow(482))
 		b.waitFor("Branch changes", `document.querySelector('#filetabs .filetab.active')?.textContent.startsWith('Branch changes') && document.querySelectorAll('#viewer .fbox').length === 6`)
 		b.waitFor("no Viewed box in Local mode", `!document.querySelector('#viewer .fhead .check')`)
@@ -1158,7 +1190,18 @@ func TestBrowser(t *testing.T) {
 		b.press("prsTab")
 		b.waitFor("the list", prRow(477))
 		b.click("#477", prRow(477))
-		b.waitFor("the same marks", viewed(ci)+` && `+viewed(retry)+` && `+notViewed(readme))
+		b.waitFor("the same marks", viewed(ci)+` && `+viewed(retry)+` && `+viewed(readme))
+
+		// Once #477 is closed, the list holds every open pull request without it, and its marks go.
+		b.click("back", `document.querySelector('#prs-pr .back')`)
+		marks477 := `Object.keys(localStorage).some(k => k.startsWith('kijk.viewed:') && k.endsWith(':477'))`
+		b.waitFor("the marks of #477 kept", marks477)
+		forge.set(t, "gh-list.json", ghData(obj{"viewer": ghUser("you"),
+			"repository": obj{"pullRequests": obj{"totalCount": 1, "nodes": []obj{ghRow(482, "Fix login redirect loop", "you", "fix-login", false, 60, 1, "SUCCESS")}}},
+			"asked":      obj{"nodes": []obj{}}}))
+		b.press("refreshPrs")
+		b.waitFor("#477 gone from the list", `document.querySelector('#prs-list .section-toggle:last-of-type')?.textContent === 'All open 1' && !`+prRow(477))
+		b.waitFor("its marks dropped", `!`+marks477)
 		b.noErrors()
 	})
 
