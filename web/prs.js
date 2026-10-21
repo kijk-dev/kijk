@@ -452,6 +452,7 @@ function prHead(n, mine, res, row) {
     const a = el('a', 'pr-link', '↗');
     Object.assign(a, { href: p.url, target: '_blank', rel: 'noopener' });
     a.dataset.tip = `Open on ${w.name}`;
+    a.setAttribute('aria-label', `Open on ${w.name}`);
     top.append(a);
   }
   const meta = el('div', 'prmeta');

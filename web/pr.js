@@ -69,6 +69,7 @@ export function showPR(line, res, open) {
   }
   top.append(el('span', 'pr-num', `${h.num}${p.number}`), title, link('pr-link', p.url, '↗'));
   top.lastChild.title = `Open on ${h.name}`;
+  top.lastChild.setAttribute('aria-label', `Open on ${h.name}`);
   const chips = prChips(p, h, res.default);
   line.replaceChildren(top, ...(chips ? [chips] : []));
 }

@@ -113,12 +113,12 @@ func (a *api) prView(w http.ResponseWriter, r *http.Request) {
 	}
 	if pr.State == "merged" || pr.State == "closed" {
 		git.DeletePRRef(root, n)
-		out.Error = "This " + map[bool]string{true: "pull request", false: "merge request"}[f.Kind == "github"] + " is " + pr.State + "."
+		word, _ := prWords(f.Kind)
+		out.Error = "This " + word + " is " + pr.State + "."
 		reply(w, out)
 		return
 	}
-	kind := map[bool]string{true: "github", false: "gitlab"}[f.Kind == "github"]
-	out.Fetched, err = git.FetchPR(root, kind, n, pr.HeadOid, pr.BaseOid, pr.Base)
+	out.Fetched, err = git.FetchPR(root, f.Kind, n, pr.HeadOid, pr.BaseOid, pr.Base)
 	head := git.PRHead(root, n)
 	if head != "" {
 		pr.HeadOid = head
@@ -126,7 +126,8 @@ func (a *api) prView(w http.ResponseWriter, r *http.Request) {
 	// The checks come from the forge; without the head only their graph needs the workflow file.
 	pr.ReadChecks(root, f)
 	if head == "" {
-		out.Error = "Cannot fetch #" + strconv.Itoa(n) + " from origin"
+		_, sign := prWords(f.Kind)
+		out.Error = "Cannot fetch " + sign + strconv.Itoa(n) + " from origin"
 		if err != nil {
 			out.Error += ": " + err.Error()
 		}
@@ -199,4 +200,12 @@ func (a *api) prLog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	reply(w, map[string][]string{"lines": lines})
+}
+
+// prWords are what a forge calls a pull request, and the sign before its number.
+func prWords(kind string) (word, sign string) {
+	if kind == "gitlab" {
+		return "merge request", "!"
+	}
+	return "pull request", "#"
 }
