@@ -1430,19 +1430,24 @@ func TestBrowser(t *testing.T) {
 		b.waitFor("billing.go left out", bar+`?.firstChild.textContent === 'Since your review · 2 commits · 1 file' && `+boxes+` === `+jsString(retry)+` && `+rows+` === `+jsString(retry))
 
 		// Marking the last file not viewed makes every file viewed: the switch hides, all changes show.
-		b.click("Viewed of retry.go", fileBox(retry)+`.querySelector('.fhead .check input')`)
+		check := fileBox(retry) + `?.querySelector('.fhead .check input')`
+		b.waitFor("the Viewed box of retry.go in place", `(r => { const y = Math.round(r.top); const same = window.e2eY === y; window.e2eY = y; return same })(`+check+`.getBoundingClientRect())`)
+		b.click("Viewed of retry.go", check)
 		b.waitFor("the switch gone", `!`+sw+` && `+reviewed(merged)+` && !`+bar+` && `+boxes+` === `+jsString(ci+" "+readme+" "+retry)+` && [...document.querySelectorAll('#viewer .fbox')].every(f => f.matches('.viewed.shut'))`)
 
-		// Sanne only merges main in again: no file of #477 changed, so the review still holds.
+		// Sanne only merges main in again: no file of #477 changed, so there is nothing to show
+		// since your review. The switch hides; the head of your last review stays.
 		run(t, work, "checkout", "-q", "mainwork")
 		commit("billing_test.go", "package billing\n", "Test billing")
 		run(t, work, "push", "-q", "origin", "HEAD:main")
 		main = gitOut(t, work, "rev-parse", "HEAD")
 		run(t, work, "checkout", "-q", "sanne")
 		run(t, work, "merge", "-q", "--no-edit", "mainwork")
-		onlyMain := push(false)
+		push(false)
 		b.press("refreshPrs")
-		b.waitFor("the review moved to the new head", reviewed(onlyMain))
+		b.waitFor("the new head", `document.querySelector('#viewer .fbox')`)
+		forge.settle()
+		b.waitFor("the last review kept", reviewed(merged))
 		b.waitFor("no switch", `document.querySelector('#prs-pr .prfiles h3') && !`+sw+` && `+boxes+` === `+jsString(ci+" "+readme+" "+retry))
 
 		// After a force push there is nothing to compare: all changes show, with a note.
