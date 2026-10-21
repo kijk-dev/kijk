@@ -21,7 +21,7 @@ func FetchPR(root, kind string, n int, head, base, baseBranch string) (fetched b
 	if (head != "" && !ValidHash(head)) || (base != "" && !ValidHash(base)) || n <= 0 {
 		return false, ErrBadHash
 	}
-	if head != "" {
+	if head != "" && (base == "" || hasCommit(root, base)) {
 		if at, _ := Run(root, "rev-parse", "--verify", "-q", prRef(n)); at == head {
 			return false, nil
 		}
@@ -162,18 +162,19 @@ func PRFile(root string, n int, path, dir string) (string, error) {
 // PRSplit is where a pull request's forge diff starts: GitLab's own merge base when the repo has
 // it, else the merge base of the target's commit and head.
 func PRSplit(root string, pr *PR, head string) (string, error) {
-	if pr.MergeBase != "" && hasCommit(root, pr.MergeBase) {
+	if ValidHash(pr.MergeBase) && hasCommit(root, pr.MergeBase) {
 		return pr.MergeBase, nil
 	}
 	base := pr.BaseOid
-	if base == "" || !hasCommit(root, base) {
-		if !validBranch(root, pr.Base) {
-			return "", errors.New("the target branch " + pr.Base + " is not in this repo")
-		}
-		var err error
-		if base, err = Run(root, "rev-parse", "--verify", "-q", "refs/remotes/origin/"+pr.Base+"^{commit}"); err != nil {
-			return "", errors.New("the target branch " + pr.Base + " is not in this repo")
-		}
+	if !ValidHash(base) || !hasCommit(root, base) {
+		// kijk's own fetch of the target is newer than the user's origin/<base>.
+		base, _ = Run(root, "rev-parse", "--verify", "-q", baseRef(pr.Number)+"^{commit}")
+	}
+	if base == "" && validBranch(root, pr.Base) {
+		base, _ = Run(root, "rev-parse", "--verify", "-q", "refs/remotes/origin/"+pr.Base+"^{commit}")
+	}
+	if base == "" {
+		return "", errors.New("the target branch " + pr.Base + " is not in this repo")
 	}
 	return MergeBase(root, base, head)
 }
