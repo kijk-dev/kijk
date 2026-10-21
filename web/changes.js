@@ -25,23 +25,43 @@ const threadsOn = (v, path) => (v.res?.threads || []).filter(t => t.path === pat
 // A file since your review is marked viewed as the pull request's own file of that path.
 const prFile = (v, f) => v.res?.files.find(x => x.path === f.path);
 
+// diffOf is the diff of file f in pull request v.n: its forge diff, or since the head from.
+async function diffOf(v, f, context, from) {
+  const q = { root: v.root, path: f.path, orig: f.orig || '', mode: 'pr', pr: v.n, context };
+  if (from) q.from = from;
+  try {
+    return await get('diff', q);
+  } catch (err) {
+    if (err.status !== 409) throw err;
+    await loadView(v.root, v.n); // kijk restarted and lost where the forge diff starts
+    return get('diff', q);
+  }
+}
+
+// forgeRow is the forge diff's row of the line of row, a row of the head now: the forge places a
+// comment by it, and on GitLab an unchanged line needs its line in the target.
+async function forgeRow(v, f, row) {
+  const res = await diffOf(v, f, 3, '');
+  const hunks = res.hunks || [];
+  const same = hunks.flatMap(h => h.lines).find(l => l.k !== '-' && l.n === row.n);
+  if (same) return { k: same.k, o: same.o, n: same.n, t: same.t };
+  if (v.res.forge?.kind === 'github') throw new Error('GitHub takes a comment only near a change of the pull request. Comment on this line in All changes.');
+  let delta = 0; // old line minus new line below the last hunk above the row
+  for (const h of hunks) {
+    const end = h.newStart + h.lines.filter(l => l.k !== '-').length;
+    if (end > row.n) break;
+    delta = h.oldStart + h.lines.filter(l => l.k !== '+').length - end;
+  }
+  return { k: ' ', o: row.n + delta, n: row.n, t: row.t };
+}
+
 function source(v) {
   const { root, n } = v;
   const redrawFile = path => () => redraw(v, [path]);
   return {
     files: () => v.files || [],
     basis: () => `${v.res?.split} ${v.res?.at} ${v.from}`,
-    fetch: async (f, context) => {
-      const q = { root, path: f.path, orig: f.orig || '', mode: 'pr', pr: n, context };
-      if (v.from) q.from = v.from;
-      try {
-        return await get('diff', q);
-      } catch (err) {
-        if (err.status !== 409) throw err;
-        await loadView(root, n); // kijk restarted and lost where the forge diff starts
-        return get('diff', q);
-      }
-    },
+    fetch: (f, context) => diffOf(v, f, context, v.from),
     headParts: f => [threadCount(threadsOn(v, f.path))],
     openFile: f => hooks.openFile?.(n, f.path),
     openTip: `Open the whole file\nat #${n}`,
@@ -120,6 +140,11 @@ async function show(v, res) {
   if (!sh.files) return; // kijk asks what changed since your review; onSince shows it
   const moved = before && (v.from !== sh.from || v.since !== !!sh.since?.on);
   v.since = !!sh.since?.on;
+  if (moved && v.editor) {
+    // Its row is of the other diff: close it, and + on its line gives the text back.
+    v.editor.keep();
+    v.editor = null;
+  }
   v.shownKey = shownKey(v, sh);
   v.files = sh.files;
   v.from = sh.from;
@@ -151,6 +176,7 @@ function openEditor(v, path, l) {
   if (!f) return;
   v.editor = lineEditor(v.root, v.n, v.res, f, l, () => closeEditor(v, true));
   v.editor.path = path;
+  v.editor.toForge = row => (v.from ? forgeRow(v, f, row) : null);
   const b = v.boxes.get(path);
   if (b?.loaded) drawBox(v, b);
 }

@@ -1302,8 +1302,12 @@ func TestBrowser(t *testing.T) {
 		forge := newFakeForge(t)
 		reviewForge(t, forge, repo, origin, false)
 		theirs := gitOut(t, origin, "rev-parse", "refs/pull/477/head")
-		forge.set(t, "gh-target.json", ghData(obj{"repository": obj{"pullRequest": obj{"id": "PR_477", "headRefOid": theirs, "reviews": obj{"nodes": []obj{}}}}}))
+		target := func(head string) {
+			forge.set(t, "gh-target.json", ghData(obj{"repository": obj{"pullRequest": obj{"id": "PR_477", "headRefOid": head, "reviews": obj{"nodes": []obj{}}}}}))
+		}
+		target(theirs)
 		forge.set(t, "gh-review.json", ghData(obj{"addPullRequestReview": obj{"pullRequestReview": obj{"id": "PRR_1"}}}))
+		forge.set(t, "gh-thread.json", ghData(obj{"addPullRequestReviewThread": obj{"thread": obj{"id": "T8", "comments": obj{"nodes": []obj{{"id": "C50"}}}}}}))
 		claude := t.TempDir()
 		claudeAgent(t, claude, repo, "Fix the login", "idle")
 		k := startKijkIn(t, exe, t.TempDir(), "CLAUDE_CONFIG_DIR="+claude, forge.env())
@@ -1353,6 +1357,7 @@ func TestBrowser(t *testing.T) {
 			run(t, work, args...)
 			head := gitOut(t, work, "rev-parse", "HEAD")
 			forge.set(t, "gh-pr-477.json", pr477(head, main, func(ts []obj) []obj { return ts }))
+			target(head)
 			return head
 		}
 		commit := func(path, text, msg string) {
@@ -1380,9 +1385,32 @@ func TestBrowser(t *testing.T) {
 		b.hover("the status bar", `document.querySelector('#statusbar')`) // no tooltip in the shot
 		shots(b, "since-review")
 
+		// A comment goes on the line of the forge diff, where retry.go is new: it has no old line,
+		// though the line is unchanged since the review.
+		b.evalJS(`window.e2ePosts = []; { const f = window.fetch; window.fetch = (u, o) => (String(u).includes('/api/pr/comment') && e2ePosts.push(JSON.parse(o.body)), f(u, o)); }`)
+		ret := boxRow(retry, "\treturn err")
+		b.hover("a line", ret)
+		b.click("+", ret+`.querySelector('.addc')`)
+		b.waitFor("the editor", `document.activeElement?.matches('#viewer textarea')`)
+		b.typeText("Wrap the error.")
+		b.press("submitNote")
+		b.waitFor("the comment on the forge's line", fmt.Sprintf(`window.e2ePosts.length === 1 && e2ePosts[0].path === %s && e2ePosts[0].line === %d && e2ePosts[0].oldLine === 0 && !e2ePosts[0].old && !document.querySelector('#viewer textarea')`, jsString(retry), lineOf(retryGo, "\treturn err")))
+
+		// Moving the switch closes an open comment; + on its line gives the text back.
+		b.hover("a line", ret)
+		b.click("+", ret+`.querySelector('.addc')`)
+		b.waitFor("the editor", `document.activeElement?.matches('#viewer textarea')`)
+		b.typeText("Keep me.")
+
 		// Show all changes in the bar goes back.
 		b.click("Show all changes", bar+`.querySelector('button')`)
 		b.waitFor("all changes again", boxes+` === `+jsString(ci+" "+readme+" "+retry)+` && !`+bar+` && `+all+`.getAttribute('aria-pressed') === 'true' && `+rows+` === `+jsString(ci+" "+readme+" "+retry))
+		b.waitFor("the comment closed", `!document.querySelector('#viewer textarea') && `+ret)
+		b.hover("a line", ret)
+		b.click("+", ret+`.querySelector('.addc')`)
+		b.waitFor("its text back", `document.activeElement?.matches('#viewer textarea') && document.activeElement.value === 'Keep me.'`)
+		b.key("Escape", kb.Escape)
+		b.waitFor("closed", `!document.querySelector('#viewer textarea')`)
 
 		// main moves on and sanne merges it in: main's own file does not show.
 		run(t, work, "checkout", "-qb", "mainwork", "origin/main")
