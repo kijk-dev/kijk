@@ -259,6 +259,15 @@ func TestMachineProxy(t *testing.T) {
 	if last := remote.paths[len(remote.paths)-1]; last != "/api/pr/view?root=/x&n=7" {
 		t.Fatalf("pr view path %q", last)
 	}
+	remote.mu.Unlock()
+	// A review of a remote folder's pull request is written by the gh or glab on its machine.
+	if w := do("POST", "/m/azvm/api/pr/submit", true); w.Code != http.StatusOK {
+		t.Fatalf("pr submit: %d %q", w.Code, w.Body.String())
+	}
+	remote.mu.Lock()
+	if last := remote.paths[len(remote.paths)-1]; last != "/api/pr/submit" {
+		t.Fatalf("pr submit path %q", last)
+	}
 	for i, c := range remote.cookies {
 		if c != "kijk-4012=remote-token" || remote.origins[i] != "" {
 			t.Fatalf("the remote got cookie %q, origin %q", c, remote.origins[i])
@@ -270,7 +279,7 @@ func TestMachineProxy(t *testing.T) {
 	remote.mu.Unlock()
 
 	// Copy for agent counts on the local kijk, also for a remote folder.
-	for _, p := range []string{"/m/azvm/api/update", "/m/azvm/api/restart", "/m/azvm/api/count?name=agent-copy", "/m/nope/api/tree"} {
+	for _, p := range []string{"/m/azvm/api/update", "/m/azvm/api/restart", "/m/azvm/api/count?name=agent-copy", "/m/azvm/api/count?name=review", "/m/nope/api/tree"} {
 		if w := do("POST", p, true); w.Code != http.StatusNotFound {
 			t.Errorf("%s: %d", p, w.Code)
 		}
