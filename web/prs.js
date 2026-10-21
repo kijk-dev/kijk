@@ -299,7 +299,7 @@ function prRowEl(r) {
   }
   l2.append(el('span', 'who', r.number ? `${r.author} · ${age(r.createdAt)}` : `No ${words().kind} yet`));
   const drafts = r.number ? cachedView(folder, r.number)?.drafts ?? r.drafts : 0;
-  if (drafts) l2.append(el('span', 'yours', `${drafts} ${drafts === 1 ? 'draft' : 'drafts'}`));
+  if (drafts) l2.append(el('span', 'yours', plural(drafts, 'draft')));
   const lc = lineCount(r.add, r.del);
   if (lc) l2.append(lc);
   li.append(l1, l2);

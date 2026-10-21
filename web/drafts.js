@@ -71,7 +71,7 @@ async function addComment(root, n, at, c) {
 
 // ----- Text boxes -----
 
-const typed = e => e.key === 'Enter' && (mac ? e.metaKey : e.ctrlKey);
+const ctrlEnter = e => e.key === 'Enter' && (mac ? e.metaKey : e.ctrlKey);
 
 // textBox is a text box with its buttons: ok(text) runs on the button or Ctrl+Enter and may throw
 // to show why, cancel() on Cancel or Escape. The text stays when ok fails.
@@ -107,7 +107,7 @@ function textBox(label, text, okText, ok, cancel) {
   yes.onclick = submit;
   no.onclick = cancel;
   area.onkeydown = e => {
-    if (typed(e)) {
+    if (ctrlEnter(e)) {
       e.preventDefault();
       submit();
     } else if (e.key === 'Escape') {
@@ -294,13 +294,19 @@ function review(root, n) {
 // one shows in the other without drawing either again.
 const live = new Map();
 
+function liveParts(root, n) {
+  const k = `${root}\n${n}`;
+  if (!live.has(k)) live.set(k, {});
+  return live.get(k);
+}
+
 function setReview(root, n, patch) {
   const r = { ...review(root, n), ...patch };
   try {
     if (!r.summary && r.verdict === 'comment') localStorage.removeItem(reviewKey(root, n));
     else localStorage.setItem(reviewKey(root, n), JSON.stringify(r));
   } catch { /* storage blocked */ }
-  for (const part of Object.values(live.get(`${root}\n${n}`) || {})) if (part.isConnected) part.sync();
+  for (const part of Object.values(liveParts(root, n))) if (part.isConnected) part.sync();
 }
 
 // tally sorts your drafts: comments on lines, replies with whom and where they answer, and
@@ -346,9 +352,7 @@ export function reviewBox(root, n, res) {
     box.append(el('p', 'hint', res.write.note));
     return box;
   }
-  const k = `${root}\n${n}`;
-  const parts = live.get(k) || {};
-  live.set(k, parts);
+  const parts = liveParts(root, n);
   let box = parts.box;
   if (!box) {
     box = el('div', 'reviewbox');
@@ -397,9 +401,7 @@ export function reviewBox(root, n, res) {
 
 // summarySlot is your summary at the end of the Overview's conversation, as a draft.
 export function summarySlot(root, n, res) {
-  const k = `${root}\n${n}`;
-  const parts = live.get(k) || {};
-  live.set(k, parts);
+  const parts = liveParts(root, n);
   const slot = el('div', 'c mine summary');
   slot.sync = () => {
     const text = review(root, n).summary.trim();
@@ -417,9 +419,7 @@ export function summarySlot(root, n, res) {
 // commentFoot is the box "Comment on the pull request…" under the conversation: its text goes into
 // the summary, since GitHub holds a comment not on a line only as the body of a review.
 export function commentFoot(root, n, res) {
-  const k = `${root}\n${n}`;
-  const parts = live.get(k) || {};
-  live.set(k, parts);
+  const parts = liveParts(root, n);
   if (parts.foot) return parts.foot; // kept, so what is typed stays when the Overview draws again
   const w = words(res);
   const foot = el('div', 'foot');
