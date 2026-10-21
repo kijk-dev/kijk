@@ -14,6 +14,8 @@ import (
 // stdin: as a form field, position[new_line] would post a comment that is not on a line.
 
 var (
+	// conflictRe is how glab says the status 409, as "409 Conflict" or "(HTTP 409)".
+	conflictRe         = regexp.MustCompile(`(^|\D)409 Conflict|HTTP 409\b`)
 	gitlabNoteRe       = regexp.MustCompile(`^[0-9]+$`)
 	gitlabDiscussionRe = regexp.MustCompile(`^[0-9a-f]+$`)
 )
@@ -207,7 +209,7 @@ func gitlabSubmit(f *forge, n int, head, verdict string) error {
 			sha = map[string]string{"sha": head}
 		}
 		_, err = gitlabREST(f, "POST", mr+"/approve", sha)
-		if err != nil && strings.Contains(err.Error(), "409") {
+		if err != nil && conflictRe.MatchString(err.Error()) {
 			err = sayErr(fmt.Sprintf("!%d has new commits. Look at them first.", n))
 		}
 	case "changes":

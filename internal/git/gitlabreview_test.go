@@ -145,6 +145,12 @@ func TestGitlabSubmit(t *testing.T) {
 	if err == nil || err.Error() != "Your comments are posted, but the approval failed: !7 has new commits. Look at them first." {
 		t.Fatalf("err %v", err)
 	}
+	// Only the status 409 means the head moved, not a 409 somewhere in another error's text.
+	gittest.FakeToolCalls(t, "glab", publish, gittest.Rule{Has: "/approve", Err: "403 Forbidden: sha 4091 is not yours\n", Exit: 1}, drafts)
+	err = SubmitReview(repo, 7, "h1", "approve")
+	if err == nil || err.Error() != "Your comments are posted, but the approval failed: glab: 403 Forbidden: sha 4091 is not yours" {
+		t.Fatalf("err %v", err)
+	}
 	// GitLab answers a refused Request changes with errors in the data.
 	gittest.FakeToolCalls(t, "glab", gittest.Rule{Has: "mergeRequestRequestChanges", Out: `{"data":{"mergeRequestRequestChanges":{"errors":["Not a reviewer"]}}}`}, gittest.Rule{Has: mr7 + "/draft_notes", Out: `[]`})
 	if err := SubmitReview(repo, 7, "h1", "changes"); err == nil || err.Error() != "glab: Not a reviewer" {
