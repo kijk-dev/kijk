@@ -23,7 +23,7 @@ func newFakeForge(t *testing.T) *fakeForge {
 	f := &fakeForge{dir: t.TempDir()}
 	gh := `#!/bin/sh
 d=%[1]q
-echo "home=$HOME gh $*" | tr '\n' ' ' >> "$d/calls.log"; echo >> "$d/calls.log"
+printf '%%s\n' "home=$HOME gh $(printf '%%s ' "$@" | tr '\n' ' ')" >> "$d/calls.log" # one write, so calls at once do not mix
 if [ -f "$d/gh-error.txt" ]; then cat "$d/gh-error.txt" >&2; exit 1; fi
 f=
 m=
@@ -55,7 +55,7 @@ if [ -n "$f" ] && [ -f "$d/$f" ]; then cat "$d/$f"; else echo "no answer for: $*
 `
 	glab := `#!/bin/sh
 d=%[1]q
-echo "home=$HOME glab $*" | tr '\n' ' ' >> "$d/calls.log"; echo >> "$d/calls.log"
+printf '%%s\n' "home=$HOME glab $(printf '%%s ' "$@" | tr '\n' ' ')" >> "$d/calls.log" # one write, so calls at once do not mix
 f=
 m=
 host=

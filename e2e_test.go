@@ -905,6 +905,7 @@ func TestBrowser(t *testing.T) {
 		b.waitFor("the comment box", foot+`?.querySelector('input').placeholder === 'Comment on the pull request…'`)
 		b.click("the comment box", foot+`.querySelector('input')`)
 		b.typeText("Looks good, one question on Retry-After.")
+		b.waitFor("the comment typed", foot+`.querySelector('input').value === 'Looks good, one question on Retry-After.'`)
 		b.click("Add to review", byText(".md.ov .thr.conv .foot button", "Add to review"))
 		forge.waitFor(t, n, "updatePullRequestReview(input: {pullRequestReviewId: $review, body: $body}) { pullRequestReview { id } } } -f body="+said+" -f review=PRR_1")
 		b.waitFor("the summary in the box", box+`.querySelector('textarea').value === 'Looks good, one question on Retry-After.' && `+foot+`.querySelector('input').value === ''`)
@@ -1040,8 +1041,10 @@ func TestBrowser(t *testing.T) {
 		n := forge.settle()
 		b.click("Overview", prsRow("Overview"))
 		foot := `document.querySelector('.md.ov .thr.conv .foot')`
+		b.waitFor("the comment box", foot+`?.querySelector('input')`)
 		b.click("the comment box", foot+`.querySelector('input')`)
 		b.typeText("Fix the retry.")
+		b.waitFor("the comment typed", foot+`.querySelector('input').value === 'Fix the retry.'`)
 		b.click("Add to review", byText(".md.ov .thr.conv .foot button", "Add to review"))
 		forge.waitFor(t, n, "--method PUT projects/acme%2Freview/merge_requests/12/draft_notes/61")
 		b.waitFor("both kept", box+`.querySelector('textarea').value === 'Thanks for this.\n\nFix the retry. More.' && !`+box+`.querySelector('.saved').hidden`)
