@@ -1,7 +1,7 @@
 import { el } from './api.js';
 import { line, setView, isCurrent, LINE_HEIGHT } from './view.js';
 import { lineCount, kind } from './git.js';
-import { onKey } from './keys.js';
+import { onKey, keyLabel } from './keys.js';
 
 // The file boxes of Branch changes and of a pull request's Changes: one box per file, each drawn
 // when it comes near the screen. A source says what the boxes show:
@@ -19,6 +19,7 @@ import { onKey } from './keys.js';
 //   onTop(path)            the file at the top of the view changed
 //   drawn(v, b)            a box was drawn, optional
 //   marked(f)              the file has threads or notes, for Alt+↓ and Alt+↑
+//   viewed(f), setViewed(f, on)  the viewed mark: 'viewed', 'changed' since, or ''; optional
 
 export const ICON = {
   plus: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>',
@@ -143,6 +144,7 @@ async function updateBoxes(v, change) {
     if (b) b.f = f;
     else b = newBox(v, f);
     v.boxes.set(f.path, b);
+    follow(v, b);
     drawHead(v, b);
   }
   for (const [path, b] of old) if (v.boxes.get(path) !== b) v.near.unobserve(b.el);
@@ -165,7 +167,8 @@ async function updateBoxes(v, change) {
 
 function newBox(v, f) {
   const b = { f, el: el('section', 'fbox'), head: el('div', 'fhead'), body: el('div', 'fbody'), loaded: false, context: 3, json: '', starts: [] };
-  b.open = v.tab.folds?.[f.path] ?? !(generated(f.path) || lines(f) > BIG);
+  b.state = v.src.viewed?.(f) || '';
+  b.open = v.tab.folds?.[f.path] ?? startsOpen(b);
   b.note = el('div', 'fnote');
   // Until it is drawn, the box is as high as its diff will about be, so the scrollbar is right.
   // The browser skips painting a box far from the screen, and then takes this height for it too.
@@ -180,14 +183,46 @@ function newBox(v, f) {
   return b;
 }
 
+// A viewed file starts folded, as do files whose diff nobody reads.
+const startsOpen = b => !(b.state === 'viewed' || generated(b.f.path) || lines(b.f) > BIG);
+
 function showOpen(v, b) {
   b.el.classList.toggle('shut', !b.open);
   b.body.hidden = !b.open;
-  b.note.hidden = b.open || !(generated(b.f.path) || lines(b.f) > BIG);
+  b.note.hidden = b.open || b.state === 'viewed' || !(generated(b.f.path) || lines(b.f) > BIG);
   if (!b.note.hidden) {
     const show = el('button', 'more', 'Show');
     show.onclick = () => fold(v, b, true);
     b.note.replaceChildren(el('span', null, `${generated(b.f.path) ? 'Generated file' : 'Large diff'}, ${plural(lines(b.f), 'line')} · `), show);
+  }
+}
+
+// follow folds a box that became viewed and opens one that is not viewed any more, as a file that
+// changed since. A box folded above the top of the view scrolls to its header.
+function follow(v, b) {
+  const state = v.src.viewed?.(b.f) || '';
+  if (state === b.state) return;
+  b.state = state;
+  if (v.tab.folds && b.f.path in v.tab.folds) {
+    const { [b.f.path]: _, ...rest } = v.tab.folds;
+    v.tab.folds = rest;
+    v.save();
+  }
+  const open = startsOpen(b);
+  if (open === b.open) return showOpen(v, b);
+  const above = !open && b.el.offsetTop < v.scroll.scrollTop;
+  b.open = open;
+  showOpen(v, b);
+  if (above) v.scroll.scrollTop = b.el.offsetTop - 12;
+  if (open && (!b.loaded || b.stale)) loadBox(v, b);
+}
+
+// marksChanged draws the boxes again after viewed marks changed.
+export function marksChanged(v) {
+  if (!v.scroll) return;
+  for (const b of v.boxes.values()) {
+    follow(v, b);
+    drawHead(v, b);
   }
 }
 
@@ -217,6 +252,18 @@ export function drawHead(v, b) {
   if (lc) parts.push(lc);
   parts.push(...extra.filter(p => p && !p.classList?.contains('np')));
   parts.push(el('span', 'grow'));
+  b.el.classList.toggle('seen', b.state === 'viewed');
+  if (b.state === 'changed') parts.push(el('span', 'again', 'changed since you viewed it'));
+  if (v.src.setViewed) {
+    const check = el('label', 'check');
+    const box = el('input');
+    box.type = 'checkbox';
+    box.checked = b.state === 'viewed';
+    box.onchange = () => v.src.setViewed(b.f, box.checked);
+    check.append(box, ' Viewed');
+    check.dataset.tip = `Viewed\n${keyLabel('markViewed')}`;
+    parts.push(check);
+  }
   if (f.status !== 'D' && v.src.openFile) {
     const open = iconButton(ICON.doc, 'Open the whole file', () => v.src.openFile(f));
     if (v.src.openTip) open.dataset.tip = v.src.openTip;
@@ -441,6 +488,33 @@ onKey('addNote', () => {
   setCur(v, row);
   v.src.onAdd(v, row.closest('.fbox').dataset.path, { k: row.dataset.k, o: Number(row.dataset.o) || 0, n: Number(row.dataset.n), t: row.dataset.t });
 });
+
+// markCurrent is the key V in the open box view: it marks the current file viewed and goes to the
+// next file not viewed, or clears the mark of a viewed file. False when the view does not have it.
+export function markCurrent() {
+  const v = last && isCurrent(last) ? last : null;
+  if (!v?.scroll || !v.src.setViewed || !v.scroll.contains(document.activeElement) || document.activeElement.closest('textarea, input')) return false;
+  const b = currentBox(v);
+  if (!b) return;
+  const on = b.state !== 'viewed';
+  v.src.setViewed(b.f, on);
+  if (!on) return;
+  const boxes = [...v.boxes.values()];
+  const next = boxes.slice(boxes.indexOf(b) + 1).find(x => x.state !== 'viewed');
+  v.scroll.querySelector('.ln.cur')?.classList.remove('cur');
+  v.cur = next ? { path: next.f.path, n: 0 } : null;
+  if (next) goToBox(v, next.f.path);
+}
+
+// currentBox is the box of the current line while it shows, else the box at the top of the view.
+function currentBox(v) {
+  const b = v.cur && v.boxes.get(v.cur.path);
+  if (b) {
+    const r = b.el.getBoundingClientRect(), s = v.scroll.getBoundingClientRect();
+    if (r.bottom > s.top + HEAD && r.top < s.bottom) return b;
+  }
+  return anchor(v)?.b;
+}
 
 // goToBox scrolls to a file's box.
 export function goToBox(v, path, focus) {
