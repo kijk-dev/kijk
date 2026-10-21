@@ -124,10 +124,9 @@ function textBox(label, text, okText, ok, cancel) {
 // unsent keeps the text of a new comment closed with Escape, by file and line, until it is added.
 const unsent = new Map();
 
-// lineEditor is the box under row l of file f where a new comment is written. done() closes it.
-// The editor knows the head its row is of; move(row, at) puts it on a row of another head. With
-// toForge(row), the row is of another diff, and toForge gives the forge diff's row of its line.
-export function lineEditor(root, n, res, f, l, done) {
+// lineEditor is the box under row l of file f where a new comment is written; done() closes it, and
+// toForge(row), when set, gives the forge diff's row of a row's line. move(row, at) changes the head.
+export function lineEditor(root, n, res, f, l, done, toForge) {
   const ed = { text: l.t };
   const kept = () => `${root}\n${n}\n${f.path}\n${ed.key}`;
   const box = el('div', 'thr draftonly editing');
@@ -139,7 +138,7 @@ export function lineEditor(root, n, res, f, l, done) {
   who.append(avatar(res.me || 'you'), el('b', null, res.me || 'you'));
   const text = textBox('Comment', '', 'Add to review', async body => {
     if (!ed.row) throw new Error('This line is not in the diff now. Copy your text and add it on another line.');
-    const r = (await ed.toForge?.(ed.row)) || ed.row;
+    const r = (await toForge?.(ed.row)) || ed.row;
     await addComment(root, n, ed.at, { path: f.path, orig: f.orig || '', line: ed.line, old: ed.old, oldLine: r.k === ' ' ? r.o : 0, body });
     unsent.delete(kept());
     hooks.announce?.(`Comment added to your review on line ${ed.line}`);

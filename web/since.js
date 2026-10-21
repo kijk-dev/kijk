@@ -13,7 +13,7 @@ const MISSING = 'kijk does not have the commit of your last review in this clone
 const why = a => (a.rebased ? REBASED : a.missing ? MISSING : a.error || '');
 
 const on = new Set(); // root and number of the pull requests switched to Since your review
-const answers = new Map(); // root, number, reviewed head and head: the answer, or the call asking
+const answers = new Map(); // per pull request, last review and head now: the answer, or the call asking
 const listeners = new Set();
 const key = (root, n) => `${root}\n${n}`;
 
