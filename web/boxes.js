@@ -14,7 +14,8 @@ import { onKey } from './keys.js';
 //   decorate(v, b, rows)   {extra, under, end}: rows needed outside the hunks, the elements under
 //                          a row by its key ('n:12' new side, 'o:7' old side), and those at the end
 //   onAdd(v, path, row) and addTip: the + on a line, optional; row is {k, o, n, t}. With addOld
-//                          removed lines get one too; addLabel names it ("Add a note on line")
+//                          removed lines get one too; addLabel names it ("Add a note on line").
+//                          With addNear, an unchanged line gets one only that near a change
 //   onTop(path)            the file at the top of the view changed
 //   drawn(v, b)            a box was drawn, optional
 //   marked(f)              the file has threads or notes, for Alt+↓ and Alt+↑
@@ -331,6 +332,8 @@ export async function drawBox(v, b) {
     }
     sep.append(tx);
     out.push(sep);
+    const changes = h.lines.flatMap((l, j) => (l.k === ' ' ? [] : [j]));
+    const near = j => !v.src.addNear || changes.some(c => Math.abs(c - j) <= v.src.addNear);
     h.lines.forEach((l, j) => {
       const row = line([l.o, l.n], l.x || l.t, `${l.k === '+' ? 'add ch-add' : l.k === '-' ? 'del' : ''}${marks.line?.(l) || ''}`);
       if (l.k !== ' ' && (j === 0 || h.lines[j - 1].k === ' ')) starts.push(row);
@@ -340,7 +343,7 @@ export async function drawBox(v, b) {
         row.dataset.n = l.n;
         row.dataset.t = l.t;
       }
-      if (v.src.onAdd && (l.k !== '-' || v.src.addOld)) {
+      if (v.src.onAdd && (l.k !== '-' || v.src.addOld) && (l.k !== ' ' || near(j))) {
         const add = el('button', 'addc');
         add.innerHTML = ICON.plus;
         add.tabIndex = -1;
@@ -434,7 +437,7 @@ onKey('addNote', () => {
   const v = last && isCurrent(last) ? last : null;
   if (!v?.scroll || !v.src.onAdd || document.activeElement?.closest('textarea, input')) return false;
   const row = curRow(v);
-  if (!row) return;
+  if (!row?.querySelector('.addc')) return; // a line the forge takes no comment on
   setCur(v, row);
   v.src.onAdd(v, row.closest('.fbox').dataset.path, { k: row.dataset.k, o: Number(row.dataset.o) || 0, n: Number(row.dataset.n), t: row.dataset.t });
 });

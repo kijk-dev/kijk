@@ -914,6 +914,14 @@ func TestBrowser(t *testing.T) {
 		b.waitFor("only Comment on your own", `document.querySelector('#prs-pr .pr-num')?.textContent === '#482' && `+
 			`[...`+box+`.querySelectorAll('.mode button')].map(x => x.textContent + ':' + x.disabled).join('|') === 'Comment:false|Approve:true|Request changes:true' && `+
 			box+`.querySelector('.why')?.textContent === 'You cannot approve or request changes on your own pull request'`)
+
+		// GitHub takes comments only on lines of its own diff: none on lines that Show more lines adds.
+		const session = "internal/auth/session.go"
+		b.waitFor("session.go", fileBox(session)+`?.querySelector('.ln.sep .more')`)
+		b.evalJS(fileBox(session) + `.querySelector('.ln.sep .more').scrollIntoView({block: 'center'})`)
+		b.click("Show more lines", fileBox(session)+`.querySelector('.ln.sep .more')`)
+		far, near := boxRow(session, "// Store keeps the sessions."), boxRow(session, "\tif err != nil {")
+		b.waitFor("a + only near the change", far+` && !`+far+`.querySelector('.addc') && !`+boxRow(session, "\tc, err := r.Cookie(cookieName)")+`.querySelector('.addc') && `+near+`?.querySelector('.addc')`)
 		b.noErrors()
 	})
 
