@@ -103,6 +103,7 @@ func TestBrowser(t *testing.T) {
 		p := p.on(t)
 		p.click("the Git tab", gitTab)
 		p.waitFor("main.go and notes.txt in the changes", inList("Unstaged", "main.go")+" && "+inList("Unstaged", "notes.txt"))
+		p.waitFor("no PRs tab on main", prsTab+`.hidden`)
 		p.click("main.go", changeRow("main.go"))
 		p.waitFor("the diff of main.go", diffRow("del", "const items = 7")+" && "+diffRow("add", "const items = 70"))
 		p.noErrors()
@@ -173,6 +174,30 @@ func TestBrowser(t *testing.T) {
 		write(t, filepath.Join(shop, "src", "extra.go"), "package main\n")
 		p.waitFor("the new file in the tree", treeItem("extra.go"))
 		p.noErrors()
+	})
+
+	t.Run("branch review", func(t *testing.T) {
+		repo := reviewRepo(t)
+		claude := t.TempDir()
+		claudeAgent(t, claude, repo, "Fix the login", "idle")
+		k := startKijkIn(t, exe, t.TempDir(), "CLAUDE_CONFIG_DIR="+claude, "PATH="+fakeGH(t)+string(os.PathListSeparator)+os.Getenv("PATH"))
+		b := openPage(t, newTab(t, tab), k, "/")
+		b.selectAgent("Fix the login", "review")
+
+		// The PRs tab and its panel.
+		b.waitFor("the PRs tab", `(b => b && !b.hidden && b.dataset.tip.startsWith('PRs\n'))(`+prsTab+`)`)
+		b.press("prsTab")
+		b.waitFor("the PRs panel", `!document.querySelector('#prs').hidden && `+prsTab+`.classList.contains('active')`)
+		b.waitFor("the pull request", `document.querySelector('#prs .pr-num')?.textContent === '#482' && document.querySelector('#prs .pr-title')?.textContent === 'Fix login redirect loop'`)
+		b.waitFor("the branch and its base", `[...document.querySelectorAll('#prs .prmeta .ref')].map(r => r.textContent).join(' ') === 'fix-login main'`)
+		b.waitFor("the bar", `document.querySelector('#prs .unpushed .t')?.textContent === "1 commit and 2 files not pushed. Reviewers don't see them yet." && `+
+			byText("#prs .unpushed button", "Push"))
+		b.waitFor("six files", `document.querySelectorAll('#prs .prfiles li').length === 6`)
+		b.waitFor("the new files marked", prsRow("redirect.go")+`.querySelector('.np') && `+prsRow("redirect_test.go")+`.querySelector('.np') && !`+prsRow("session.go")+`.querySelector('.np')`)
+		b.act("reload", chromedp.Reload())
+		b.waitFor("the PRs tab kept", prsTab+`.classList.contains('active') && !document.querySelector('#prs').hidden && document.querySelectorAll('#prs .prfiles li').length === 6`)
+
+		b.noErrors()
 	})
 
 	t.Run("shots", func(t *testing.T) {
@@ -457,7 +482,13 @@ func typeOf(types []fileType, name string) fileType {
 const (
 	gitTab   = `document.querySelector('#tabs button[data-tab=git]')`
 	filesTab = `document.querySelector('#tabs button[data-tab=files]')`
+	prsTab   = `document.querySelector('#tabs button[data-tab=prs]')`
 )
+
+// prsRow is the row of a file in the PRs tab's list.
+func prsRow(name string) string {
+	return fmt.Sprintf(`[...document.querySelectorAll('#prs .prfiles li')].find(e => e.querySelector('.name')?.textContent === %s)`, jsString(name))
+}
 
 const agentRows = `[...document.querySelectorAll('#rows li[role=button]')]`
 

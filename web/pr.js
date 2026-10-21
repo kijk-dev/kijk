@@ -24,6 +24,18 @@ function link(cls, href, text) {
   return a;
 }
 
+// hostMark is the forge's own mark, with its name as the tooltip.
+export function hostMark(kind) {
+  const mark = el('span', `hostmark ${kind}`);
+  mark.innerHTML = HOST[kind].icon; // a fixed string, never server text
+  mark.title = HOST[kind].name;
+  return mark;
+}
+
+// forgeWords are the words of a forge: its name, its mark before a number, and the short name of
+// a pull request.
+export const forgeWords = kind => HOST[kind];
+
 // showPR fills the pull request line: the PR with its CI and review state, else links to the host.
 export function showPR(line, res) {
   const f = res?.forge;
@@ -31,10 +43,7 @@ export function showPR(line, res) {
   if (!f) return line.replaceChildren();
   const h = HOST[f.kind];
   const top = el('div', 'pr-top');
-  const mark = el('span', `hostmark ${f.kind}`);
-  mark.innerHTML = h.icon; // a fixed string, never server text
-  mark.title = h.name;
-  top.append(mark);
+  top.append(hostMark(f.kind));
 
   const p = res.pr;
   if (!p && (res.note || !res.tool)) {

@@ -34,6 +34,9 @@
       <button data-tab="git" data-tip="Git" aria-label="Git" aria-pressed="false">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3v12"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
       </button>
+      <button data-tab="prs" data-tip="Branch" aria-label="Branch" aria-pressed="false" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><path d="M6 9v12"/></svg>
+      </button>
     </nav>
   </div>
   <div id="stalebar" role="status" hidden><span class="mdot unreachable"></span><span id="stale-text"></span></div>
@@ -64,6 +67,7 @@
       <button id="commit-btn" type="submit" disabled>Commit</button>
     </form>
   </div>
+  <div id="prs" hidden></div>
 </aside>
 <div class="split" data-var="--side" role="separator" aria-controls="sidebar" aria-orientation="vertical" aria-label="Resize files pane" tabindex="0"></div>
 <main>
