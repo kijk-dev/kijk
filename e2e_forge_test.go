@@ -21,9 +21,12 @@ func newFakeForge(t *testing.T) *fakeForge {
 	f := &fakeForge{dir: t.TempDir()}
 	gh := `#!/bin/sh
 d=%[1]q
-echo "gh $*" | tr '\n' ' ' >> "$d/calls.log"; echo >> "$d/calls.log"
+echo "home=$HOME gh $*" | tr '\n' ' ' >> "$d/calls.log"; echo >> "$d/calls.log"
 f=
-if [ "$1" = pr ]; then f=gh-pr-view.json; fi
+if [ "$1" = pr ]; then
+  [ -f "$d/gh-pr-view.json" ] || { echo "no pull requests found for branch" >&2; exit 1; }
+  f=gh-pr-view.json
+fi
 case "$*" in
 *"pullRequests(states"*) f=gh-list.json ;;
 *"search(query"*) f=gh-search.json ;;
@@ -34,7 +37,7 @@ if [ -n "$f" ] && [ -f "$d/$f" ]; then cat "$d/$f"; else echo "no answer for: $*
 `
 	glab := `#!/bin/sh
 d=%[1]q
-echo "glab $*" | tr '\n' ' ' >> "$d/calls.log"; echo >> "$d/calls.log"
+echo "home=$HOME glab $*" | tr '\n' ' ' >> "$d/calls.log"; echo >> "$d/calls.log"
 f=
 if [ "$1" = mr ]; then f=glab-mr-view.json; fi
 case "$*" in
@@ -82,6 +85,20 @@ func (f *fakeForge) waitFor(t *testing.T, n int, text string) {
 		}
 	}
 	t.Fatalf("no call with %q after call %d:\n%s", text, n, strings.Join(f.calls(), "\n"))
+}
+
+// settle waits until no new call came for half a second, so a call still running is done.
+func (f *fakeForge) settle() int {
+	n := len(f.calls())
+	for end := time.Now().Add(10 * time.Second); time.Now().Before(end); {
+		time.Sleep(500 * time.Millisecond)
+		m := len(f.calls())
+		if m == n {
+			break
+		}
+		n = m
+	}
+	return n
 }
 
 // calls are the tool calls so far, one line each.
