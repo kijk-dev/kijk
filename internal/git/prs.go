@@ -455,9 +455,8 @@ type PR struct {
 	Threads   []Thread   `json:"threads"`
 	Checks    *Checks    `json:"checks,omitempty"`
 	Me        string     `json:"me,omitempty"`
-	Drafts    int        `json:"drafts"`              // your comments not sent yet
-	Summary   string     `json:"summary"`             // of your review, held on the forge until you submit it
-	SummaryID string     `json:"summaryId,omitempty"` // GitLab: its draft note
+	Drafts    int        `json:"drafts"`  // your comments not sent yet
+	Summary   string     `json:"summary"` // of your review, held on the forge until you submit it
 	Write     Write      `json:"write"`
 
 	rollup   *githubRollup // read into Checks once the head is in the repo
@@ -622,9 +621,21 @@ type gitlabDraft struct {
 	} `json:"position"`
 }
 
-// general is a draft not on a line and not a reply; the oldest one is the summary of your review.
+// general is a draft not on a line, not on a file and not a reply.
 func (d gitlabDraft) general() bool {
-	return d.DiscussionID == "" && (d.Position == nil || d.Position.NewLine == 0 && d.Position.OldLine == 0)
+	p := d.Position
+	return d.DiscussionID == "" && (p == nil || p.NewLine == 0 && p.OldLine == 0 && p.NewPath == "" && p.OldPath == "")
+}
+
+// summaryDraft is the id of the summary of your review: your oldest general draft; 0 for none.
+func summaryDraft(ds []gitlabDraft) int {
+	id := 0
+	for _, d := range ds {
+		if d.general() && (id == 0 || d.ID < id) {
+			id = d.ID
+		}
+	}
+	return id
 }
 
 // addGitlabDrafts adds your draft notes: a reply goes into its thread, a draft on a line is a new
@@ -634,7 +645,7 @@ func addGitlabDrafts(pr *PR, out []byte) error {
 	if err := json.Unmarshal(out, &ds); err != nil {
 		return err
 	}
-	slices.SortFunc(ds, func(a, b gitlabDraft) int { return a.ID - b.ID }) // the summary is the oldest one, as SetSummary picks it
+	summary := summaryDraft(ds)
 	for _, d := range ds {
 		c := Comment{ID: strconv.Itoa(d.ID), Author: pr.Me, Body: d.Note, Draft: true}
 		pr.Drafts++
@@ -649,14 +660,13 @@ func addGitlabDrafts(pr *PR, out []byte) error {
 			continue
 		}
 		p := d.Position
-		if d.general() {
-			if pr.SummaryID == "" {
-				// The first draft not on a line is the summary of your review.
-				pr.Drafts--
-				pr.Summary, pr.SummaryID = c.Body, c.ID
-			} else {
-				pr.Comments = append(pr.Comments, c)
-			}
+		if d.ID == summary {
+			pr.Drafts--
+			pr.Summary = c.Body
+			continue
+		}
+		if p == nil || p.NewLine == 0 && p.OldLine == 0 {
+			pr.Comments = append(pr.Comments, c) // also a comment on a whole file, which has no line to show under
 			continue
 		}
 		th := Thread{ID: "draft-" + c.ID, Path: cmp.Or(p.NewPath, p.OldPath), Line: p.NewLine, Draft: true, Comments: []Comment{c}}
