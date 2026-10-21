@@ -22,7 +22,7 @@ type writeRequest struct {
 }
 
 // write reads a write's request and checks its folder, then runs it. A refused request is 400, a
-// head that moved 409, and a forge that failed 502 with the tool's words.
+// head that moved 409, no diff kept 428, and a forge that failed 502 with the tool's words.
 func (a *api) write(run func(req writeRequest) (any, error)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req writeRequest
@@ -42,8 +42,10 @@ func (a *api) write(run func(req writeRequest) (any, error)) http.HandlerFunc {
 		switch {
 		case errors.Is(err, git.ErrBadInput):
 			http.Error(w, err.Error(), http.StatusBadRequest)
-		case errors.Is(err, git.ErrHeadMoved), errors.Is(err, errNotShown):
+		case errors.Is(err, git.ErrHeadMoved):
 			http.Error(w, err.Error(), http.StatusConflict)
+		case errors.Is(err, errNotShown):
+			http.Error(w, err.Error(), http.StatusPreconditionRequired)
 		case err != nil:
 			http.Error(w, err.Error(), http.StatusBadGateway)
 		default:
