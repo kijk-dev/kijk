@@ -259,9 +259,9 @@ async function refreshGit() {
   gitNote.textContent = st.error || '';
   if (!st.git) return selectTab('files');
   prsBtn.hidden = !st.total;
-  if (!git || (prsBtn.hidden && !prsEl.hidden)) selectTab(shownTab());
+  if (!git || prsEl.hidden === (shownTab() === 'prs')) selectTab(shownTab());
   git = st;
-  if (st.total) refreshBranch(st, pr, prTarget());
+  refreshBranch(st, pr, prTarget());
   if (upHash !== null && st.upHash !== upHash) refreshPR();
   upHash = st.upHash || '';
   paint(filesEl, marks(st));

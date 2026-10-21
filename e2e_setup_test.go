@@ -538,14 +538,19 @@ func reviewRepo(t *testing.T) string {
 	return dir
 }
 
-// fakeGH is a folder with a gh that answers every question with pull request #482.
-func fakeGH(t *testing.T) string {
+// fakeForgeTools is a folder with a gh that answers every question with pull request #482, and a
+// glab that answers with merge request !12.
+func fakeForgeTools(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	pr := `{"number":482,"title":"Fix login redirect loop","state":"OPEN","isDraft":false,"url":"https://github.com/acme/review/pull/482","baseRefName":"main","reviewDecision":"","statusCheckRollup":[],"latestReviews":[]}`
+	mr := `{"iid":12,"title":"Fix login redirect loop","state":"opened","draft":false,"web_url":"https://gitlab.com/acme/review/-/merge_requests/12","target_branch":"main"}`
 	write(t, filepath.Join(dir, "gh"), "#!/bin/sh\necho '"+pr+"'\n")
-	if err := os.Chmod(filepath.Join(dir, "gh"), 0o755); err != nil {
-		t.Fatal(err)
+	write(t, filepath.Join(dir, "glab"), "#!/bin/sh\nif [ \"$1\" = mr ]; then echo '"+mr+"'; else echo '{}'; fi\n")
+	for _, tool := range []string{"gh", "glab"} {
+		if err := os.Chmod(filepath.Join(dir, tool), 0o755); err != nil {
+			t.Fatal(err)
+		}
 	}
 	return dir
 }

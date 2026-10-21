@@ -108,12 +108,16 @@ function fetchBranch() {
 }
 
 async function load(change) {
-  const key = folder;
+  const key = `${folder}\n${target}`;
   const res = await fetchBranch();
-  if (key !== folder) return;
+  if (key !== `${folder}\n${target}`) return;
   if (res instanceof Error) {
+    // On another branch, such as the main line, nothing of this branch may show or be added to.
+    closeCopy();
     data = null;
     error = res.status === 404 ? 'This branch has no branch changes' : res.message;
+    notes = [];
+    notesKey = '';
   } else {
     data = res;
     error = '';
@@ -121,7 +125,10 @@ async function load(change) {
   }
   drawPanel();
   const v = openView();
-  if (v) await updateView(v, change);
+  if (!v) return;
+  if (!data) noChanges(v);
+  else if (!v.scroll) await build(v);
+  else await updateView(v, change);
 }
 
 // ----- Agent notes: {id, path, line, text, body, at, copiedAt, outdated}, kept per folder and branch -----
@@ -143,12 +150,15 @@ function saveNotes() {
 const notesOn = path => notes.filter(n => n.path === path).sort((a, b) => a.line - b.line);
 const inBranch = path => !!data?.files.some(f => f.path === path);
 
-function notesChanged() {
+// notesChanged saves the notes and draws them again in the panel and in the boxes of paths.
+function notesChanged(paths) {
   saveNotes();
   drawPanel();
   const v = openView();
   if (!v) return;
-  for (const b of v.boxes.values()) {
+  for (const path of paths) {
+    const b = v.boxes.get(path);
+    if (!b) continue;
     drawHead(v, b);
     if (b.loaded) drawBox(v, b);
   }
@@ -313,8 +323,9 @@ function notesBox() {
     clear.dataset.k = 'clear';
     clear.title = 'Delete the notes you copied';
     clear.onclick = () => {
+      const gone = notes.filter(n => n.copiedAt);
       notes = notes.filter(n => !n.copiedAt);
-      notesChanged();
+      notesChanged(new Set(gone.map(n => n.path)));
       page.announce('Copied notes deleted');
     };
     head.append(clear);
@@ -328,7 +339,7 @@ function notesBox() {
       li.append(el('span', 'where', `${n.path}:${n.line} · file no longer changed`), el('span', 'body', n.body));
       li.append(iconButton(ICON.trash, 'Delete', () => {
         notes = notes.filter(x => x !== n);
-        notesChanged();
+        notesChanged([n.path]);
       }));
       ul.append(li);
     }
@@ -340,7 +351,7 @@ function notesBox() {
   copy.innerHTML = ICON.copy;
   copy.append('Copy for agent…');
   copy.disabled = !notes.length;
-  copy.onclick = () => openCopy(copy);
+  copy.onclick = startCopy;
   box.append(copy);
   return box;
 }
@@ -376,7 +387,7 @@ function goTo(path, focus) {
 // openBranch shows the Branch changes tab. tab.folds keeps the boxes the user folded or opened;
 // save stores the tab.
 export async function openBranch(viewer, root, tab, keep, save) {
-  const v = { kind: 'branch', root, tab, save, boxes: new Map() };
+  const v = { kind: 'branch', viewer, root, tab, save, keep, boxes: new Map() };
   view = v;
   setView(v);
   v.reload = change => { if (isCurrent(v)) load(change); };
@@ -385,15 +396,18 @@ export async function openBranch(viewer, root, tab, keep, save) {
     return true;
   };
   if (root !== folder) return;
-  if (!data) await load();
-  if (!isCurrent(v)) return;
-  if (!data) return viewer.replaceChildren(el('p', 'empty', error || 'This branch has no branch changes'));
+  if (data) await build(v);
+  else await load();
+}
+
+// build draws the view of the branch changes in data; noChanges says there are none.
+async function build(v) {
   const scroll = el('div', 'allfiles');
   scroll.tabIndex = 0;
   scroll.setAttribute('aria-label', 'Branch changes');
   v.scroll = scroll;
   v.end = el('p', 'fend');
-  viewer.replaceChildren(scroll);
+  v.viewer.replaceChildren(scroll);
   // Two screens ahead, so a box is drawn before it shows.
   v.near = new IntersectionObserver(entries => {
     for (const e of entries) {
@@ -403,7 +417,8 @@ export async function openBranch(viewer, root, tab, keep, save) {
     }
   }, { root: scroll, rootMargin: '200% 0px' });
   await updateView(v);
-  if (keep?.scrollTop) scroll.scrollTop = keep.scrollTop;
+  if (v.keep?.scrollTop) scroll.scrollTop = v.keep.scrollTop;
+  v.keep = null;
   if (goal) {
     goTo(goal);
     goal = '';
@@ -421,6 +436,14 @@ export async function openBranch(viewer, root, tab, keep, save) {
     const row = e.target.closest('.ln[data-n]');
     if (row && !e.target.closest('button')) setCur(v, row);
   });
+}
+
+function noChanges(v) {
+  v.near?.disconnect();
+  v.scroll = null;
+  v.boxes = new Map();
+  v.editor = null;
+  v.viewer.replaceChildren(el('p', 'empty', error || 'This branch has no branch changes'));
 }
 
 // anchor is the box at the top of the view and how far it is scrolled, so a redraw keeps it there.
@@ -578,27 +601,10 @@ async function place(v, b, rows) {
   const mine = notesOn(b.f.path);
   const byN = new Map(rows.filter(r => r.n && r.k !== '-').map(r => [r.n, r]));
   let file = null;
-  const read = async () => (file ??= await fileLines(v.root, b.f.path));
   let moved = false;
   for (const n of mine) {
-    let outdated = false;
-    if (byN.get(n.line)?.t !== n.text) {
-      const { texts } = await read();
-      if (texts[n.line - 1] !== n.text) {
-        let best = -1;
-        texts.forEach((t, i) => {
-          if (t === n.text && (best < 0 || Math.abs(i + 1 - n.line) < Math.abs(best + 1 - n.line))) best = i;
-        });
-        if (best >= 0) {
-          n.line = best + 1;
-          moved = true;
-        } else {
-          outdated = true;
-        }
-      }
-    }
-    if (!!n.outdated !== outdated) moved = true;
-    n.outdated = outdated || undefined;
+    if (byN.get(n.line)?.t === n.text) moved = relocate(n, { [n.line - 1]: n.text }) || moved;
+    else moved = relocate(n, (file ??= await fileLines(v.root, b.f.path)).texts) || moved;
   }
   if (moved) {
     saveNotes();
@@ -614,6 +620,38 @@ async function place(v, b, rows) {
     }
   }
   return { extra, where };
+}
+
+// relocate puts a note on the line of texts that has its text: the same line, else the nearest one,
+// else it is outdated and keeps its line number. It tells whether the note changed.
+function relocate(n, texts) {
+  let line = n.line;
+  if (texts[n.line - 1] !== n.text) {
+    line = 0;
+    for (const [i, t] of Object.entries(texts)) {
+      if (t === n.text && (!line || Math.abs(+i + 1 - n.line) < Math.abs(line - n.line))) line = +i + 1;
+    }
+  }
+  const outdated = !line;
+  const changed = (line && line !== n.line) || !!n.outdated !== outdated;
+  if (line) n.line = line;
+  n.outdated = outdated || undefined;
+  return changed;
+}
+
+// placeAll puts every note on its line, also notes whose box is not drawn, so the prompt has their
+// lines as they are now.
+async function placeAll() {
+  const key = folder;
+  const paths = [...new Set(notes.map(n => n.path))];
+  const files = await Promise.all(paths.map(path => fileLines(folder, path)));
+  if (key !== folder) return false;
+  const moved = new Set();
+  paths.forEach((path, i) => {
+    for (const n of notes) if (n.path === path && relocate(n, files[i].texts)) moved.add(path);
+  });
+  if (moved.size) notesChanged(moved);
+  return true;
 }
 
 // hunksWith adds one-line hunks for lines with a note outside the diff's hunks, in line order.
@@ -636,17 +674,18 @@ function hunksWith(hunks, extra) {
 
 async function drawBox(v, b) {
   const res = b.res;
+  const draw = b.draws = (b.draws || 0) + 1; // a newer draw of the box wins over one still waiting
   b.loaded = true;
-  b.starts = [];
   b.body.style.height = '';
   if (res.error || res.binary || res.folder || !res.hunks.length) {
     const say = res.error || (res.binary ? 'Binary file changed' : res.folder ? 'Folder with its own git repository'
       : b.f.orig ? `Renamed from ${b.f.orig}, no content changes` : 'No content changes');
     b.body.replaceChildren(el('p', 'fempty', say));
+    b.starts = [];
     return;
   }
   const { extra, where } = await place(v, b, res.hunks.flatMap(h => h.lines));
-  if (!isCurrent(v)) return;
+  if (!isCurrent(v) || draw !== b.draws) return;
   const np = res.notPushed || [];
   const notPushed = n => np.some(([from, to]) => n >= from && n <= to);
   const hunks = hunksWith(res.hunks, extra);
@@ -654,6 +693,7 @@ async function drawBox(v, b) {
   for (const l of hunks.flatMap(h => h.lines)) maxNo = Math.max(maxNo, l.o || 0, l.n || 0);
   b.body.style.setProperty('--gutter', `${String(maxNo).length + 2}ch`);
   const out = [];
+  const starts = [];
   const placed = new Set();
   hunks.forEach((h, i) => {
     const added = h.lines.filter(l => l.k === '+');
@@ -682,7 +722,7 @@ async function drawBox(v, b) {
     h.lines.forEach((l, j) => {
       const local = l.k === '+' && notPushed(l.n);
       const row = line([l.o, l.n], l.x || l.t, `${l.k === '+' ? 'add ch-add' : l.k === '-' ? 'del' : ''}${local ? ' np' : ''}`);
-      if (l.k !== ' ' && (j === 0 || h.lines[j - 1].k === ' ')) b.starts.push(row);
+      if (l.k !== ' ' && (j === 0 || h.lines[j - 1].k === ' ')) starts.push(row);
       if (l.k !== '-') {
         row.dataset.n = l.n;
         row.dataset.t = l.t;
@@ -708,6 +748,7 @@ async function drawBox(v, b) {
   // A note with no line left on disk, as on a deleted file, shows at the end of the box.
   for (const n of where.keys()) if (!placed.has(n)) out.push(noteEl(v, n));
   b.body.replaceChildren(...out);
+  b.starts = starts;
   if (v.editor?.path === b.f.path) v.editor.el.querySelector('textarea')?.focus({ preventScroll: true });
 }
 
@@ -726,7 +767,7 @@ function noteEl(v, n) {
     iconButton(ICON.edit, 'Edit', () => openEditor(v, n.path, n.line, n.text, n)),
     iconButton(ICON.trash, 'Delete', () => {
       notes = notes.filter(x => x !== n);
-      notesChanged();
+      notesChanged([n.path]);
       page.announce('Note deleted');
     }),
   );
@@ -774,7 +815,7 @@ function openEditor(v, path, n, text, note) {
       notes.push({ id: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, path, line: n, text, body, at: Date.now(), copiedAt: 0 });
     }
     v.editor = null;
-    notesChanged();
+    notesChanged([path]);
     page.announce(note ? 'Note saved' : `Note added on line ${n}`);
     v.scroll.focus({ preventScroll: true });
   };
@@ -901,6 +942,12 @@ function closeCopy() {
   copyPanel?.close();
 }
 
+async function startCopy() {
+  if (!(await placeAll())) return;
+  const button = panel.querySelector('[data-k=copy]');
+  if (button) openCopy(button);
+}
+
 function openCopy(button) {
   closeCopy();
   const all = [...notes].sort((a, b) => a.path.localeCompare(b.path) || a.line - b.line);
@@ -944,8 +991,9 @@ function openCopy(button) {
     const at = Date.now();
     for (const n of list) n.copiedAt = at;
     close();
-    notesChanged();
+    notesChanged(new Set(list.map(n => n.path)));
     page.say(`Copied ${plural(list.length, 'note')}`);
+    page.announce(`Copied ${plural(list.length, 'note')}`);
     fetch('/api/count?name=agent-copy', { method: 'POST' }).catch(() => {}); // the local kijk counts, also for a remote folder
   };
   const doCopy = async () => {

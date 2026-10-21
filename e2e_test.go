@@ -180,7 +180,7 @@ func TestBrowser(t *testing.T) {
 		repo := reviewRepo(t)
 		claude := t.TempDir()
 		claudeAgent(t, claude, repo, "Fix the login", "idle")
-		k := startKijkIn(t, exe, t.TempDir(), "CLAUDE_CONFIG_DIR="+claude, "PATH="+fakeGH(t)+string(os.PathListSeparator)+os.Getenv("PATH"))
+		k := startKijkIn(t, exe, t.TempDir(), "CLAUDE_CONFIG_DIR="+claude, "PATH="+fakeForgeTools(t)+string(os.PathListSeparator)+os.Getenv("PATH"))
 		b := openPage(t, newTab(t, tab), k, "/")
 		b.selectAgent("Fix the login", "review")
 		const session = "internal/auth/session.go"
@@ -274,6 +274,33 @@ func TestBrowser(t *testing.T) {
 		b.press("nextNote")
 		b.waitFor("the first note below the top", `(s => [...s.querySelectorAll('.thr.note')].some(n => Math.abs(n.getBoundingClientRect().top - s.getBoundingClientRect().top - 124) < 2))(document.querySelector('.allfiles'))`)
 
+		// Another branch: main has no branch changes and shows no notes; back on fix-login they return.
+		run(t, repo, "stash", "-q", "-u")
+		run(t, repo, "checkout", "-q", "main")
+		b.waitFor("no PRs tab on main", prsTab+`.hidden`)
+		b.waitFor("no branch changes on main", `!document.querySelector('.fbox') && !document.querySelector('.thr.note') && document.querySelector('#viewer .empty')?.textContent === 'This branch has no branch changes'`)
+		run(t, repo, "checkout", "-q", "fix-login")
+		run(t, repo, "stash", "pop", "-q")
+		b.waitFor("the PRs tab again", `!`+prsTab+`.hidden && !document.querySelector('#prs').hidden`)
+		b.waitFor("the notes again", noted+`?.nextElementSibling?.matches('.thr.note') && `+redirect+`?.nextElementSibling?.matches('.thr.note')`)
+
+		// Lines added above a note: it stays under its line, also when its box is not on screen.
+		redirectGo := filepath.Join(repo, "internal", "auth", "redirect.go")
+		src, err := os.ReadFile(redirectGo)
+		if err != nil {
+			t.Fatal(err)
+		}
+		write(t, redirectGo, strings.Replace(string(src), "package auth\n", "package auth\n\n// One.\n// Two.\n// Three.\n", 1))
+		b.waitFor("the note four lines lower", redirect+`?.querySelector('.gut span:last-child').textContent === '12' && `+redirect+`.nextElementSibling?.matches('.thr.note')`)
+		b.click("close Branch changes", `document.querySelector('#filetabs .filetab.active .close')`)
+		b.waitFor("Branch changes closed", `!document.querySelector('.fbox')`)
+		write(t, redirectGo, strings.Replace(string(src), "package auth\n", "package auth\n\n// One.\n// Two.\n// Three.\n// Four.\n// Five.\n", 1))
+		b.click("Copy for agent", byText("#prs .reviewbox button", "Copy for agent…"))
+		b.waitFor("the note at its new line", `document.querySelector('.copypanel pre')?.textContent.includes('internal/auth/redirect.go:14\n')`)
+		b.key("Escape", kb.Escape)
+		b.press("prsTab")
+		b.waitFor("Branch changes again", redirect+`?.nextElementSibling?.matches('.thr.note')`)
+
 		// The agent changes the noted line: the note is outdated and keeps the old line.
 		write(t, filepath.Join(repo, session), sessionGo("sess, ok := s.lookup(c.Value)", strings.Replace(lookupGo, "sess, ok := s.byID[id]", "sess, ok := s.copyOf(id)", 1)))
 		b.waitFor("the note outdated", `[...document.querySelectorAll('.thr.note')].some(n => [...n.querySelectorAll('.chip')].some(c => c.textContent === 'Outdated') && n.querySelector('.was')?.textContent === '\tsess, ok := s.byID[id]')`)
@@ -284,7 +311,7 @@ func TestBrowser(t *testing.T) {
 		b.click("Copy for agent", byText("#prs .reviewbox button", "Copy for agent…"))
 		b.waitFor("the panel with both notes checked", `[...document.querySelectorAll('.copypanel li input')].filter(c => c.checked).length === 2`)
 		prompt := "Review notes for branch fix-login (PR #482).\nFix each one, then say what you changed.\n\n" +
-			"internal/auth/redirect.go:8\n  Keep next only when it is a path on this site. A //evil.com path passes now.\n\n" +
+			"internal/auth/redirect.go:14\n  Keep next only when it is a path on this site. A //evil.com path passes now.\n\n" +
 			fmt.Sprintf("internal/auth/session.go:%d\n  Return a copy, not the pointer.", lineOf(sessionGo("", lookupGo), "\tsess, ok := s.byID[id]"))
 		b.waitFor("the prompt", `document.querySelector('.copypanel pre').textContent === `+jsString(prompt))
 		b.click("Copy 2", byText(".copypanel button", "Copy 2"))
@@ -303,12 +330,26 @@ func TestBrowser(t *testing.T) {
 		b.waitFor("the notes copied", `document.querySelector('#prs .reviewbox .head .muted')?.textContent === '2 · 2 copied' && document.querySelectorAll('.thr.note.copied').length === 2`)
 		b.waitFor("the status bar", `document.querySelector('#statusbar').textContent.includes('Copied 2 notes')`)
 		b.waitFor("the copy counted by the local kijk", `e2eFetches.includes('/api/count?name=agent-copy 200')`)
+		b.waitFor("the copy read aloud", `document.querySelector('#announce').textContent === 'Copied 2 notes'`)
 		if os.Getenv("KIJK_E2E_SHOTS") != "" {
 			b.evalJS(`[...document.querySelectorAll('.thr.note')].at(-1).scrollIntoView({block: 'center'})`)
 			b.act("wait for the layout", chromedp.Sleep(300*time.Millisecond))
 			b.screenshot(e2eOut(t), "branch-copied")
 		}
+
+		// A second round: only the new note is picked, and Clear copied keeps it.
+		binary := boxRow("README.md", "Then run the binary.")
+		b.click("a line of README.md", binary+`.querySelector('.tx')`)
+		b.press("addNote")
+		b.typeText("Say how to build it.")
+		b.press("submitNote")
+		b.waitFor("the third note", binary+`.nextElementSibling?.matches('.thr.note:not(.editing)')`)
+		b.click("Copy for agent", byText("#prs .reviewbox button", "Copy for agent…"))
+		b.waitFor("only the new note picked", `document.querySelector('.copypanel .acts .muted')?.textContent === '1 of 3 picked' && document.querySelector('.copypanel li input:checked + .what .where').textContent === 'README.md:8'`)
+		b.key("Escape", kb.Escape)
 		b.click("Clear copied", byText("#prs .reviewbox button", "Clear copied"))
+		b.waitFor("the new note kept", `document.querySelector('#prs .reviewbox .head .muted')?.textContent === '1' && document.querySelectorAll('.thr.note').length === 1 && `+binary+`.nextElementSibling?.matches('.thr.note')`)
+		b.click("Delete", binary+`.nextElementSibling.querySelector('[aria-label=Delete]')`)
 		b.waitFor("no notes", `document.querySelector('#prs .reviewbox .head .muted')?.textContent === 'none yet' && !document.querySelector('.thr.note')`)
 
 		// A note on a line the diff no longer shows keeps that line in view.
@@ -322,6 +363,14 @@ func TestBrowser(t *testing.T) {
 		b.waitFor("its line as a hunk of its own", `!`+boxHas(session, "add", "// lookup reads a session without touching its expiry.")+` && `+check+`?.previousElementSibling?.matches('.sep') && `+check+`.nextElementSibling?.matches('.thr.note')`)
 		b.click("Delete", check+`.nextElementSibling.querySelector('[aria-label=Delete]')`)
 		b.waitFor("the note deleted", `!document.querySelector('.thr.note') && !`+check)
+
+		// All pushed: no bar and no dashed marks.
+		run(t, repo, "add", "-A")
+		run(t, repo, "commit", "-qm", "All of it")
+		run(t, repo, "push", "-q")
+		b.evalJS(`document.querySelector('.allfiles').scrollTop = 0`)
+		b.waitFor("no bar", `document.querySelector('#prs .prfiles') && !document.querySelector('#prs .unpushed')`)
+		b.waitFor("no dashed marks", `!document.querySelector('#prs .np, .fhead .np') && !`+fileBox("README.md")+`.querySelector('.ln.np, .np-tag')`)
 
 		if os.Getenv("KIJK_E2E_SHOTS") != "" {
 			write(t, filepath.Join(repo, session), sessionGo("sess, ok := s.lookup(c.Value)", strings.Replace(lookupGo, "sess, ok := s.byID[id]", "sess, ok := s.copyOf(id)", 1)))
@@ -346,6 +395,19 @@ func TestBrowser(t *testing.T) {
 			b.screenshot(dir, "branch-copy")
 			b.key("Escape", kb.Escape)
 		}
+
+		// On GitLab the tab says MRs, and the prompt names the merge request.
+		run(t, repo, "config", "remote.origin.url", "https://gitlab.com/acme/review.git")
+		b.act("reload", chromedp.Reload())
+		b.waitFor("the MRs tab", prsTab+`.dataset.tip.startsWith('MRs\n') && document.querySelector('#prs .pr-num')?.textContent === '!12'`)
+		b.waitFor("Branch changes", binary)
+		b.click("a line of README.md", binary+`.querySelector('.tx')`)
+		b.press("addNote")
+		b.typeText("Say how to build it.")
+		b.press("submitNote")
+		b.click("Copy for agent", byText("#prs .reviewbox button", "Copy for agent…"))
+		b.waitFor("the merge request in the prompt", `document.querySelector('.copypanel pre')?.textContent.startsWith('Review notes for branch fix-login (MR !12).\n')`)
+		b.key("Escape", kb.Escape)
 		b.noErrors()
 	})
 
