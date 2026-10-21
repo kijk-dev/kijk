@@ -250,6 +250,15 @@ func TestMachineProxy(t *testing.T) {
 	if last := remote.paths[len(remote.paths)-1]; last != "/api/branch?root=/x&target=release" {
 		t.Fatalf("branch path %q", last)
 	}
+	remote.mu.Unlock()
+	// A remote folder's pull request is read and fetched by the kijk on its machine.
+	if w := do("GET", "/m/azvm/api/pr/view?root=/x&n=7", true); w.Code != http.StatusOK || w.Body.String() != `{"ok":true}` {
+		t.Fatalf("pr view: %d %q", w.Code, w.Body.String())
+	}
+	remote.mu.Lock()
+	if last := remote.paths[len(remote.paths)-1]; last != "/api/pr/view?root=/x&n=7" {
+		t.Fatalf("pr view path %q", last)
+	}
 	for i, c := range remote.cookies {
 		if c != "kijk-4012=remote-token" || remote.origins[i] != "" {
 			t.Fatalf("the remote got cookie %q, origin %q", c, remote.origins[i])
