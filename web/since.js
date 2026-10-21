@@ -117,7 +117,7 @@ export function sinceParts(root, n, res, pick) {
 // sinceBar is the bar at the top of Changes in Since your review.
 export function sinceBar(root, n, s, files) {
   const a = s.answer;
-  const bar = el('div', `sincebar${why(a) ? ' all' : ''}`);
+  const bar = el('div', 'sincebar');
   const text = why(a) || `Since your review · ${plural(a.commits, 'commit')} · ${plural(files.length, 'file')}`;
   const back = el('button', 'tool', 'Show all changes');
   back.onclick = () => setSince(root, n, false);

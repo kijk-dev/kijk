@@ -662,8 +662,7 @@ button.pill:hover { background: color-mix(in srgb, var(--modified) 22%, var(--se
 .fbody .ln.sep .more { font: 12px system-ui, -apple-system, sans-serif; margin-left: 10px; padding: 0; position: static; }
 .fempty { margin: 8px 12px 2px; color: var(--muted); font: 12px system-ui, -apple-system, sans-serif; }
 /* Since your review, Changes shows less than the whole pull request; the bar says so. */
-.sincebar { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; padding: 4px 6px 4px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--select); color: var(--modified); font-size: 12px; }
-.sincebar.all { background: var(--bg); color: var(--text); }
+.sincebar { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; padding: 4px 6px 4px 12px; border: 1px solid var(--border); background: var(--sep-bg); color: var(--text); font-size: 12px; }
 .sincebar .tool { margin-left: auto; flex: none; }
 .fend { margin: 4px 0 24px; text-align: center; font-size: 12px; color: var(--muted); }
 .np-tag {
