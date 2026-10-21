@@ -23,6 +23,7 @@ import (
 	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/emulation"
 	"github.com/chromedp/cdproto/input"
+	cdppage "github.com/chromedp/cdproto/page"
 	"github.com/chromedp/chromedp"
 	"github.com/chromedp/chromedp/kb"
 
@@ -277,6 +278,23 @@ func (p page) press(action string) {
 		k = c[0]
 	}
 	p.key(action, k.key, k.mods...)
+}
+
+// onEveryPage runs js first in each page that loads from now on, until stop runs.
+func (p page) onEveryPage(js string) (stop func()) {
+	p.t.Helper()
+	var id cdppage.ScriptIdentifier
+	p.act("add a script", chromedp.Func(func(ctx context.Context, t *chromedp.Target) error {
+		res, err := cdp.Call(ctx, t, cdppage.AddScriptToEvaluateOnNewDocument, cdppage.AddScriptToEvaluateOnNewDocumentParams{Source: js})
+		id = res.Identifier
+		return err
+	}))
+	return func() {
+		p.act("remove the script", chromedp.Func(func(ctx context.Context, t *chromedp.Target) error {
+			_, err := cdp.Call(ctx, t, cdppage.RemoveScriptToEvaluateOnNewDocument, cdppage.RemoveScriptToEvaluateOnNewDocumentParams{Identifier: id})
+			return err
+		}))
+	}
 }
 
 // hover moves the mouse over the left part of an element.

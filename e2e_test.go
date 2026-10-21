@@ -612,9 +612,14 @@ func TestBrowser(t *testing.T) {
 		}
 		shots(b, "prs-local")
 
-		// After a reload with the PRs tab open, kijk asks about the pull request again by itself.
+		// After a reload with the PRs tab open, kijk asks about the pull request again by itself, also
+		// when the tab shows before the PR line knows the forge, and with no window focus to wait for.
+		stop := b.onEveryPage(`addEventListener('focus', e => e.stopImmediatePropagation(), true);
+			for (const k of Object.keys(localStorage)) if (k.startsWith('kijk.pr:')) localStorage.removeItem(k);
+			{ const f = window.fetch; window.fetch = (u, o) => String(u).includes('/api/pr?') ? new Promise(r => setTimeout(r, 800)).then(() => f(u, o)) : f(u, o); }`)
 		b.act("reload", chromedp.Reload())
 		b.waitFor("the thread after a reload", asked+`?.nextElementSibling?.matches('.thr:not(.note)')`)
+		stop()
 
 		// Copy for agent lists the open thread too, and marks it copied.
 		b.evalJS(`navigator.clipboard.writeText = t => (window.e2eClip = t, Promise.resolve())`)
