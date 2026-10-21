@@ -7,7 +7,7 @@ import { boxView, showBoxes, noBoxes, redraw, drawBox, iconButton, setCur, curRo
 import { threadEl, outdatedBar, threadCount, avatar } from './threads.js';
 
 // The PRs tab for the folder's own branch: the panel in the sidebar, the Branch changes view, agent
-// notes and Copy for agent. It asks no forge; the pull request is what the PR line already knows.
+// notes and Copy for agent. Its pull request's threads come from prs.js.
 
 const ICON = {
   branch: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3v12"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>',

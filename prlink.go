@@ -31,9 +31,8 @@ func parsePRLink(s string) (prLink, bool) {
 	return prLink{Host: m[1], Path: m[2], Number: n}, true
 }
 
-// prClone finds the folder to open a pull request in: a clone of its repo among the saved
-// folders, else among the folders scan gives, the local agents'. It gives the main clone of what
-// it finds, so an agent's worktree leads to the clone it belongs to. kijk never clones.
+// prClone finds the main clone of the pull request's repo among the saved folders, else among the
+// folders scan gives, so an agent's worktree leads to the clone it belongs to.
 func prClone(l prLink, saved []string, scan func() []string) string {
 	if c := cloneIn(l, saved); c != "" {
 		return c
