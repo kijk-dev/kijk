@@ -78,12 +78,14 @@ export async function refreshBranch(st, pr, tgt) {
   await load();
 }
 
-// showBranchPanel draws the panel again after the PR line learned more.
+// showBranchPanel draws the panel again after the git status or the PR line learned more, and
+// asks for the branch changes when the panel just showed without them.
 export function showBranchPanel(st, pr, tgt) {
   status = st || status;
   prStatus = pr;
   target = tgt;
   if (data) drawPanel();
+  else if (!panel.hidden) load();
 }
 
 export function focusBranchList() {

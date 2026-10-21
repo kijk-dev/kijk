@@ -247,6 +247,7 @@ async function refreshPR() {
 async function refreshGit() {
   if (offline) return; // keep what is on screen until the machine is back
   const root = openKey;
+  refreshBranch(git, pr, prTarget()); // at the same time as the status, which takes as long
   let st;
   try {
     st = await get('status', { root, target: prTarget() });
@@ -261,7 +262,7 @@ async function refreshGit() {
   prsBtn.hidden = !st.total;
   if (!git || prsEl.hidden === (shownTab() === 'prs')) selectTab(shownTab());
   git = st;
-  refreshBranch(st, pr, prTarget());
+  showBranchPanel(st, pr, prTarget());
   if (upHash !== null && st.upHash !== upHash) refreshPR();
   upHash = st.upHash || '';
   paint(filesEl, marks(st));

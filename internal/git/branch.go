@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 )
 
 // ErrNoBranch means HEAD has no branch changes: it is on the main line, or there is no main line.
@@ -46,24 +47,63 @@ func BranchSplit(root, target string) string {
 // BranchChanges lists the branch changes: the commits since the split point plus the work not
 // committed, untracked files included.
 func BranchChanges(root, target string) (Branch, error) {
-	main, base, fork := branchBase(root, target)
+	// The git calls run side by side: on a big repo the diffs against the split point take most of
+	// the time, and the page asks for this on each refresh while the PRs tab is open.
+	var (
+		wg               sync.WaitGroup
+		out, names       []byte
+		stErr, nmErr     error
+		counts           map[string]lineCount
+		upHash           string
+		added            = map[string]bool{}
+		upErr            error
+		pr               *pullRequest
+		main, base, fork string
+	)
+	run := func(fn func()) {
+		wg.Add(1)
+		go func() { defer wg.Done(); fn() }()
+	}
+	run(func() { out, stErr = Raw(root, "status", "--porcelain=v2", "-z", "--branch", "-uall") })
+	run(func() {
+		// A file is not pushed when the upstream lacks it; without an upstream nothing is pushed.
+		if upHash, upErr = Run(root, "rev-parse", "--verify", "-q", "@{upstream}"); upErr != nil {
+			return
+		}
+		var raw []byte
+		raw, upErr = Raw(root, "diff", "--no-ext-diff", "--no-renames", "--diff-filter=A", "--name-only", "-z", "@{upstream}")
+		for _, p := range strings.Split(string(raw), "\x00") {
+			added[p] = true
+		}
+	})
+	run(func() { pr = KnownPR(root) })
+	main, base, fork = branchBase(root, target)
+	if fork != "" {
+		run(func() { names, nmErr = Raw(root, "diff", "--no-ext-diff", "--name-status", "-z", "-M", fork) })
+		run(func() { counts = numstat(root, "-M", fork) })
+	}
+	wg.Wait()
+
 	b := Branch{Base: base, Split: fork, Files: []BranchFile{}}
-	out, err := Raw(root, "status", "--porcelain=v2", "-z", "--branch", "-uall")
-	if err != nil {
-		return b, err
+	if stErr != nil {
+		return b, stErr
 	}
 	var st Status
 	parseStatus(out, &st)
 	if fork == "" || onBase(st.Branch, main, base) {
 		return b, ErrNoBranch
 	}
-	b.Branch, b.Upstream, b.Ahead = st.Branch, st.Upstream, st.Ahead
-	raw, err := Raw(root, "diff", "--no-ext-diff", "--name-status", "-z", "-M", fork)
-	if err != nil {
-		return b, err
+	if nmErr != nil {
+		return b, nmErr
 	}
-	cs := parseNameStatus(raw)
-	setCounts(cs, numstat(root, "-M", fork))
+	b.Branch, b.Upstream, b.Ahead, b.PR = st.Branch, st.Upstream, st.Ahead, pr
+	if b.Upstream == "" {
+		upErr = errors.New("no upstream")
+	} else {
+		b.UpHash = upHash
+	}
+	cs := parseNameStatus(names)
+	setCounts(cs, counts)
 	for _, c := range st.Untracked {
 		if !strings.HasSuffix(c.Path, "/") {
 			c.Add = countLines(filepath.Join(root, filepath.FromSlash(c.Path)))
@@ -79,21 +119,9 @@ func BranchChanges(root, target string) (Branch, error) {
 		}
 	}
 	b.Uncommitted = len(uncommitted)
-
-	// A file is not pushed when the upstream lacks it; without an upstream nothing is pushed.
-	added, upErr := map[string]bool{}, errors.New("no upstream")
-	if b.Upstream != "" {
-		b.UpHash, _ = Run(root, "rev-parse", "--verify", "-q", "@{upstream}")
-		var raw []byte
-		raw, upErr = Raw(root, "diff", "--no-ext-diff", "--no-renames", "--diff-filter=A", "--name-only", "-z", "@{upstream}")
-		for _, p := range strings.Split(string(raw), "\x00") {
-			added[p] = true
-		}
-	}
 	for _, c := range cs {
 		b.Files = append(b.Files, BranchFile{change: c, NotPushed: c.Status != "D" && (upErr != nil || c.Status == "?" || added[c.Path])})
 	}
-	b.PR = KnownPR(root)
 	return b, nil
 }
 
