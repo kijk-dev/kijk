@@ -72,16 +72,19 @@ func TestReviewRoutes(t *testing.T) {
 	if last := calls()[len(calls())-1]; !strings.Contains(strings.Join(last.Args, " "), "-f path=retry.go -f review=PRR_9 -f side=RIGHT") {
 		t.Fatalf("call %q", last.Args)
 	}
-	for route, body := range map[string]map[string]any{
-		"/api/pr/comment":        {"n": 7, "thread": "T1", "body": "Agreed."},
-		"/api/pr/comment/edit":   {"n": 7, "id": "C9", "body": "Why three?"},
-		"/api/pr/comment/delete": {"n": 7, "id": "C9"},
-		"/api/pr/resolve":        {"n": 7, "thread": "T1", "resolved": true},
-		"/api/pr/submit":         {"n": 7, "verdict": "approve", "body": "Looks good."},
+	for _, c := range []struct {
+		route string
+		body  map[string]any
+	}{
+		{"/api/pr/comment", map[string]any{"n": 7, "thread": "T1", "body": "Agreed."}},
+		{"/api/pr/comment/edit", map[string]any{"n": 7, "id": "C9", "body": "Why three?"}},
+		{"/api/pr/comment/delete", map[string]any{"n": 7, "id": "C9"}},
+		{"/api/pr/resolve", map[string]any{"n": 7, "thread": "T1", "resolved": true}},
+		{"/api/pr/submit", map[string]any{"n": 7, "verdict": "approve", "body": "Looks good."}},
 	} {
-		body["root"] = clone
-		if w := post(route, js(body)); w.Code != 200 {
-			t.Errorf("%s: %d %s", route, w.Code, w.Body.String())
+		c.body["root"] = clone
+		if w := post(c.route, js(c.body)); w.Code != 200 {
+			t.Errorf("%s: %d %s", c.route, w.Code, w.Body.String())
 		}
 	}
 	if last := calls()[len(calls())-1]; !strings.Contains(strings.Join(last.Args, " "), "-f body=Looks good. -f event=APPROVE -f review=PRR_9") {
