@@ -123,24 +123,49 @@ function textBox(label, text, okText, ok, cancel) {
 }
 
 // lineEditor is the box under row l of file f where a new comment is written. done() closes it.
+// The editor knows the head its row is of; move(row, at) puts it on a row of another head.
 export function lineEditor(root, n, res, f, l, done) {
-  const old = l.k === '-';
-  const line = old ? l.o : l.n;
+  const ed = { text: l.t };
   const box = el('div', 'thr draftonly editing');
   const head = el('div', 'thead');
-  head.append(el('span', null, `New comment · line ${line}`));
+  const title = el('span');
+  head.append(title);
   const c = el('div', 'c');
   const who = el('div', 'who');
   who.append(avatar(res.me || 'you'), el('b', null, res.me || 'you'));
-  const text = textBox(`Comment on line ${line}`, '', 'Add to review', async body => {
-    await addComment(root, n, res.at, { path: f.path, orig: f.orig || '', line, old, oldLine: l.k === ' ' ? l.o : 0, body });
-    hooks.announce?.(`Comment added to your review on line ${line}`);
+  const text = textBox('Comment', '', 'Add to review', async body => {
+    if (!ed.row) throw new Error('This line is not in the diff now. Copy your text and add it on another line.');
+    const r = ed.row;
+    await addComment(root, n, ed.at, { path: f.path, orig: f.orig || '', line: ed.line, old: ed.old, oldLine: r.k === ' ' ? r.o : 0, body });
+    hooks.announce?.(`Comment added to your review on line ${ed.line}`);
     done();
   }, done);
   c.append(who, text);
   box.append(head, c);
+  ed.el = box;
+  ed.move = (row, at) => {
+    ed.at = at;
+    ed.row = row;
+    if (!row) return;
+    ed.old = row.k === '-';
+    ed.line = ed.old ? row.o : row.n;
+    ed.key = `${ed.old ? 'o' : 'n'}:${ed.line}`;
+    title.textContent = `New comment · line ${ed.line}`;
+    text.querySelector('textarea').setAttribute('aria-label', `Comment on line ${ed.line}`);
+  };
+  ed.move(l, res.at);
   text.focus();
-  return { key: `${old ? 'o' : 'n'}:${line}`, el: box };
+  return ed;
+}
+
+// moveEditor puts an editor written on another head on the row of rows with its line's text,
+// on the same side and nearest to its line; without one it has no row.
+export function moveEditor(ed, rows, at) {
+  if (ed.at === at) return;
+  const same = rows.filter(r => r.t === ed.text && (r.k === '-') === ed.old);
+  const line = r => (r.k === '-' ? r.o : r.n);
+  same.sort((a, b) => Math.abs(line(a) - ed.line) - Math.abs(line(b) - ed.line));
+  ed.move(same[0] || null, at);
 }
 
 // ----- What a thread box needs to write -----
