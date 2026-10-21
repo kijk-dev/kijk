@@ -15,9 +15,8 @@ import (
 func prRef(n int) string   { return "refs/kijk/pr/" + strconv.Itoa(n) }
 func baseRef(n int) string { return "refs/kijk/base/" + strconv.Itoa(n) }
 
-// FetchPR makes refs/kijk/pr/<n> point at head, and fetches only when it does not. On GitHub the
-// forge diff starts at the target's tip, so when that commit is missing it goes to refs/kijk/base/<n>:
-// moving origin/<base> would change the Git tab's behind counts and graph.
+// FetchPR makes refs/kijk/pr/<n> point at head. On GitHub a missing base commit goes to
+// refs/kijk/base/<n>, as moving origin/<base> would change the Git tab's behind counts and graph.
 func FetchPR(root, kind string, n int, head, base, baseBranch string) (fetched bool, err error) {
 	if (head != "" && !ValidHash(head)) || (base != "" && !ValidHash(base)) || n <= 0 {
 		return false, ErrBadHash

@@ -1,6 +1,7 @@
 package git
 
 import (
+	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -589,16 +590,7 @@ func parseGithubPRView(data []byte, pr *PR) error {
 	p := v.Repository.PullRequest
 	*pr = PR{PRRow: p.row(), Body: p.Body, HeadOid: p.HeadRefOid, BaseOid: p.BaseRefOid, Commits: p.Commits.TotalCount,
 		Me: v.Viewer.Login, Reviewers: []Reviewer{}, Comments: []Comment{}, Threads: []Thread{}}
-	switch {
-	case p.State == "MERGED":
-		pr.State = "merged"
-	case p.State == "CLOSED":
-		pr.State = "closed"
-	case p.IsDraft:
-		pr.State = "draft"
-	default:
-		pr.State = "open"
-	}
+	pr.State = prState(p.State, p.IsDraft)
 	seen := map[string]int{}
 	add := func(name, state string) {
 		if i, ok := seen[name]; ok {
@@ -619,7 +611,7 @@ func parseGithubPRView(data []byte, pr *PR) error {
 	// Asked again after a review: the request is what counts now.
 	for _, r := range p.ReviewRequests.Nodes {
 		if rr := r.RequestedReviewer; rr != nil {
-			add(cmpOr(rr.Login, rr.Name), "requested")
+			add(cmp.Or(rr.Login, rr.Name), "requested")
 		}
 	}
 	for _, c := range p.Comments.Nodes {
@@ -657,11 +649,18 @@ func parseGithubPRView(data []byte, pr *PR) error {
 	return nil
 }
 
-func cmpOr(a, b string) string {
-	if a != "" {
-		return a
+// prState reads GitHub's and GitLab's states of a pull request: "open", "draft", "merged" or "closed".
+func prState(state string, draft bool) string {
+	switch strings.ToLower(state) {
+	case "merged":
+		return "merged"
+	case "closed", "locked":
+		return "closed"
 	}
-	return b
+	if draft {
+		return "draft"
+	}
+	return "open"
 }
 
 const gitlabPRQuery = `query($path: ID!, $iid: String!) {
@@ -764,16 +763,7 @@ func parseGitlabPR(data []byte, pr *PR) error {
 			pr.HeadOid = d.HeadSha
 		}
 	}
-	switch {
-	case m.State == "merged":
-		pr.State = "merged"
-	case m.State == "closed" || m.State == "locked":
-		pr.State = "closed"
-	case m.Draft:
-		pr.State = "draft"
-	default:
-		pr.State = "open"
-	}
+	pr.State = prState(m.State, m.Draft)
 	asked := map[string]bool{}
 	for _, r := range m.Reviewers.Nodes {
 		st := "requested"
@@ -808,9 +798,9 @@ func parseGitlabPR(data []byte, pr *PR) error {
 			}
 			if th == nil && n.Position != nil {
 				p := n.Position
-				th = &Thread{ID: d.ID, Path: cmpOr(p.NewPath, p.FilePath), Line: p.NewLine, Resolved: d.Resolved, Comments: []Comment{}}
+				th = &Thread{ID: d.ID, Path: cmp.Or(p.NewPath, p.FilePath), Line: p.NewLine, Resolved: d.Resolved, Comments: []Comment{}}
 				if p.NewLine == 0 {
-					th.Path, th.Line, th.Old = cmpOr(p.OldPath, p.FilePath), p.OldLine, true
+					th.Path, th.Line, th.Old = cmp.Or(p.OldPath, p.FilePath), p.OldLine, true
 				}
 				th.OrigLine = th.Line
 				// GitLab has no outdated flag: a note written on another head may sit on lines that changed.

@@ -3,7 +3,7 @@ import { lineCount, fileRow } from './git.js';
 import { FORGE, forgeMark, prChips } from './pr.js';
 import { onKey, keyLabel } from './keys.js';
 import { cachedView, loadView, onView, age } from './prdata.js';
-import { iconButton } from './boxes.js';
+import { iconButton, svg } from './boxes.js';
 import { avatar, threadCount } from './threads.js';
 import { goToChange, setupChanges } from './changes.js';
 import { setupOverview } from './overview.js';
@@ -237,12 +237,6 @@ function draw() {
   if (w.panel === 'list') drawList();
   if (w.panel === 'pr') drawPR(w.n, w.mine);
   if (w.panel === 'branch') wakeBranch();
-}
-
-function svg(markup, cls) {
-  const s = el('span', cls);
-  s.innerHTML = markup; // a fixed string
-  return s;
 }
 
 function searchBox() {

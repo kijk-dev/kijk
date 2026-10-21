@@ -1,6 +1,6 @@
 import { el } from './api.js';
 import { age } from './prdata.js';
-import { plural } from './boxes.js';
+import { plural, svg } from './boxes.js';
 
 // Forge threads as boxes under their lines: open threads with a tinted header, resolved ones folded
 // to one line, and outdated ones in a bar at the top of their file box.
@@ -13,12 +13,6 @@ const ICON = {
 
 const opened = new Set(); // resolved threads the user opened
 const shown = new Set(); // file boxes whose outdated threads show
-
-function svg(markup, cls) {
-  const s = el('span', cls);
-  s.innerHTML = markup; // a fixed string
-  return s;
-}
 
 // avatar is a name's first letter on a color from the name; kijk loads no pictures from the forge.
 export function avatar(name) {

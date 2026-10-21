@@ -266,16 +266,7 @@ func parseGithubPR(out []byte) (*pullRequest, error) {
 		return nil, err
 	}
 	p := &pullRequest{Number: v.Number, Title: v.Title, URL: webURL(v.URL), Target: v.BaseRefName}
-	switch {
-	case v.State == "MERGED":
-		p.State = "merged"
-	case v.State == "CLOSED":
-		p.State = "closed"
-	case v.IsDraft:
-		p.State = "draft"
-	default:
-		p.State = "open"
-	}
+	p.State = prState(v.State, v.IsDraft)
 	running := false
 	for _, c := range v.StatusCheckRollup {
 		// A check run has a name, a status and a conclusion; a commit status a context and a state.
@@ -346,25 +337,9 @@ func parseGitlabMR(out []byte) (*pullRequest, error) {
 	}
 	// The Draft chip says it already, so the title does not repeat it.
 	p := &pullRequest{Number: v.IID, Title: draftPrefixRe.ReplaceAllString(v.Title, ""), URL: webURL(v.WebURL), Target: v.TargetBranch}
-	switch {
-	case v.State == "merged":
-		p.State = "merged"
-	case v.State == "closed" || v.State == "locked":
-		p.State = "closed"
-	case v.Draft:
-		p.State = "draft"
-	default:
-		p.State = "open"
-	}
+	p.State = prState(v.State, v.Draft)
 	if pl := v.HeadPipeline; pl != nil {
-		switch pl.Status {
-		case "success":
-			p.CI = "passed"
-		case "failed":
-			p.CI = "failed"
-		case "running", "pending", "created", "preparing", "waiting_for_resource", "scheduled":
-			p.CI = "running"
-		}
+		p.CI = pipelineCI(pl.Status)
 		if p.CI != "" {
 			p.CIURL = webURL(pl.WebURL)
 		}
