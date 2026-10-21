@@ -461,7 +461,7 @@ function openCheck(root, n, res) {
     const r = review(root, n);
     let out;
     try {
-      out = await post('pr/submit', { root, n, verdict: verdict(root, n, res), body: r.summary.trim() });
+      out = await shown(root, n, res.at, 'pr/submit', { verdict: verdict(root, n, res), body: r.summary.trim() });
     } catch (err) {
       out = { error: err.message };
     }

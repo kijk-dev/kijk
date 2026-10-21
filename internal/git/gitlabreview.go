@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
@@ -148,7 +149,7 @@ func gitlabResolve(f *forge, n int, thread string, resolved bool) error {
 
 // gitlabSubmit posts the summary as a draft, publishes every draft of yours, also those written
 // on the website, then approves or requests changes. A later step that fails says what went out.
-func gitlabSubmit(f *forge, n int, verdict, body string) (summary string, err error) {
+func gitlabSubmit(f *forge, n int, head, verdict, body string) (summary string, err error) {
 	w, err := gitlabCanWrite(f)
 	if err != nil {
 		return "", err
@@ -185,7 +186,15 @@ func gitlabSubmit(f *forge, n int, verdict, body string) (summary string, err er
 	switch verdict {
 	case "approve":
 		what = "the approval"
-		_, err = gitlabREST(f, "POST", mr+"/approve", nil)
+		// With sha GitLab approves only the head kijk showed, and answers 409 when it moved.
+		var sha any
+		if head != "" {
+			sha = map[string]string{"sha": head}
+		}
+		_, err = gitlabREST(f, "POST", mr+"/approve", sha)
+		if err != nil && strings.Contains(err.Error(), "409") {
+			err = sayErr(fmt.Sprintf("!%d has new commits. Look at them first.", n))
+		}
 	case "changes":
 		what = "Request changes"
 		var v struct {
