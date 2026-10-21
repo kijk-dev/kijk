@@ -538,12 +538,13 @@ button.pill:hover { background: color-mix(in srgb, var(--modified) 22%, var(--se
 .prmeta .arrow { display: flex; }
 .prmeta .arrow svg { width: 11px; height: 11px; }
 .prhead:has(.back) { padding-left: 6px; }
-.prhead:has(.back) .prmeta, .prhead:has(.back) .prmode, .prhead:has(.back) .chips, .prhead:has(.back) .pr-note { padding-left: 26px; }
+.prhead:has(.back) .prmeta, .prhead:has(.back) .prmode, .prhead:has(.back) .chips, .prhead:has(.back) .pr-note, .prhead:has(.back) .since-note { padding-left: 26px; }
 .prhead .back { margin-right: 1px; }
 .prhead .pr-link { text-decoration: none; }
 .prhead .chips, .prhead .pr-note { padding-left: 19px; }
 .prmode { display: flex; align-items: center; gap: 6px; padding-left: 19px; margin-top: 2px; }
 .prmode .mode { margin-left: 0; }
+.since-note { margin: 0; padding-left: 19px; color: var(--muted); }
 .prmeta .av { width: 16px; height: 16px; font-size: 9px; }
 
 /* What reviewers cannot see yet. Dashed means "only on this machine". */
@@ -660,6 +661,10 @@ button.pill:hover { background: color-mix(in srgb, var(--modified) 22%, var(--se
 .fbody .ln.sep .tx { color: var(--muted); }
 .fbody .ln.sep .more { font: 12px system-ui, -apple-system, sans-serif; margin-left: 10px; padding: 0; position: static; }
 .fempty { margin: 8px 12px 2px; color: var(--muted); font: 12px system-ui, -apple-system, sans-serif; }
+/* Since your review, Changes shows less than the whole pull request; the bar says so. */
+.sincebar { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; padding: 4px 6px 4px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--select); color: var(--modified); font-size: 12px; }
+.sincebar.all { background: var(--bg); color: var(--text); }
+.sincebar .tool { margin-left: auto; flex: none; }
 .fend { margin: 4px 0 24px; text-align: center; font-size: 12px; color: var(--muted); }
 .np-tag {
   display: inline-flex; align-items: center; gap: 4px; margin-left: 10px; padding: 0 6px; border: 1px dashed var(--edge); border-radius: 8px;
