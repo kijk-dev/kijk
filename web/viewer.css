@@ -347,14 +347,14 @@ dialog.goto::backdrop { background: none; }
   border: 1px solid var(--edge); background: var(--bg); color: var(--text); caret-color: var(--modified);
 }
 #message:focus { outline: 2px solid var(--modified); outline-offset: -1px; }
-#commit-btn {
+#commit-btn, .primary {
   font: inherit; font-weight: 600; padding: 4px; border: 0; border-radius: 4px; background: var(--accent-fill); color: var(--on-accent);
   cursor: pointer; transition: background-color .12s;
 }
-#commit-btn:hover:not(:disabled) { background: color-mix(in srgb, var(--accent-fill) 88%, #000); }
-#commit-btn:active:not(:disabled) { background: color-mix(in srgb, var(--accent-fill) 76%, #000); }
-#commit-btn:focus-visible { outline-offset: 2px; }
-#commit-btn:disabled { font-weight: 400; background: var(--border); color: var(--muted); cursor: default; }
+#commit-btn:hover:not(:disabled), .primary:hover:not(:disabled) { background: color-mix(in srgb, var(--accent-fill) 88%, #000); }
+#commit-btn:active:not(:disabled), .primary:active:not(:disabled) { background: color-mix(in srgb, var(--accent-fill) 76%, #000); }
+#commit-btn:focus-visible, .primary:focus-visible { outline-offset: 2px; }
+#commit-btn:disabled, .primary:disabled { font-weight: 400; background: var(--border); color: var(--muted); cursor: default; }
 #git-output {
   margin: 8px 12px; padding: 6px 8px; max-height: 200px; overflow: auto; white-space: pre-wrap;
   font: 11px/1.4 var(--code-font); color: var(--conflict);
@@ -586,7 +586,8 @@ button.pill:hover { background: color-mix(in srgb, var(--modified) 22%, var(--se
 .reviewbox .gone li { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .reviewbox .gone .where { flex: none; color: var(--muted); font: 11px var(--code-font); }
 .reviewbox .gone .body { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* Your review: the verdict, the summary, and Submit review…, solid like Commit, whose place it takes. */
+/* Your review: the verdict, the summary, and Submit review…, solid like Commit (#commit-btn), whose
+   place it takes. */
 .reviewbox .mode { margin-left: 0; display: flex; }
 .reviewbox .mode button { flex: 1 1 auto; padding: 2px 4px; white-space: nowrap; }
 .reviewbox .mode button:disabled { color: color-mix(in srgb, var(--muted) 70%, var(--panel)); cursor: default; }
@@ -597,14 +598,6 @@ button.pill:hover { background: color-mix(in srgb, var(--modified) 22%, var(--se
 }
 .reviewbox textarea::placeholder { color: var(--muted); }
 .reviewbox textarea:focus { outline: 2px solid var(--modified); outline-offset: -1px; }
-.primary {
-  font: inherit; font-weight: 600; padding: 4px; border: 0; border-radius: 4px; background: var(--accent-fill); color: var(--on-accent);
-  cursor: pointer; transition: background-color .12s;
-}
-.primary:hover:not(:disabled) { background: color-mix(in srgb, var(--accent-fill) 88%, #000); }
-.primary:active:not(:disabled) { background: color-mix(in srgb, var(--accent-fill) 76%, #000); }
-.primary:focus-visible { outline: 2px solid var(--busy); outline-offset: 2px; }
-.primary:disabled { font-weight: 400; background: var(--border); color: var(--muted); cursor: default; }
 .prrow .yours { color: var(--modified); }
 
 /* The one check before a review is posted. Its light backdrop says this is the action that leaves the machine. */
