@@ -120,6 +120,11 @@ func (a *api) prView(w http.ResponseWriter, r *http.Request) {
 	kind := map[bool]string{true: "github", false: "gitlab"}[f.Kind == "github"]
 	out.Fetched, err = git.FetchPR(root, kind, n, pr.HeadOid, pr.BaseOid, pr.Base)
 	head := git.PRHead(root, n)
+	if head != "" {
+		pr.HeadOid = head
+	}
+	// The checks come from the forge; without the head only their graph needs the workflow file.
+	pr.ReadChecks(root, f)
 	if head == "" {
 		out.Error = "Cannot fetch #" + strconv.Itoa(n) + " from origin"
 		if err != nil {
@@ -142,8 +147,6 @@ func (a *api) prView(w http.ResponseWriter, r *http.Request) {
 	}
 	a.ranges.set(root, n, split, head)
 	out.Split, out.At, out.Files = split, head, files
-	pr.HeadOid = head
-	pr.ReadChecks(root, f)
 	threadTexts(root, head, pr.Threads)
 	reply(w, out)
 }
