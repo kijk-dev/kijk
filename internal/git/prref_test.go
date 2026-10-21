@@ -176,6 +176,54 @@ func TestPRDiff(t *testing.T) {
 	}
 }
 
+// A file's blobs say which version of it the forge diff shows: they move only when the file does.
+func TestPRFileBlobs(t *testing.T) {
+	_, _, work := prOrigin(t)
+	split, head := rev(t, work, "main~1"), rev(t, work, "retry")
+	files, err := PRFiles(work, split, head)
+	if err != nil || len(files) != 3 {
+		t.Fatalf("files %s %v", paths(files), err)
+	}
+	blob := func(rev, path string) string {
+		out, _ := Run(work, "rev-parse", rev+":"+path)
+		return out
+	}
+	none := strings.Repeat("0", 40)
+	want := []string{
+		blob(split, "name.go") + ".." + blob(head, "names.go"),
+		blob(split, "old.go") + ".." + none,
+		blob(split, "retry.go") + ".." + blob(head, "retry.go"),
+	}
+	for i, f := range files {
+		if f.Blobs != want[i] {
+			t.Errorf("%s: blobs %q, want %q", f.Path, f.Blobs, want[i])
+		}
+	}
+
+	gittest.Run(t, work, "checkout", "-q", "retry")
+	gittest.Write(t, filepath.Join(work, "retry.go"), "package shop\n\nfunc retry() {\n\tfor i := 0; i < 5; i++ {\n\t}\n}\n")
+	gittest.Write(t, filepath.Join(work, "new.go"), "package shop\n")
+	gittest.Run(t, work, "add", "new.go")
+	gittest.Run(t, work, "commit", "-qam", "Retry five times")
+	again, err := PRFiles(work, split, rev(t, work, "retry"))
+	if err != nil || len(again) != 4 {
+		t.Fatalf("files %s %v", paths(again), err)
+	}
+	byPath := map[string]change{}
+	for _, f := range again {
+		byPath[f.Path] = f
+	}
+	if want := none + ".." + blob("retry", "new.go"); byPath["new.go"].Blobs != want {
+		t.Errorf("new.go: blobs %q, want %q", byPath["new.go"].Blobs, want)
+	}
+	if byPath["names.go"].Blobs != files[0].Blobs || byPath["old.go"].Blobs != files[1].Blobs {
+		t.Errorf("blobs of files the commit left alone moved: %q %q", byPath["names.go"].Blobs, byPath["old.go"].Blobs)
+	}
+	if r := byPath["retry.go"]; r.Blobs == files[2].Blobs || !strings.HasPrefix(r.Blobs, blob(split, "retry.go")+"..") || r.Add != 4 || r.Del != 1 {
+		t.Errorf("retry.go after the commit: %+v", r)
+	}
+}
+
 func TestDeletePRRefs(t *testing.T) {
 	gittest.Isolate(t)
 	repo := gittest.Repo(t)

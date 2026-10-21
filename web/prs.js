@@ -3,12 +3,13 @@ import { lineCount, fileRow } from './git.js';
 import { FORGE, forgeMark, prChips } from './pr.js';
 import { onKey, keyLabel } from './keys.js';
 import { cachedView, loadView, onView, age } from './prdata.js';
-import { iconButton, plural } from './boxes.js';
+import { iconButton, plural, markCurrent } from './boxes.js';
 import { avatar, threadCount } from './threads.js';
 import { goToChange, setupChanges } from './changes.js';
 import { setupOverview } from './overview.js';
 import { setupDrafts, reviewBox } from './drafts.js';
 import { setBranchThreads, redrawBranchPanel, wakeBranch } from './review.js';
+import { marksOf, setViewed, onViewed, listCount, sweep } from './viewed.js';
 
 // The PRs tab: the list of open pull requests, one pull request opened in the sidebar, the count
 // on the tab, and when to ask the forge again. The folder's own branch in Local mode is review.js.
@@ -165,6 +166,7 @@ async function loadList() {
   if (key !== folder || listCall !== call) return;
   listCall = null;
   list = res;
+  if (!res.note && res.forge && res.total <= res.prs.length) sweep(key, res.forge, res.prs.map(r => r.number));
   page.setCount(res.note ? 0 : res.prs.filter(r => r.requested && r.number !== ownNumber()).length);
   draw();
   redrawBranchPanel();
@@ -187,6 +189,10 @@ onView((root, n, res) => {
   if (root !== folder) return;
   if (n === ownNumber()) setBranchThreads(res);
   draw();
+});
+
+onViewed(root => {
+  if (!root || root === folder) draw();
 });
 
 // refresh asks again about what the tab shows. The list is asked too, for the count.
@@ -299,7 +305,9 @@ function prRowEl(r) {
   }
   l2.append(el('span', 'who', r.number ? `${r.author} · ${age(r.createdAt)}` : `No ${words().kind} yet`));
   const drafts = r.number ? cachedView(folder, r.number)?.drafts ?? r.drafts : 0;
-  if (drafts) l2.append(el('span', 'yours', plural(drafts, 'draft')));
+  const viewed = r.number && list?.forge ? listCount(folder, list.forge, r.number) : null;
+  const yours = [drafts ? plural(drafts, 'draft') : '', viewed?.viewed ? `${viewed.viewed}/${viewed.files} viewed` : ''].filter(Boolean);
+  if (yours.length) l2.append(el('span', 'yours', yours.join(' · ')));
   const lc = lineCount(r.add, r.del);
   if (lc) l2.append(lc);
   li.append(l1, l2);
@@ -478,6 +486,8 @@ function drawPR(n, mine) {
   const sum = files.reduce(([a, d], f) => [a + (f.add || 0), d + (f.del || 0)], [0, 0]);
   const lc = lineCount(...sum);
   if (lc) h.append(lc);
+  const marks = marksOf(folder, n, res);
+  if (files.length) h.append(el('span', 'viewedcount', `${marks.count} of ${files.length} viewed`));
   const ul = el('ul');
   ul.setAttribute('aria-label', `Files of ${words().num}${n}`);
   ul.append(overviewRow(n, res));
@@ -490,6 +500,14 @@ function drawPR(n, mine) {
     r.dataset.path = f.path;
     const tc = threadCount((res.threads || []).filter(t => t.path === f.path));
     if (tc) r.insertBefore(tc, r.querySelector('.lc'));
+    const state = marks.state(f);
+    r.classList.toggle('viewed', state === 'viewed');
+    if (state === 'changed') {
+      const again = el('span', 'again', 'changed');
+      again.dataset.tip = 'Changed since you viewed it';
+      r.insertBefore(again, r.querySelector('.tc, .lc'));
+    }
+    r.append(viewedBox(n, res, f, state));
     if (f.path === selectedFile) r.classList.add('selected');
     ul.append(r);
   }
@@ -527,6 +545,38 @@ function drawPR(n, mine) {
   }
 }
 
+// viewedBox is a file row's Viewed box. It takes no Tab stop: V works on the focused row.
+function viewedBox(n, res, f, state) {
+  const box = el('input', 'viewedbox');
+  box.type = 'checkbox';
+  box.checked = state === 'viewed';
+  box.tabIndex = -1;
+  box.setAttribute('aria-label', 'Viewed');
+  box.dataset.tip = `Viewed\n${keyLabel('markViewed')}`;
+  box.onclick = e => e.stopPropagation();
+  box.onchange = () => { if (!setViewed(folder, n, res, f, box.checked)) box.checked = !box.checked; };
+  return box;
+}
+
+// markRow is V on a file row: it marks or clears the row's file, and after a mark goes to the next
+// row not viewed.
+function markRow(li) {
+  const w = which();
+  const res = w.panel === 'pr' ? cachedView(folder, w.n) : null;
+  const f = res?.files?.find(x => x.path === li.dataset.path);
+  if (!f) return;
+  const on = marksOf(folder, w.n, res).state(f) !== 'viewed';
+  if (!setViewed(folder, w.n, res, f, on)) return;
+  const marks = marksOf(folder, w.n, res);
+  const rows = [...prEl.querySelectorAll('.prfiles li')];
+  const next = on && res.files.slice(res.files.indexOf(f) + 1).find(x => marks.state(x) !== 'viewed');
+  const to = rows.find(r => r.dataset.path === (next ? next.path : f.path));
+  if (!to) return;
+  for (const r of rows) r.tabIndex = r === to ? 0 : -1;
+  if (next) to.click(); // shows it in Changes, which takes the focus
+  to.focus();
+}
+
 function selectFile(path) {
   selectedFile = path;
   for (const li of prEl.querySelectorAll('.prfiles li')) {
@@ -540,6 +590,12 @@ onKey('refreshPrs', () => {
   if (!folder || !line?.forge) return false;
   refresh();
   page.announce(`Asking ${words().name} again`);
+});
+
+onKey('markViewed', () => {
+  const li = document.activeElement?.closest?.('#prs-pr .prfiles li');
+  if (!li?.dataset.path) return markCurrent();
+  markRow(li);
 });
 
 onKey('prsBack', () => {

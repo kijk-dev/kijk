@@ -268,6 +268,7 @@ func (p page) press(action string) {
 		"refreshPrs": {{"y", []chromedp.Modifier{meta, alt}}, {"y", []chromedp.Modifier{ctrl, alt}}},
 		"prsBack":    {{kb.ArrowLeft, []chromedp.Modifier{alt}}, {kb.ArrowLeft, []chromedp.Modifier{alt}}},
 		"prevNote":   {{kb.ArrowUp, []chromedp.Modifier{alt}}, {kb.ArrowUp, []chromedp.Modifier{alt}}},
+		"markViewed": {{"v", nil}, {"v", nil}},
 	}
 	c, ok := keys[action]
 	if !ok {

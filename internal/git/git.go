@@ -108,6 +108,8 @@ type change struct {
 	Status string `json:"status"` // git's letter: M A D R C T U ?
 	Add    int    `json:"add,omitempty"`
 	Del    int    `json:"del,omitempty"`
+	// Blobs is "<old>..<new>" in a pull request's diff, so a viewed mark can tell when the file changed.
+	Blobs string `json:"blobs,omitempty"`
 }
 
 type Status struct {
@@ -499,6 +501,26 @@ func parseNameStatus(raw []byte) []change {
 		c := change{Status: st[:1], Path: f[i+1]}
 		i++
 		if (st[0] == 'R' || st[0] == 'C') && i+1 < len(f) {
+			c.Orig, c.Path = c.Path, f[i+1]
+			i++
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
+// parseRaw reads `git diff --raw -z --no-abbrev`: the files of parseNameStatus, with their blobs.
+func parseRaw(raw []byte) []change {
+	out := []change{}
+	f := strings.Split(string(raw), "\x00")
+	for i := 0; i+1 < len(f); i++ {
+		meta := strings.Fields(strings.TrimPrefix(f[i], ":"))
+		if len(meta) != 5 {
+			continue
+		}
+		c := change{Status: meta[4][:1], Path: f[i+1], Blobs: meta[2] + ".." + meta[3]}
+		i++
+		if (c.Status == "R" || c.Status == "C") && i+1 < len(f) {
 			c.Orig, c.Path = c.Path, f[i+1]
 			i++
 		}

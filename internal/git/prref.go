@@ -86,16 +86,16 @@ func PRHead(root string, n int) string {
 	return h
 }
 
-// PRFiles lists the files of a forge diff, with their line counts.
+// PRFiles lists the files of a forge diff, with their line counts and blobs.
 func PRFiles(root, base, head string) ([]change, error) {
 	if !ValidHash(base) || !ValidHash(head) {
 		return nil, ErrBadHash
 	}
-	raw, err := Raw(root, "diff", "--no-ext-diff", "--name-status", "-z", "-M", base, head)
+	raw, err := Raw(root, "diff", "--no-ext-diff", "--raw", "--no-abbrev", "-z", "-M", base, head)
 	if err != nil {
 		return nil, err
 	}
-	cs := parseNameStatus(raw)
+	cs := parseRaw(raw)
 	setCounts(cs, numstat(root, "-M", base, head))
 	slices.SortFunc(cs, func(x, y change) int { return strings.Compare(x.Path, y.Path) })
 	return cs, nil

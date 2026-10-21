@@ -135,6 +135,11 @@ icon counts the pull requests that wait for your review.
   diff. A button on each file opens the whole file as it is in the pull request.
 - Threads show under their lines. A resolved thread folds to one line; click it to read it. A
   thread whose lines changed after it was written is in a bar at the top of its file.
+- Check **Viewed** on a file, or press V, when you have read it. A viewed file folds, and V goes on
+  to the next file not viewed. The sidebar counts them ("4 of 9 viewed"), and the list of pull
+  requests too ("4/9 viewed"). When a push changes a file you viewed, the mark clears, the file
+  opens and says "changed since you viewed it". kijk keeps the marks in the browser on this
+  machine, for all clones of the repo. They do not go to GitHub or GitLab.
 - **Overview** shows the description, the reviewers and what they said, the conversation, and
   the checks. The checks of each GitHub workflow or GitLab pipeline are a graph: each job a pill,
   with lines to the jobs it needs. The first three failed jobs show the last lines of their logs.
@@ -209,6 +214,7 @@ kijk uses the IntelliJ default keys.
 | Next and previous thread or note | ⌥↓, ⌥↑ | Alt+↓, Alt+↑ |
 | Ask GitHub or GitLab again (PRs tab) | ⌘⌥Y | Ctrl+Alt+Y |
 | Back to the list of pull requests | ⌥← | Alt+← |
+| Mark the file viewed, or clear the mark (pull request) | V | V |
 | Commit | ⌘K | Ctrl+K |
 | Push | ⇧⌘K | Ctrl+Shift+K |
 | Close tab | ⌘W | Ctrl+F4 |
