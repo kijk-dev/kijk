@@ -264,6 +264,9 @@ func (p page) press(action string) {
 		"nextChange": {{kb.F7, nil}, {kb.F7, nil}},
 		"prevChange": {{kb.F7, []chromedp.Modifier{shift}}, {kb.F7, []chromedp.Modifier{shift}}},
 		"submitNote": {{"\r", []chromedp.Modifier{meta}}, {"\r", []chromedp.Modifier{ctrl}}},
+		"refreshPrs": {{"y", []chromedp.Modifier{meta, alt}}, {"y", []chromedp.Modifier{ctrl, alt}}},
+		"prsBack":    {{kb.ArrowLeft, []chromedp.Modifier{alt}}, {kb.ArrowLeft, []chromedp.Modifier{alt}}},
+		"prevNote":   {{kb.ArrowUp, []chromedp.Modifier{alt}}, {kb.ArrowUp, []chromedp.Modifier{alt}}},
 	}
 	c, ok := keys[action]
 	if !ok {
@@ -504,11 +507,11 @@ const lookupGo = "\n// lookup reads a session without touching its expiry.\nfunc
 
 // reviewRepo is the folder of an agent's branch fix-login, whose origin is on GitHub: one commit
 // pushed, one not, an edit not committed and a new file. git pushes to a bare repo in GitHub's place.
-func reviewRepo(t *testing.T) string {
+func reviewRepo(t *testing.T) (dir, origin string) {
 	t.Helper()
-	origin := filepath.Join(t.TempDir(), "review.git")
+	origin = filepath.Join(t.TempDir(), "review.git")
 	run(t, t.TempDir(), "init", "-q", "--bare", "-b", "main", origin)
-	dir := namedRepo(t, "review")
+	dir = namedRepo(t, "review")
 	write(t, filepath.Join(dir, "README.md"), "# Review\n\nA shop backend.\n")
 	write(t, filepath.Join(dir, "go.sum"), "example.com/a v1.0.0 h1:aaa=\n")
 	write(t, filepath.Join(dir, "internal", "auth", "session.go"), sessionGo("sess, ok := s.byID[c.Value]", ""))
@@ -535,22 +538,5 @@ func reviewRepo(t *testing.T) string {
 	run(t, dir, "commit", "-qm", "Add safe redirects")
 	write(t, filepath.Join(dir, "README.md"), "# Review\n\nA shop backend.\n\nRun it with go run.\n")
 	write(t, filepath.Join(dir, "internal", "auth", "redirect_test.go"), "package auth\n\nimport \"testing\"\n\nfunc TestSafeNext(t *testing.T) {\n\tif safeNext(\"//evil.com\") != \"/\" {\n\t\tt.Fatal(\"open redirect\")\n\t}\n}\n")
-	return dir
-}
-
-// fakeForgeTools is a folder with a gh that answers every question with pull request #482, and a
-// glab that answers with merge request !12.
-func fakeForgeTools(t *testing.T) string {
-	t.Helper()
-	dir := t.TempDir()
-	pr := `{"number":482,"title":"Fix login redirect loop","state":"OPEN","isDraft":false,"url":"https://github.com/acme/review/pull/482","baseRefName":"main","reviewDecision":"","statusCheckRollup":[],"latestReviews":[]}`
-	mr := `{"iid":12,"title":"Fix login redirect loop","state":"opened","draft":false,"web_url":"https://gitlab.com/acme/review/-/merge_requests/12","target_branch":"main"}`
-	write(t, filepath.Join(dir, "gh"), "#!/bin/sh\necho '"+pr+"'\n")
-	write(t, filepath.Join(dir, "glab"), "#!/bin/sh\nif [ \"$1\" = mr ]; then echo '"+mr+"'; else echo '{}'; fi\n")
-	for _, tool := range []string{"gh", "glab"} {
-		if err := os.Chmod(filepath.Join(dir, tool), 0o755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	return dir
+	return dir, origin
 }

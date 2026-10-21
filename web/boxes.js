@@ -211,7 +211,11 @@ export function drawHead(v, b) {
   if (lc) parts.push(lc);
   parts.push(...extra.filter(p => p && !p.classList?.contains('np')));
   parts.push(el('span', 'grow'));
-  if (f.status !== 'D' && v.src.openFile) parts.push(iconButton(ICON.doc, v.src.openTip || 'Open the whole file', () => v.src.openFile(f)));
+  if (f.status !== 'D' && v.src.openFile) {
+    const open = iconButton(ICON.doc, 'Open the whole file', () => v.src.openFile(f));
+    if (v.src.openTip) open.dataset.tip = v.src.openTip;
+    parts.push(open);
+  }
   b.head.replaceChildren(...parts);
 }
 
@@ -340,7 +344,8 @@ export async function drawBox(v, b) {
       }
       if (v.cur?.path === b.f.path && v.cur.n === l.n && l.k !== '-') row.classList.add('cur');
       out.push(row);
-      put(l.k === '-' ? `o:${l.o}` : `n:${l.n}`);
+      if (l.k !== '-') put(`n:${l.n}`);
+      if (l.k !== '+') put(`o:${l.o}`);
     });
   });
   // What has no line left, as on a deleted file, shows at the end of the box.
