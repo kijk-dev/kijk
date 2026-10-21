@@ -332,7 +332,7 @@ const nothing = (root, n, res) => verdict(root, n, res) === 'comment' && !tally(
 // Submit review…; or why kijk cannot write here. The box stays one element, so what is typed stays.
 export function reviewBox(root, n, res) {
   if (!writable(res)) {
-    if (!res?.write?.note) return null;
+    if (!res?.write?.note || ['merged', 'closed'].includes(res.state)) return null; // the sidebar says it already
     const box = el('div', 'reviewbox');
     box.append(el('p', 'hint', res.write.note));
     return box;
