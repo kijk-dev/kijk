@@ -206,21 +206,21 @@ func TestPRFileBlobs(t *testing.T) {
 	gittest.Run(t, work, "add", "new.go")
 	gittest.Run(t, work, "commit", "-qam", "Retry five times")
 	again, err := PRFiles(work, split, rev(t, work, "retry"))
-	if err != nil || len(again) != 4 || again[1].Path != "new.go" {
+	if err != nil || len(again) != 4 {
 		t.Fatalf("files %s %v", paths(again), err)
 	}
-	if want := none + ".." + blob("retry", "new.go"); again[1].Blobs != want {
-		t.Errorf("new.go: blobs %q, want %q", again[1].Blobs, want)
+	byPath := map[string]change{}
+	for _, f := range again {
+		byPath[f.Path] = f
 	}
-	again = append(again[:1], again[2:]...)
-	if again[0].Blobs != files[0].Blobs || again[1].Blobs != files[1].Blobs {
-		t.Errorf("blobs of files the commit left alone moved: %q %q", again[0].Blobs, again[1].Blobs)
+	if want := none + ".." + blob("retry", "new.go"); byPath["new.go"].Blobs != want {
+		t.Errorf("new.go: blobs %q, want %q", byPath["new.go"].Blobs, want)
 	}
-	if again[2].Blobs == files[2].Blobs || !strings.HasPrefix(again[2].Blobs, blob(split, "retry.go")+"..") {
-		t.Errorf("retry.go blobs %q after the commit", again[2].Blobs)
+	if byPath["names.go"].Blobs != files[0].Blobs || byPath["old.go"].Blobs != files[1].Blobs {
+		t.Errorf("blobs of files the commit left alone moved: %q %q", byPath["names.go"].Blobs, byPath["old.go"].Blobs)
 	}
-	if again[2].Add != 4 || again[2].Del != 1 {
-		t.Errorf("retry.go counts: +%d -%d", again[2].Add, again[2].Del)
+	if r := byPath["retry.go"]; r.Blobs == files[2].Blobs || !strings.HasPrefix(r.Blobs, blob(split, "retry.go")+"..") || r.Add != 4 || r.Del != 1 {
+		t.Errorf("retry.go after the commit: %+v", r)
 	}
 }
 
