@@ -34,9 +34,14 @@ function ask(root, n, from, at, k) {
   call.then(res => {
     if (answers.get(k) !== call) return;
     if (res.at !== at) {
-      // The server has a newer head than the page: show it first, which asks again.
-      answers.delete(k);
-      loadView(root, n).catch(() => {});
+      // The server has a newer head than the page: show it first, which asks again. The entry stays
+      // pending until then, so a draw meanwhile does not ask again.
+      const wait = loadView(root, n).catch(() => {}).finally(() => {
+        if (answers.get(k) !== wait) return;
+        answers.delete(k);
+        tell(root, n);
+      });
+      answers.set(k, wait);
       return;
     }
     answers.set(k, res);
