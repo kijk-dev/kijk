@@ -94,7 +94,7 @@ kijk ~/code/api ~/notes
 ### Pull requests
 
 If you use the `gh` (GitHub) or `glab` (GitLab) command and are logged in, the Git tab shows the pull request or merge request of the branch. It shows the state, the checks or pipeline, and the review.
-kijk asks `gh` and `glab`. It never stores a token itself. The PRs tab shows more of them: see [Review a pull request](#review-a-pull-request).
+kijk asks `gh` and `glab`. It never stores a token itself. The PRs tab shows more of them, and the reviews you write there go through the same commands: see [Review a pull request](#review-a-pull-request).
 
 ### Review a branch
 
@@ -144,7 +144,28 @@ icon counts the pull requests that wait for your review.
   that kijk knows: a saved folder or an agent's folder. kijk never clones a repo.
 - kijk asks GitHub or GitLab again when you open a pull request, when the window gets focus,
   every 2 minutes while the PRs tab shows, and when you press the refresh key.
-- kijk reads pull requests only. It does not comment, approve or merge.
+
+**Write a review.** Your comments, replies and verdict go into your review on GitHub or GitLab.
+Nothing with text goes out before you press **Submit review**.
+
+- In **Changes**, hover a line and press **+**, or press the note key, to write a comment. **Add to
+  review** saves it as a draft: in your pending review on GitHub, as a draft note on GitLab. Only
+  you see a draft. It stays after a restart, and you can finish the review on the website.
+- An open thread ends in a **Reply…** box. Enter adds the reply to your review.
+- Your drafts show in dashed boxes, also the ones you wrote on the website, which say "written on
+  GitHub". You can edit and delete them.
+- **Resolve** and **Unresolve** in a thread's header happen at once.
+- The box at the bottom of the sidebar counts your drafts, and has the verdict (Comment, Approve or
+  Request changes) and a summary. "Comment on the pull request…" at the end of the Overview adds
+  its text to the summary.
+- **Submit review…** first shows what goes out: the verdict, the comments, the replies and the
+  summary. Enter posts them; everyone on the pull request sees them at once. Escape goes back, and
+  nothing is lost.
+- On your own branch, the same works in **As on GitHub**. In **Local** mode a comment is an agent
+  note and never reaches the forge.
+- GitHub does not let you approve your own pull request. GitLab needs version 16.3 for reviews from
+  kijk, and 18.9 for Request changes; on an older server kijk says so.
+- kijk never merges.
 
 To diff a pull request, kijk fetches its head commit into your repo as `refs/kijk/pr/<number>`,
 with no checkout. When the target branch on GitHub has commits you have not fetched, kijk puts
@@ -180,8 +201,8 @@ kijk uses the IntelliJ default keys.
 | Files tab | ⌘1 | Alt+1 |
 | Git tab | ⌘0 | Alt+0 |
 | PRs tab | ⌘2 | Alt+2 |
-| Note for the agent on the current line | ⌘⌥N | Ctrl+Alt+N |
-| Add the note | ⌘Enter | Ctrl+Enter |
+| Note for the agent, or a comment in a pull request, on the current line | ⌘⌥N | Ctrl+Alt+N |
+| Add the note or the comment | ⌘Enter | Ctrl+Enter |
 | Next and previous thread or note | ⌥↓, ⌥↑ | Alt+↓, Alt+↑ |
 | Ask GitHub or GitLab again (PRs tab) | ⌘⌥Y | Ctrl+Alt+Y |
 | Back to the list of pull requests | ⌥← | Alt+← |
@@ -253,6 +274,8 @@ Requirements:
 ## Limits
 
 - You cannot edit files in kijk.
+- A comment is on one line. Comments on a range of lines, on a whole file, and suggested changes
+  are not in kijk.
 - kijk does not download Git LFS files. An image stored in Git LFS shows its size in place of the picture.
 
 ## Install
