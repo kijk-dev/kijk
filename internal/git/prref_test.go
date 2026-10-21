@@ -288,7 +288,9 @@ func TestPRFilePrunes(t *testing.T) {
 	old := filepath.Join(cache, strings.Repeat("a", 40))
 	gittest.Write(t, filepath.Join(old, "x.go"), "old\n")
 	day := time.Now().Add(-48 * time.Hour)
-	os.Chtimes(old, day, day)
+	if err := os.Chtimes(old, day, day); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := PRFile(clone, 7, "retry.go", cache); err != nil {
 		t.Fatal(err)
 	}

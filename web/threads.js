@@ -1,6 +1,6 @@
-import { el } from './api.js';
+import { el, svg } from './api.js';
 import { age } from './prdata.js';
-import { plural, svg } from './boxes.js';
+import { plural } from './boxes.js';
 
 // Forge threads as boxes under their lines: open threads with a tinted header, resolved ones folded
 // to one line, and outdated ones in a bar at the top of their file box.
