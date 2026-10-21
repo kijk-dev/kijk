@@ -24,7 +24,7 @@ type Options struct {
 
 // Register adds the routes of one folder's views to mux. The caller guards mux.
 func Register(mux *http.ServeMux, rts *Roots, o Options) {
-	a := &api{roots: rts, index: newIndexCache(), hl: newHlCache(), cacheDir: o.CacheDir, ranges: &prRanges{m: map[string][2]string{}}}
+	a := &api{roots: rts, index: newIndexCache(), hl: newHlCache(), cacheDir: o.CacheDir, ranges: &prRanges{m: map[string][2]string{}, writes: map[string]git.Write{}}}
 	if o.Web != nil {
 		ec := newEngineCache(o.CacheDir, o.Version)
 		mux.HandleFunc("GET /diagram", serveFrame(o.Web, ec))

@@ -134,3 +134,26 @@ func TestReviewSubmitPartly(t *testing.T) {
 		t.Fatalf("%d %s", w.Code, w.Body.String())
 	}
 }
+
+// The server refuses what the forge would refuse, from what it knows about the pull request.
+func TestReviewWriteRules(t *testing.T) {
+	clone, head, base := prRepo(t)
+	own := strings.Replace(prAnswer("OPEN", head, base), `"author":{"login":"sanne"}`, `"author":{"login":"you"}`, 1)
+	calls := gittest.FakeToolCalls(t, "gh", gittest.Rule{Has: "pullRequest(number", Out: own})
+	get, post := reviewServer(t, clone)
+	if w := get("/api/pr/view", url.Values{"n": {"7"}}); w.Code != 200 {
+		t.Fatalf("view %d %s", w.Code, w.Body.String())
+	}
+	n := len(calls())
+	w := post("/api/pr/submit", fmt.Sprintf(`{"root":%q,"n":7,"verdict":"approve"}`, clone))
+	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "You cannot approve or request changes on your own pull request") || len(calls()) != n {
+		t.Errorf("approve your own: %d %s", w.Code, w.Body.String())
+	}
+
+	gittest.FakeToolCalls(t, "gh", gittest.Rule{Has: "pullRequest(number", Out: prAnswer("MERGED", head, base)})
+	get("/api/pr/view", url.Values{"n": {"7"}})
+	w = post("/api/pr/comment", fmt.Sprintf(`{"root":%q,"n":7,"thread":"T1","body":"Late."}`, clone))
+	if w.Code != http.StatusConflict || strings.TrimSpace(w.Body.String()) != "This pull request is merged." {
+		t.Errorf("reply on a merged pull request: %d %s", w.Code, w.Body.String())
+	}
+}

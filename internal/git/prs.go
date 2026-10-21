@@ -544,7 +544,11 @@ func ViewPR(root string, n int) (*PR, *forge, error) {
 		}
 	}
 	if pr.State == "merged" || pr.State == "closed" {
-		pr.Write = Write{}
+		word := "pull request"
+		if tool == "glab" {
+			word = "merge request"
+		}
+		pr.Write = Write{Note: "This " + word + " is " + pr.State + "."}
 	}
 	return &pr, f, nil
 }

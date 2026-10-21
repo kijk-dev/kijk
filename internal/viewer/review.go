@@ -1,6 +1,7 @@
 package viewer
 
 import (
+	"cmp"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -38,6 +39,10 @@ func (a *api) write(run func(req writeRequest) (any, error)) http.HandlerFunc {
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
+		if why := refused(a.ranges, req); why != "" {
+			http.Error(w, why, http.StatusConflict) // the forge would refuse it, so kijk does not ask
+			return
+		}
 		out, err := run(req)
 		switch {
 		case errors.Is(err, git.ErrBadInput):
@@ -52,6 +57,20 @@ func (a *api) write(run func(req writeRequest) (any, error)) http.HandlerFunc {
 			reply(w, out)
 		}
 	}
+}
+
+// refused says why the forge would refuse a write, by what it last said kijk may write.
+func refused(p *prRanges, req writeRequest) string {
+	can, known := p.write(req.Root, req.N)
+	switch {
+	case !known:
+		return ""
+	case !can.OK:
+		return cmp.Or(can.Note, "kijk cannot write to this pull request")
+	case req.Verdict == "approve" && !can.Approve, req.Verdict == "changes" && !can.Changes:
+		return can.Why
+	}
+	return ""
 }
 
 // errNotShown: kijk has no diff of the pull request to put a comment on, as after a restart.
