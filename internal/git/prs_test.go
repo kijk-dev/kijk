@@ -277,8 +277,16 @@ draft-54 legacy.go:3 old=true orig=3 resolved=false outdated=true was="" [draft]
 		t.Errorf("conversation %s\nwant %s", got, want)
 	}
 	// The first draft not on a line and not a reply is the summary of your review.
-	if pr.Drafts != 4 || pr.Summary != "Looks fine overall." || pr.SummaryID != "53" {
-		t.Errorf("drafts %d, summary %q %q", pr.Drafts, pr.Summary, pr.SummaryID)
+	if pr.Drafts != 4 || pr.Summary != "Looks fine overall." {
+		t.Errorf("drafts %d, summary %q", pr.Drafts, pr.Summary)
+	}
+	// A comment on a whole file is no summary, even when it is the oldest draft not on a line.
+	var file PR
+	if err := addGitlabDrafts(&file, []byte(`[{"id":53,"note":"Fine.","position":null},{"id":40,"note":"About a.go","position":{"position_type":"file","new_path":"a.go"}}]`)); err != nil {
+		t.Fatal(err)
+	}
+	if file.Summary != "Fine." {
+		t.Errorf("summary %q", file.Summary)
 	}
 	// A reply to a comment not on a line says whom it answers.
 	if r := pr.Comments[1].ReplyTo; r != "tim" {

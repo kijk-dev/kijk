@@ -147,8 +147,7 @@ func gitlabResolve(f *forge, n int, thread string, resolved bool) error {
 	return err
 }
 
-// gitlabSummary sets the summary: the oldest draft note that is not on a line and not a reply,
-// as addGitlabDrafts reads it. An empty body deletes it.
+// gitlabSummary sets the summary, the draft summaryDraft finds; an empty body deletes it.
 func gitlabSummary(f *forge, n int, body string) error {
 	if _, err := gitlabCanWrite(f); err != nil {
 		return err
@@ -162,12 +161,7 @@ func gitlabSummary(f *forge, n int, body string) error {
 	if err := json.Unmarshal(out, &ds); err != nil {
 		return err
 	}
-	id := 0
-	for _, d := range ds {
-		if d.general() && (id == 0 || d.ID < id) {
-			id = d.ID
-		}
-	}
+	id := summaryDraft(ds)
 	switch {
 	case id != 0 && body == "":
 		_, err = gitlabREST(f, "DELETE", mr+"/draft_notes/"+strconv.Itoa(id), nil)

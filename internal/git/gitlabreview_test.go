@@ -162,7 +162,8 @@ func TestGitlabSummary(t *testing.T) {
 		return gittest.Rule{Has: "gitlab.com " + mr7 + "/draft_notes", Out: out}
 	}
 	write := gittest.Rule{Has: mr7 + "/draft_notes", Out: `{"id":70}`}
-	have := `[{"id":61,"discussion_id":"ab12","position":null},{"id":62,"position":{"new_line":3}},{"id":53,"position":{"new_line":null,"old_line":null}},{"id":54,"position":null}]`
+	// A comment on a whole file has a position with no line, but it is not the summary.
+	have := `[{"id":61,"discussion_id":"ab12","position":null},{"id":62,"position":{"new_line":3}},{"id":40,"position":{"position_type":"file","new_path":"a.go","old_path":"a.go"}},{"id":53,"position":{"new_line":null,"old_line":null}},{"id":54,"position":null}]`
 
 	calls := gittest.FakeToolCalls(t, "glab", glVersion("17.4.0"), list(have), write)
 	if err := SetSummary(repo, 7, "h1", "Looks good."); err != nil {
