@@ -146,7 +146,8 @@ icon counts the pull requests that wait for your review.
   every 2 minutes while the PRs tab shows, and when you press the refresh key.
 
 **Write a review.** Your comments, replies and verdict go into your review on GitHub or GitLab.
-Nothing with text goes out before you press **Submit review**.
+Nothing with text goes out before you press **Post review** in the check that **Submit review…**
+opens.
 
 - In **Changes**, hover a line and press **+**, or press the note key, to write a comment. **Add to
   review** saves it as a draft: in your pending review on GitHub, as a draft note on GitLab. Only
