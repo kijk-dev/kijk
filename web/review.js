@@ -66,8 +66,8 @@ export function setBranchFolder(key, icon) {
   panel.replaceChildren();
 }
 
-// refreshBranch runs after each git status of a folder with branch changes. It asks for the branch
-// changes only while the PRs tab or the Branch changes view shows them.
+// refreshBranch runs with each git status refresh. It asks for the branch changes only while the
+// PRs tab or the Branch changes view shows them.
 export async function refreshBranch(st, pr, tgt) {
   status = st;
   prStatus = pr;
@@ -82,6 +82,7 @@ export function showBranchPanel(st, pr, tgt) {
   status = st || status;
   prStatus = pr;
   target = tgt;
+  if (loading?.key === `${folder}\n${target}`) return; // the load draws the panel when it is done
   if (data) drawPanel();
   else if (!panel.hidden) load();
 }
@@ -91,8 +92,9 @@ export function focusBranchList() {
   (list?.querySelector('[tabindex="0"]') || list || panel).focus();
 }
 
-// basis is what every diff of the branch depends on besides its own file: the split point and the upstream.
-const basis = () => `${data?.split} ${data?.upHash || ''}`;
+// basis is what every box depends on besides its own file: the branch and its notes, the split
+// point and the upstream.
+const basis = () => `${data?.branch} ${data?.split} ${data?.upHash || ''}`;
 
 const openView = () => (view && isCurrent(view) ? view : null);
 
@@ -111,13 +113,15 @@ async function load(change) {
   const key = `${folder}\n${target}`;
   const res = await fetchBranch();
   if (key !== `${folder}\n${target}`) return;
-  if (res instanceof Error) {
+  if (res instanceof Error && res.status === 404) {
     // On another branch, such as the main line, nothing of this branch may show or be added to.
     closeCopy();
     data = null;
-    error = res.status === 404 ? 'This branch has no branch changes' : res.message;
+    error = 'This branch has no branch changes';
     notes = [];
     notesKey = '';
+  } else if (res instanceof Error) {
+    error = res.message; // a git call failed once: keep what shows until the next refresh
   } else {
     data = res;
     error = '';
@@ -128,7 +132,7 @@ async function load(change) {
   if (!v) return;
   if (!data) noChanges(v);
   else if (!v.scroll) await build(v);
-  else await updateView(v, change);
+  else if (!error) await updateView(v, change);
 }
 
 // ----- Agent notes: {id, path, line, text, body, at, copiedAt, outdated}, kept per folder and branch -----
@@ -172,7 +176,7 @@ function drawPanel() {
   // The panel redraws on every refresh, so the focus moves to the same control in the new one.
   const focused = panel.contains(document.activeElement) ? document.activeElement : null;
   const key = focused?.closest('.prfiles ul') ? 'list' : focused?.dataset.k;
-  panel.replaceChildren(header(), ...unpushedBar(), fileList(), notesBox());
+  panel.replaceChildren(header(), ...(error ? [el('p', 'note error', error)] : []), ...unpushedBar(), fileList(), notesBox());
   if (key === 'list') focusBranchList();
   else if (key) panel.querySelector(`[data-k="${key}"]`)?.focus();
 }
@@ -386,8 +390,9 @@ export async function openBranch(viewer, root, tab, keep, save) {
     return true;
   };
   if (root !== folder) return;
+  // Draw what is known at once, then check it: the branch may have changed while the tab was hidden.
   if (data) await build(v);
-  else await load();
+  if (isCurrent(v)) await load();
 }
 
 // build draws the view of the branch changes in data; noChanges says there are none.
@@ -556,7 +561,7 @@ async function loadBox(v, b) {
       res = { error: err.message };
     }
     if (!isCurrent(v) || v.boxes.get(b.f.path) !== b) return;
-    const json = JSON.stringify(res);
+    const json = basis() + JSON.stringify(res); // the same diff on another branch has other notes
     if (b.loaded && json === b.json) return;
     b.json = json;
     b.res = res;
@@ -569,14 +574,16 @@ async function loadBox(v, b) {
   }
 }
 
-// fileLines reads a file on disk: its text per line, and its colored pieces.
+// fileLines reads a file on disk: its text per line, and its colored pieces. A file that is gone
+// has no lines; null means it could not be read now, so its notes must stay as they are.
 async function fileLines(root, path) {
   const out = [];
   for (let from = 0; from < 40000; from += 2000) {
     let part;
     try {
       part = await get('lines', { root, path, from, to: from + 2000 });
-    } catch {
+    } catch (err) {
+      if (err.status !== 404) return null;
       break;
     }
     out.push(...part);
@@ -590,11 +597,15 @@ async function fileLines(root, path) {
 async function place(v, b, rows) {
   const mine = notesOn(b.f.path);
   const byN = new Map(rows.filter(r => r.n && r.k !== '-').map(r => [r.n, r]));
-  let file = null;
+  let file;
   let moved = false;
   for (const n of mine) {
-    if (byN.get(n.line)?.t === n.text) moved = relocate(n, { [n.line - 1]: n.text }) || moved;
-    else moved = relocate(n, (file ??= await fileLines(v.root, b.f.path)).texts) || moved;
+    if (byN.get(n.line)?.t === n.text) {
+      moved = relocate(n, { [n.line - 1]: n.text }) || moved;
+      continue;
+    }
+    if (file === undefined) file = await fileLines(v.root, b.f.path);
+    if (file) moved = relocate(n, file.texts) || moved;
   }
   if (moved) {
     saveNotes();
@@ -603,7 +614,7 @@ async function place(v, b, rows) {
   const extra = [];
   const where = new Map();
   for (const n of mine) {
-    const at = n.outdated ? Math.min(n.line, file.texts.length) : n.line;
+    const at = n.outdated && file ? Math.min(n.line, file.texts.length) : n.line;
     where.set(n, at);
     if (at && !byN.has(at) && file?.texts[at - 1] != null && !extra.some(x => x.n === at)) {
       extra.push({ k: ' ', n: at, t: file.texts[at - 1], x: file.pieces[at - 1] });
@@ -638,6 +649,7 @@ async function placeAll() {
   if (key !== folder) return false;
   const moved = new Set();
   paths.forEach((path, i) => {
+    if (!files[i]) return;
     for (const n of notes) if (n.path === path && relocate(n, files[i].texts)) moved.add(path);
   });
   if (moved.size) notesChanged(moved);

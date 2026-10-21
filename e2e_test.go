@@ -284,6 +284,63 @@ func TestBrowser(t *testing.T) {
 		b.waitFor("the PRs tab again", `!`+prsTab+`.hidden && !document.querySelector('#prs').hidden`)
 		b.waitFor("the notes again", noted+`?.nextElementSibling?.matches('.thr.note') && `+redirect+`?.nextElementSibling?.matches('.thr.note')`)
 
+		// The same while a file tab shows: Branch changes is not left on the old branch.
+		b.click("Open the whole file", fileBox(session)+`.querySelector('[aria-label="Open the whole file"]')`)
+		b.waitFor("the file tab", activeFile("session.go"))
+		b.click("the Files tab", filesTab)
+		run(t, repo, "stash", "-q", "-u")
+		run(t, repo, "checkout", "-q", "main")
+		b.waitFor("no PRs tab on main", prsTab+`.hidden`)
+		b.click("the Branch changes tab", byText("#filetabs .filetab span", "Branch changes"))
+		b.waitFor("no branch changes on main", `!document.querySelector('.fbox') && !document.querySelector('.thr.note') && document.querySelector('#viewer .empty')?.textContent === 'This branch has no branch changes'`)
+		run(t, repo, "checkout", "-q", "fix-login")
+		run(t, repo, "stash", "pop", "-q")
+		b.waitFor("the PRs tab again", `!`+prsTab+`.hidden`)
+		b.press("prsTab")
+		b.waitFor("the notes again", noted+`?.nextElementSibling?.matches('.thr.note') && `+redirect+`?.nextElementSibling?.matches('.thr.note')`)
+
+		// A branch with the same split point, upstream and changes shows none of these notes.
+		run(t, repo, "stash", "-q", "-u")
+		run(t, repo, "checkout", "-q", "-b", "other")
+		run(t, repo, "branch", "-q", "--set-upstream-to=origin/fix-login")
+		run(t, repo, "stash", "pop", "-q")
+		b.waitFor("the other branch", `[...document.querySelectorAll('#prs .prmeta .ref')].map(r => r.textContent).join(' ') === 'other main'`)
+		b.waitFor("no notes on the other branch", `document.querySelector('#prs .reviewbox .head .muted')?.textContent === 'none yet' && document.querySelector('.fbox') && !document.querySelector('.thr.note')`)
+		run(t, repo, "stash", "-q", "-u")
+		run(t, repo, "checkout", "-q", "fix-login")
+		run(t, repo, "stash", "pop", "-q")
+		b.waitFor("the notes of fix-login", noted+`?.nextElementSibling?.matches('.thr.note') && `+redirect+`?.nextElementSibling?.matches('.thr.note')`)
+
+		// A failed read of a file does not make its notes outdated, also when their boxes are not drawn.
+		b.click("close Branch changes", `document.querySelector('#filetabs .filetab.active .close')`)
+		b.waitFor("Branch changes closed", `!document.querySelector('.fbox')`)
+		b.evalJS(`window.e2eFetch = window.fetch; window.fetch = (u, o) => String(u).includes('/api/lines') ? Promise.resolve(new Response('git failed', {status: 500})) : e2eFetch(u, o)`)
+		b.click("Copy for agent", byText("#prs .reviewbox button", "Copy for agent…"))
+		b.waitFor("the panel", `document.querySelectorAll('.copypanel li').length === 2`)
+		b.waitFor("no note outdated", `![...document.querySelectorAll('.copypanel .where')].some(w => w.textContent.includes('outdated'))`)
+		b.key("Escape", kb.Escape)
+		b.evalJS(`window.fetch = e2eFetch`)
+		b.press("prsTab")
+		b.waitFor("Branch changes again", redirect+`?.nextElementSibling?.matches('.thr.note') && !document.querySelector('.thr.note .was')`)
+
+		// A failed refresh keeps the view and the note being typed.
+		b.click("a line of redirect.go", redirect+`.querySelector('.tx')`)
+		b.press("addNote")
+		b.typeText("Half a note")
+		b.evalJS(`window.e2eFails = 0; window.fetch = (u, o) => String(u).includes('/api/branch') ? (e2eFails++, Promise.resolve(new Response('git failed', {status: 500}))) : e2eFetch(u, o)`)
+		readme, err := os.ReadFile(filepath.Join(repo, "README.md"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		write(t, filepath.Join(repo, "README.md"), string(readme)+"\n")
+		b.waitFor("a failed refresh", `e2eFails > 0`)
+		b.act("wait for the page", chromedp.Sleep(300*time.Millisecond))
+		b.waitFor("the view and the note kept", `document.querySelector('.fbox') && document.querySelector('.thr.editing textarea')?.value === 'Half a note' && document.querySelectorAll('.thr.note:not(.editing)').length === 2`)
+		b.evalJS(`window.fetch = e2eFetch`)
+		write(t, filepath.Join(repo, "README.md"), string(readme))
+		b.key("Escape", kb.Escape)
+		b.waitFor("the editor closed", `!document.querySelector('.thr.editing')`)
+
 		// Lines added above a note: it stays under its line, also when its box is not on screen.
 		redirectGo := filepath.Join(repo, "internal", "auth", "redirect.go")
 		src, err := os.ReadFile(redirectGo)

@@ -32,7 +32,7 @@ export function forgeMark(kind) {
   return mark;
 }
 
-// showPR fills the pull request line: the PR with its CI and review state, else links to the host.
+// showPR fills the pull request line: the PR with its CI and review state, else links to the forge.
 export function showPR(line, res) {
   const f = res?.forge;
   line.hidden = !f;
