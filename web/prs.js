@@ -565,12 +565,11 @@ function markRow(li) {
   const res = w.panel === 'pr' && cachedView(folder, w.n);
   const f = res?.files.find(x => x.path === li.dataset.path);
   if (!f) return;
-  const marks = marksOf(folder, w.n, res);
-  const on = marks.state(f) !== 'viewed';
+  const on = marksOf(folder, w.n, res).state(f) !== 'viewed';
   setViewed(folder, w.n, res, f, on);
+  const marks = marksOf(folder, w.n, res);
   const rows = [...prEl.querySelectorAll('.prfiles li')];
-  const after = res.files.slice(res.files.indexOf(f) + 1);
-  const next = on && after.find(x => marksOf(folder, w.n, res).state(x) !== 'viewed');
+  const next = on && res.files.slice(res.files.indexOf(f) + 1).find(x => marks.state(x) !== 'viewed');
   const to = rows.find(r => r.dataset.path === (next ? next.path : f.path));
   if (!to) return;
   for (const r of rows) r.tabIndex = r === to ? 0 : -1;
