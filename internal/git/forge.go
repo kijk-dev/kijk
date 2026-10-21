@@ -135,7 +135,8 @@ func glabHostFiles() []string {
 
 // PRFor looks up the pull or merge request of the branch HEAD is on.
 func PRFor(root string) prStatus {
-	res := prStatus{Forge: detectForge(root)}
+	f, tool, note := forgeTool(root)
+	res := prStatus{Forge: f}
 	if res.Forge == nil {
 		return res
 	}
@@ -145,9 +146,8 @@ func PRFor(root string) prStatus {
 		return res
 	}
 	res.Create = createURL(res.Forge, branch)
-	res.Tool = map[string]string{"github": "gh", "gitlab": "glab"}[res.Forge.Kind]
-	if _, err := exec.LookPath(res.Tool); err != nil {
-		res.Note = "Install " + res.Tool + " and log in to see " + map[string]string{"gh": "pull request", "glab": "merge request"}[res.Tool] + " status"
+	res.Tool, res.Note = tool, note
+	if note != "" {
 		return res
 	}
 	var err error

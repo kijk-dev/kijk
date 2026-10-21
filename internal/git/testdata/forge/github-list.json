@@ -1,0 +1,6 @@
+{"data":{"viewer":{"login":"you"},"repository":{"pullRequests":{"totalCount":41,"nodes":[
+{"number":477,"title":"Retry webhook delivery with backoff","isDraft":false,"url":"https://github.com/acme/shop/pull/477","createdAt":"2026-10-19T09:00:00Z","headRefName":"retry-webhooks","baseRefName":"main","additions":312,"deletions":40,"author":{"login":"sanne"},"commits":{"nodes":[{"commit":{"statusCheckRollup":{"state":"FAILURE"}}}]}},
+{"number":463,"title":"Drop the v1 export endpoint","isDraft":true,"url":"javascript:alert(1)","createdAt":"2026-10-14T09:00:00Z","headRefName":"drop-v1","baseRefName":"main","additions":12,"deletions":406,"author":{"login":"priya"},"commits":{"nodes":[{"commit":{"statusCheckRollup":{"state":"PENDING"}}}]}},
+{"number":455,"title":"Audit log for admin actions","isDraft":false,"url":"https://github.com/acme/shop/pull/455","createdAt":"2026-10-19T08:00:00Z","headRefName":"audit-log","baseRefName":"main","additions":241,"deletions":9,"author":{"login":"you"},"commits":{"nodes":[{"commit":{"statusCheckRollup":null}}]}},
+{"number":440,"title":"Old branch of a deleted user","isDraft":false,"url":"https://github.com/acme/shop/pull/440","createdAt":"2026-09-01T08:00:00Z","headRefName":"old","baseRefName":"main","additions":1,"deletions":0,"author":null,"commits":{"nodes":[]}}
+]}},"asked":{"nodes":[{"number":477},{"number":463},{}]}}}
