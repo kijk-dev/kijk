@@ -721,7 +721,7 @@ func TestBrowser(t *testing.T) {
 		target := func(head, review string) obj {
 			nodes := []obj{}
 			if review != "" {
-				nodes = []obj{{"id": review, "viewerDidAuthor": true}}
+				nodes = []obj{{"id": review, "viewerDidAuthor": true, "commit": obj{"oid": head}}}
 			}
 			return ghData(obj{"repository": obj{"pullRequest": obj{"id": "PR_477", "headRefOid": head, "reviews": obj{"nodes": nodes}}}})
 		}

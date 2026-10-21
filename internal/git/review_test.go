@@ -19,10 +19,13 @@ func forgeRepo(t *testing.T, remote string) string {
 
 // ghTarget is gh's answer about pull request 7: its node, its head, and a pending review when
 // review is set.
-func ghTarget(head, review string) gittest.Rule {
+func ghTarget(head, review string) gittest.Rule { return ghTargetAt(head, review, head) }
+
+// ghTargetAt is ghTarget with the pending review made on commit.
+func ghTargetAt(head, review, commit string) gittest.Rule {
 	nodes := "[]"
 	if review != "" {
-		nodes = fmt.Sprintf(`[{"id":%q,"viewerDidAuthor":true}]`, review)
+		nodes = fmt.Sprintf(`[{"id":%q,"viewerDidAuthor":true,"commit":{"oid":%q}}]`, review, commit)
 	}
 	return gittest.Rule{Has: "headRefOid reviews(states: PENDING", Out: fmt.Sprintf(`{"data":{"repository":{"pullRequest":{"id":"PR_7","headRefOid":%q,"reviews":{"nodes":%s}}}}}`, head, nodes)}
 }
@@ -63,6 +66,13 @@ func TestGithubComment(t *testing.T) {
 	}
 	if c := calls(); len(c) != 2 || !has(c[1], "review=PRR_9", "line=3", "side=LEFT") {
 		t.Fatalf("calls %q", c)
+	}
+
+	// Your pending review is on an older commit, whose lines may be other lines: nothing is written.
+	calls = gittest.FakeToolCalls(t, "gh", thread, ghTargetAt("aaa", "PRR_9", "old"))
+	_, err = AddComment(repo, 7, "aaa", NewComment{Path: "retry.go", Line: 36, Body: "x"})
+	if err == nil || err.Error() != "Your pending review on #7 is on an older commit. Post it first, or finish it on GitHub." || len(calls()) != 1 {
+		t.Fatalf("err %v, calls %q", err, calls())
 	}
 
 	// Someone pushed since kijk showed the diff: nothing is written.

@@ -34,7 +34,7 @@ func reviewServer(t *testing.T, root string) (get func(string, url.Values) *http
 }
 
 func ghTarget(head string) gittest.Rule {
-	return gittest.Rule{Has: "headRefOid reviews(states: PENDING", Out: fmt.Sprintf(`{"data":{"repository":{"pullRequest":{"id":"PR_7","headRefOid":%q,"reviews":{"nodes":[{"id":"PRR_9","viewerDidAuthor":true}]}}}}}`, head)}
+	return gittest.Rule{Has: "headRefOid reviews(states: PENDING", Out: fmt.Sprintf(`{"data":{"repository":{"pullRequest":{"id":"PR_7","headRefOid":%[1]q,"reviews":{"nodes":[{"id":"PRR_9","viewerDidAuthor":true,"commit":{"oid":%[1]q}}]}}}}}`, head)}
 }
 
 func TestReviewRoutes(t *testing.T) {

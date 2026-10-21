@@ -205,10 +205,10 @@ func mutate(tool string, f *forge, query string, vars map[string]any, out any) e
 
 // githubTarget is what a write on GitHub needs: the pull request's node, its head, and your
 // pending review, asked fresh so a review changed on the website is never lost or sent twice.
-type githubTarget struct{ id, head, review string }
+type githubTarget struct{ id, head, review, reviewAt string }
 
 const githubTargetQuery = `query($owner: String!, $name: String!, $n: Int!) {
-  repository(owner: $owner, name: $name) { pullRequest(number: $n) { id headRefOid reviews(states: PENDING, first: 1) { nodes { id viewerDidAuthor } } } }
+  repository(owner: $owner, name: $name) { pullRequest(number: $n) { id headRefOid reviews(states: PENDING, first: 1) { nodes { id viewerDidAuthor commit { oid } } } } }
 }`
 
 func githubTargetOf(f *forge, n int) (githubTarget, error) {
@@ -222,6 +222,7 @@ func githubTargetOf(f *forge, n int) (githubTarget, error) {
 						Nodes []struct {
 							ID              string
 							ViewerDidAuthor bool
+							Commit          *struct{ Oid string }
 						}
 					}
 				}
@@ -238,6 +239,9 @@ func githubTargetOf(f *forge, n int) (githubTarget, error) {
 		for _, r := range p.Reviews.Nodes {
 			if r.ViewerDidAuthor {
 				t.review = r.ID
+				if r.Commit != nil {
+					t.reviewAt = r.Commit.Oid
+				}
 			}
 		}
 		return nil
@@ -269,6 +273,10 @@ func githubComment(f *forge, n int, head string, c NewComment) (string, error) {
 	}
 	if c.Thread == "" && t.head != head {
 		return "", headMoved(f, n)
+	}
+	// GitHub places a new thread by the commit of the review it goes into.
+	if c.Thread == "" && t.review != "" && t.reviewAt != head {
+		return "", sayErr(fmt.Sprintf("Your pending review on #%d is on an older commit. Post it first, or finish it on GitHub.", n))
 	}
 	review, err := t.pending(f, cmp.Or(head, t.head))
 	if err != nil {
