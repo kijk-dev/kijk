@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -62,13 +63,13 @@ func ListPRs(root, q string) PRList {
 	var err error
 	switch {
 	case tool == "gh" && q != "":
-		err = graphQL("gh", f, githubSearchQuery, map[string]any{"q": githubRepoQuery(f) + " " + q}, &res, parseGithubSearch)
+		err = graphQL("gh", f, githubSearchQuery, githubSearchVars(f, q), &res, parseGithubSearch)
 	case tool == "gh":
 		err = graphQL("gh", f, githubListQuery, map[string]any{"owner": owner(f), "name": name(f), "asked": githubRepoQuery(f) + " review-requested:@me"}, &res, parseGithubList)
 	case q != "":
-		err = graphQL("glab", f, gitlabListQuery, map[string]any{"path": f.Path, "q": q}, &res, parseGitlabList)
+		err = graphQL("glab", f, gitlabSearchQuery, map[string]any{"path": f.Path, "q": q}, &res, parseGitlabSearch)
 	default:
-		err = graphQL("glab", f, gitlabListQuery, map[string]any{"path": f.Path}, &res, parseGitlabList)
+		err = graphQL("glab", f, gitlabListQuery, map[string]any{"path": f.Path, "pp": f.Path}, &res, parseGitlabList)
 	}
 	if err != nil {
 		res.Note = toolNote(tool, err)
@@ -80,6 +81,32 @@ func owner(f *forge) string { o, _, _ := strings.Cut(f.Path, "/"); return o }
 func name(f *forge) string  { _, n, _ := strings.Cut(f.Path, "/"); return n }
 
 func githubRepoQuery(f *forge) string { return "repo:" + f.Path + " is:pr is:open" }
+
+var oneWordRe = regexp.MustCompile(`^[A-Za-z0-9._/-]+$`)
+
+// githubSearchVars searches the text, and a single word also as an author and a head branch.
+func githubSearchVars(f *forge, q string) map[string]any {
+	text := githubRepoQuery(f) + " " + q
+	v := map[string]any{"q": text, "a": text, "h": text}
+	if oneWordRe.MatchString(q) {
+		v["a"] = githubRepoQuery(f) + " author:" + q
+		v["h"] = githubRepoQuery(f) + " head:" + q
+	}
+	return v
+}
+
+// addRows adds the rows that are not in the list yet, marked requested when asked is.
+func addRows(res *PRList, rows []PRRow, asked bool) {
+	for _, r := range rows {
+		i := slices.IndexFunc(res.PRs, func(p PRRow) bool { return p.Number == r.Number })
+		if i < 0 {
+			r.Requested = r.Requested || asked
+			res.PRs = append(res.PRs, r)
+		} else if asked {
+			res.PRs[i].Requested = true
+		}
+	}
+}
 
 // graphQL runs a query with gh or glab and hands the data to parse. Strings go as -f, numbers as
 // -F, in name order, so a call reads the same each time.
@@ -125,13 +152,15 @@ const githubListQuery = `query($owner: String!, $name: String!, $asked: String!)
   repository(owner: $owner, name: $name) {
     pullRequests(states: OPEN, first: 100, orderBy: {field: UPDATED_AT, direction: DESC}) { totalCount nodes { ...row } }
   }
-  asked: search(query: $asked, type: ISSUE, first: 100) { nodes { ... on PullRequest { number } } }
+  asked: search(query: $asked, type: ISSUE, first: 100) { nodes { ...row } }
 }
 ` + githubRow
 
-const githubSearchQuery = `query($q: String!) {
+const githubSearchQuery = `query($q: String!, $a: String!, $h: String!) {
   viewer { login }
-  search(query: $q, type: ISSUE, first: 30) { issueCount nodes { ...row } }
+  t: search(query: $q, type: ISSUE, first: 30) { issueCount nodes { ...row } }
+  a: search(query: $a, type: ISSUE, first: 30) { nodes { ...row } }
+  h: search(query: $h, type: ISSUE, first: 30) { nodes { ...row } }
 }
 ` + githubRow
 
@@ -190,7 +219,7 @@ func parseGithubList(data []byte, res *PRList) error {
 			}
 		}
 		Asked struct {
-			Nodes []struct{ Number int }
+			Nodes []githubRowJSON
 		}
 	}
 	if err := json.Unmarshal(data, &v); err != nil {
@@ -199,78 +228,152 @@ func parseGithubList(data []byte, res *PRList) error {
 	if v.Repository == nil {
 		return errors.New("repository not found")
 	}
-	asked := map[int]bool{}
-	for _, n := range v.Asked.Nodes {
-		asked[n.Number] = true
-	}
 	res.Me = v.Viewer.Login
 	res.Total = v.Repository.PullRequests.TotalCount
 	for _, n := range v.Repository.PullRequests.Nodes {
-		p := n.row()
-		p.Requested = asked[p.Number]
-		res.PRs = append(res.PRs, p)
+		res.PRs = append(res.PRs, n.row())
 	}
+	// A pull request that waits for you may be older than the 100 the list holds.
+	addRows(res, githubRows(v.Asked.Nodes), true)
 	return nil
 }
 
-func parseGithubSearch(data []byte, res *PRList) error {
-	var v struct {
-		Viewer struct{ Login string }
-		Search struct {
-			IssueCount int
-			Nodes      []githubRowJSON
+// githubRows are the rows of search hits that are pull requests.
+func githubRows(nodes []githubRowJSON) []PRRow {
+	var out []PRRow
+	for _, n := range nodes {
+		if n.Number > 0 { // a hit that is an issue has none of the fields
+			out = append(out, n.row())
 		}
+	}
+	return out
+}
+
+func parseGithubSearch(data []byte, res *PRList) error {
+	type hits struct {
+		IssueCount int
+		Nodes      []githubRowJSON
+	}
+	var v struct {
+		Viewer  struct{ Login string }
+		T, A, H hits
 	}
 	if err := json.Unmarshal(data, &v); err != nil {
 		return err
 	}
 	res.Me = v.Viewer.Login
-	res.Total = v.Search.IssueCount
-	for _, n := range v.Search.Nodes {
-		if n.Number > 0 { // a search hit that is an issue has no fields of a pull request
-			res.PRs = append(res.PRs, n.row())
-		}
+	res.Total = v.T.IssueCount
+	for _, h := range []hits{v.T, v.A, v.H} {
+		addRows(res, githubRows(h.Nodes), false)
 	}
 	return nil
 }
 
-// The search argument narrows the list when it is set; GitLab ignores an empty one.
-const gitlabListQuery = `query($path: ID!, $q: String) {
+const gitlabRow = `fragment row on MergeRequest { iid title draft webUrl createdAt sourceBranch targetBranch author { username }
+  diffStatsSummary { additions deletions } headPipeline { status }
+  reviewers { nodes { username mergeRequestInteraction { approved } } } }`
+
+const gitlabListQuery = `query($path: ID!, $pp: String!) {
+  currentUser { username reviewRequestedMergeRequests(state: opened, first: 100, projectPath: $pp) { nodes { ...row } } }
+  project(fullPath: $path) { mergeRequests(state: opened, first: 100, sort: UPDATED_DESC) { count nodes { ...row } } }
+}
+` + gitlabRow
+
+// The search finds the text in the title and description, and also an author or a source branch.
+const gitlabSearchQuery = `query($path: ID!, $q: String!) {
   currentUser { username }
   project(fullPath: $path) {
-    mergeRequests(state: opened, first: 100, sort: UPDATED_DESC, search: $q) {
-      count
-      nodes { iid title draft webUrl createdAt sourceBranch targetBranch author { username }
-        diffStatsSummary { additions deletions } headPipeline { status }
-        reviewers { nodes { username mergeRequestInteraction { approved } } } }
-    }
+    t: mergeRequests(state: opened, first: 30, search: $q) { count nodes { ...row } }
+    a: mergeRequests(state: opened, first: 30, authorUsername: $q) { nodes { ...row } }
+    h: mergeRequests(state: opened, first: 30, sourceBranches: [$q]) { nodes { ...row } }
   }
-}`
+}
+` + gitlabRow
+
+type gitlabRowJSON struct {
+	IID              string
+	Title            string
+	Draft            bool
+	WebURL           string
+	CreatedAt        string
+	SourceBranch     string
+	TargetBranch     string
+	Author           *struct{ Username string }
+	DiffStatsSummary *struct{ Additions, Deletions int }
+	HeadPipeline     *struct{ Status string }
+	Reviewers        struct {
+		Nodes []struct {
+			Username                string
+			MergeRequestInteraction *struct{ Approved bool }
+		}
+	}
+}
+
+// row is the merge request as a list row; it waits for me when I am a reviewer who has not approved.
+func (n gitlabRowJSON) row(me string) PRRow {
+	num, _ := strconv.Atoi(n.IID)
+	p := PRRow{Number: num, Title: draftPrefixRe.ReplaceAllString(n.Title, ""), Draft: n.Draft, URL: webURL(n.WebURL),
+		CreatedAt: n.CreatedAt, Head: n.SourceBranch, Base: n.TargetBranch}
+	if n.Author != nil {
+		p.Author = n.Author.Username
+	}
+	if s := n.DiffStatsSummary; s != nil {
+		p.Add, p.Del = s.Additions, s.Deletions
+	}
+	if n.HeadPipeline != nil {
+		p.CI = pipelineCI(n.HeadPipeline.Status)
+	}
+	for _, r := range n.Reviewers.Nodes {
+		if me != "" && r.Username == me && (r.MergeRequestInteraction == nil || !r.MergeRequestInteraction.Approved) {
+			p.Requested = true
+		}
+	}
+	return p
+}
+
+func gitlabRows(nodes []gitlabRowJSON, me string) []PRRow {
+	out := make([]PRRow, len(nodes))
+	for i, n := range nodes {
+		out[i] = n.row(me)
+	}
+	return out
+}
+
+func parseGitlabSearch(data []byte, res *PRList) error {
+	type hits struct {
+		Count int
+		Nodes []gitlabRowJSON
+	}
+	var v struct {
+		CurrentUser *struct{ Username string }
+		Project     *struct{ T, A, H hits }
+	}
+	if err := json.Unmarshal(data, &v); err != nil {
+		return err
+	}
+	if v.Project == nil {
+		return errors.New("project not found")
+	}
+	if v.CurrentUser != nil {
+		res.Me = v.CurrentUser.Username
+	}
+	res.Total = v.Project.T.Count
+	for _, h := range []hits{v.Project.T, v.Project.A, v.Project.H} {
+		addRows(res, gitlabRows(h.Nodes, res.Me), false)
+	}
+	return nil
+}
 
 func parseGitlabList(data []byte, res *PRList) error {
 	var v struct {
-		CurrentUser *struct{ Username string }
-		Project     *struct {
+		CurrentUser *struct {
+			Username                     string
+			ReviewRequestedMergeRequests struct{ Nodes []gitlabRowJSON }
+		}
+		Project *struct {
 			MergeRequests struct {
 				Count int
-				Nodes []struct {
-					IID              string
-					Title            string
-					Draft            bool
-					WebURL           string
-					CreatedAt        string
-					SourceBranch     string
-					TargetBranch     string
-					Author           *struct{ Username string }
-					DiffStatsSummary *struct{ Additions, Deletions int }
-					HeadPipeline     *struct{ Status string }
-					Reviewers        struct {
-						Nodes []struct {
-							Username                string
-							MergeRequestInteraction *struct{ Approved bool }
-						}
-					}
-				}
+				Nodes []gitlabRowJSON
 			}
 		}
 	}
@@ -284,25 +387,14 @@ func parseGitlabList(data []byte, res *PRList) error {
 		res.Me = v.CurrentUser.Username
 	}
 	res.Total = v.Project.MergeRequests.Count
-	for _, n := range v.Project.MergeRequests.Nodes {
-		num, _ := strconv.Atoi(n.IID)
-		p := PRRow{Number: num, Title: draftPrefixRe.ReplaceAllString(n.Title, ""), Draft: n.Draft, URL: webURL(n.WebURL),
-			CreatedAt: n.CreatedAt, Head: n.SourceBranch, Base: n.TargetBranch}
-		if n.Author != nil {
-			p.Author = n.Author.Username
-		}
-		if s := n.DiffStatsSummary; s != nil {
-			p.Add, p.Del = s.Additions, s.Deletions
-		}
-		if n.HeadPipeline != nil {
-			p.CI = pipelineCI(n.HeadPipeline.Status)
-		}
-		for _, r := range n.Reviewers.Nodes {
-			if r.Username == res.Me && res.Me != "" && (r.MergeRequestInteraction == nil || !r.MergeRequestInteraction.Approved) {
-				p.Requested = true
+	res.PRs = append(res.PRs, gitlabRows(v.Project.MergeRequests.Nodes, res.Me)...)
+	if v.CurrentUser != nil {
+		// A merge request that waits for you may be older than the 100 the list holds.
+		for _, r := range gitlabRows(v.CurrentUser.ReviewRequestedMergeRequests.Nodes, res.Me) {
+			if r.Requested {
+				addRows(res, []PRRow{r}, true)
 			}
 		}
-		res.PRs = append(res.PRs, p)
 	}
 	return nil
 }

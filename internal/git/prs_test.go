@@ -33,6 +33,14 @@ func rows(prs []PRRow) string {
 	return strings.Join(s, "\n")
 }
 
+// A search of several words cannot be an author or a branch.
+func TestSearchQualifiers(t *testing.T) {
+	f := &forge{Path: "acme/shop"}
+	if v := githubSearchVars(f, "retry webhooks"); v["a"] != v["q"] || v["h"] != v["q"] {
+		t.Errorf("vars %v", v)
+	}
+}
+
 func TestParseGithubList(t *testing.T) {
 	var res PRList
 	if err := parseGithubList(recorded(t, "github-list.json"), &res); err != nil {
@@ -41,7 +49,8 @@ func TestParseGithubList(t *testing.T) {
 	want := `477 "Retry webhook delivery with backoff" sanne draft=false retry-webhooks→main +312-40 ci=failed req=true url=https://github.com/acme/shop/pull/477
 463 "Drop the v1 export endpoint" priya draft=true drop-v1→main +12-406 ci=running req=true url=
 455 "Audit log for admin actions" you draft=false audit-log→main +241-9 ci= req=false url=https://github.com/acme/shop/pull/455
-440 "Old branch of a deleted user"  draft=false old→main +1-0 ci= req=false url=https://github.com/acme/shop/pull/440`
+440 "Old branch of a deleted user"  draft=false old→main +1-0 ci= req=false url=https://github.com/acme/shop/pull/440
+120 "Old but waiting for you" tim draft=false old-wait→main +5-1 ci= req=true url=https://github.com/acme/shop/pull/120`
 	if got := rows(res.PRs); got != want {
 		t.Errorf("got\n%s\nwant\n%s", got, want)
 	}
@@ -55,8 +64,26 @@ func TestParseGithubSearch(t *testing.T) {
 	if err := parseGithubSearch(recorded(t, "github-search.json"), &res); err != nil {
 		t.Fatal(err)
 	}
-	if got := rows(res.PRs); got != `301 "Webhook signing" tim draft=false sign-webhooks→main +20-2 ci=passed req=false url=https://github.com/acme/shop/pull/301` {
-		t.Errorf("got %s", got)
+	// Hits by text, by author and by head branch, each once.
+	want := `301 "Webhook signing" tim draft=false sign-webhooks→main +5-1 ci=passed req=false url=https://github.com/acme/shop/pull/301
+250 "Speed up export" webhook draft=false faster-export→main +5-1 ci= req=false url=https://github.com/acme/shop/pull/250
+260 "Retry more" priya draft=false webhook-retry→main +5-1 ci= req=false url=https://github.com/acme/shop/pull/260`
+	if got := rows(res.PRs); got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
+func TestParseGitlabSearch(t *testing.T) {
+	var res PRList
+	if err := parseGitlabSearch(recorded(t, "gitlab-search.json"), &res); err != nil {
+		t.Fatal(err)
+	}
+	var got []int
+	for _, p := range res.PRs {
+		got = append(got, p.Number)
+	}
+	if fmt.Sprint(got) != "[12 7 8]" {
+		t.Errorf("hits %v", got)
 	}
 }
 
@@ -67,7 +94,8 @@ func TestParseGitlabList(t *testing.T) {
 	}
 	want := `12 "Retry webhook delivery" sanne draft=true retry-webhooks→main +30-4 ci=running req=true url=https://gitlab.com/acme/shop/-/merge_requests/12
 11 "Move rate limits into config" tim draft=false rate-config→main +88-61 ci=passed req=false url=https://gitlab.com/acme/shop/-/merge_requests/11
-9 "Bump Go" you draft=false go-bump→main +0-0 ci=failed req=false url=https://gitlab.com/acme/shop/-/merge_requests/9`
+9 "Bump Go" you draft=false go-bump→main +0-0 ci=failed req=false url=https://gitlab.com/acme/shop/-/merge_requests/9
+3 "Old but waiting for you" tim draft=false old-wait→main +3-0 ci= req=true url=https://gitlab.com/acme/shop/-/merge_requests/3`
 	if got := rows(res.PRs); got != want {
 		t.Errorf("got\n%s\nwant\n%s", got, want)
 	}
@@ -175,11 +203,12 @@ func TestListPRsSearch(t *testing.T) {
 	b, _ := os.ReadFile(filepath.Join("testdata", "forge", "github-search.json"))
 	args := fakeTool(t, "gh", string(b))
 	res := ListPRs(repo, "webhook")
-	if res.Note != "" || len(res.PRs) != 1 || res.PRs[0].Number != 301 {
+	if res.Note != "" || len(res.PRs) != 3 || res.PRs[0].Number != 301 {
 		t.Fatalf("res = %+v", res)
 	}
 	a := strings.Join(args(), " ")
-	if !strings.Contains(a, "-f q=repo:acme/shop is:pr is:open webhook") || !strings.Contains(a, "--hostname github.com") {
+	if !strings.Contains(a, "-f q=repo:acme/shop is:pr is:open webhook") || !strings.Contains(a, "-f a=repo:acme/shop is:pr is:open author:webhook") ||
+		!strings.Contains(a, "-f h=repo:acme/shop is:pr is:open head:webhook") || !strings.Contains(a, "--hostname github.com") {
 		t.Errorf("gh was called with %s", a)
 	}
 }
