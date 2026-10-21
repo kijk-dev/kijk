@@ -54,8 +54,9 @@ func TestReviewRoutes(t *testing.T) {
 	get, post := reviewServer(t, clone)
 	comment := js(map[string]any{"root": clone, "n": 7, "path": "retry.go", "line": 4, "body": "Why 3?"})
 
-	// A comment on a line needs the head kijk showed; after a restart kijk has none.
-	if w := post("/api/pr/comment", comment); w.Code != http.StatusConflict {
+	// A comment on a line needs the head kijk showed; after a restart kijk has none, which is not the
+	// same as a head that moved.
+	if w := post("/api/pr/comment", comment); w.Code != http.StatusPreconditionRequired {
 		t.Fatalf("before the view: %d %s", w.Code, w.Body.String())
 	}
 	w := get("/api/pr/view", url.Values{"n": {"7"}})

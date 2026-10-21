@@ -14,9 +14,6 @@ const ICON = {
   trash: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>',
 };
 
-// The server says this when it has no diff of the pull request, as after a restart.
-const NOT_SHOWN = 'Open the pull request again';
-
 let hooks = {}; // announce(text), say(text), reviewed(root, n)
 
 export function setupDrafts(h) {
@@ -53,18 +50,23 @@ async function send(root, n, route, body) {
   return res;
 }
 
-// addComment adds a draft. at is the head the comment was written on: after a restart kijk sends it
-// once more only when the head is still that one, so the line is still the same line.
-async function addComment(root, n, at, c) {
-  let res;
+// shown sends a write that needs the diff on screen. The server answers 409 when the head moved
+// and 428 when it kept no diff, as after a restart; then the write goes once more only when the
+// head is still at, the one on screen.
+async function shown(root, n, at, route, body) {
   try {
-    res = await post('pr/comment', { root, n, ...c });
+    return await post(route, { root, n, ...body });
   } catch (err) {
-    if (err.status !== 409) throw err;
-    const fresh = await loadView(root, n);
-    if (c.thread || err.message !== NOT_SHOWN || fresh.at !== at) throw err;
-    res = await post('pr/comment', { root, n, ...c });
+    if (err.status !== 409 && err.status !== 428) throw err;
+    const fresh = await loadView(root, n); // shows the new head
+    if (err.status === 409) throw err;
+    if (fresh.at !== at) throw new Error(`${words(fresh).num}${n} has new commits. kijk shows them now; look again first.`);
+    return post(route, { root, n, ...body });
   }
+}
+
+async function addComment(root, n, at, c) {
+  const res = await shown(root, n, at, 'pr/comment', c);
   remember(root, n, res.id);
   await loadView(root, n).catch(() => {});
 }
