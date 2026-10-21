@@ -33,7 +33,8 @@ export function forgeMark(kind) {
 }
 
 // showPR fills the pull request line: the PR with its CI and review state, else links to the forge.
-export function showPR(line, res) {
+// open(n), when given, opens the pull request in the PRs tab.
+export function showPR(line, res, open) {
   const f = res?.forge;
   line.hidden = !f;
   if (!f) return line.replaceChildren();
@@ -52,8 +53,28 @@ export function showPR(line, res) {
     return line.replaceChildren(top);
   }
 
-  top.append(el('span', 'pr-num', `${h.num}${p.number}`), link('pr-title', p.url, p.title), link('pr-link', p.url, '↗'));
+  const title = link('pr-title', p.url, p.title);
+  if (open) {
+    // The title opens the pull request in the PRs tab; ↗ still opens the website.
+    title.removeAttribute('href');
+    title.removeAttribute('target');
+    title.tabIndex = 0;
+    title.setAttribute('role', 'link');
+    title.title = 'Open in the PRs tab';
+    title.onclick = e => {
+      e.preventDefault();
+      open(p.number);
+    };
+    title.onkeydown = e => { if (e.key === 'Enter') title.onclick(e); };
+  }
+  top.append(el('span', 'pr-num', `${h.num}${p.number}`), title, link('pr-link', p.url, '↗'));
   top.lastChild.title = `Open on ${h.name}`;
+  const chips = prChips(p, h, res.default);
+  line.replaceChildren(top, ...(chips ? [chips] : []));
+}
+
+// prChips are the chips of a pull request's state, CI and review, or null when there are none.
+export function prChips(p, h, defaultBranch) {
   const chips = el('div', 'chips');
   const chip = (cls, text, href, tip) => {
     const c = link(`chip ${cls}`, href, text);
@@ -70,10 +91,10 @@ export function showPR(line, res) {
   else if (p.review === 'changes') chip('fail', 'Changes requested');
   else if (p.approvals) chip('pass', `✓ ${p.approvals} ${p.approvals === 1 ? 'approval' : 'approvals'}`);
   else if (p.review === 'needed') chip('', 'Review needed');
-  if (p.target && p.target !== res.default) {
+  if (p.target && p.target !== defaultBranch) {
     const c = chip('target', p.target, null, `Merges into ${p.target}`);
     c.setAttribute('aria-label', `Merges into ${p.target}`);
     c.insertAdjacentHTML('afterbegin', MERGE);
   }
-  line.replaceChildren(top, ...(chips.children.length ? [chips] : []));
+  return chips.children.length ? chips : null;
 }

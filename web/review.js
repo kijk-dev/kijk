@@ -18,7 +18,9 @@ const ICON = {
   trash: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>',
 };
 
-const panel = document.getElementById('prs');
+const tabEl = document.getElementById('prs');
+const panel = document.getElementById('prs-branch');
+const shown = () => !tabEl.hidden && !panel.hidden;
 let page = null;
 let folder = null; // the open folder's key
 let agentIcon = null; // the icon of the folder's agent type
@@ -34,9 +36,11 @@ let view = null; // the Branch changes view, while it is open
 let selected = ''; // the path of the file at the top of the view
 let goal = ''; // a file to scroll to once the view is drawn
 let copyPanel = null;
+let branchPR = null; // the answer about the branch's pull request, with its threads
 
 // setupReview tells the tab about the folder view around it: announce(text), say(text),
-// push(), openFile(path) and openBranch(), which opens the Branch changes tab.
+// push(), openFile(path), openBranch(), which opens the Branch changes tab, branchHead(), what the
+// PRs tab adds to the header, and overviewRow(n), the first row of the file list.
 export function setupReview(p) {
   page = p;
 }
@@ -59,7 +63,7 @@ export async function refreshBranch(st, pr, tgt) {
   status = st;
   prStatus = pr;
   target = tgt;
-  if (panel.hidden && !openView()) return;
+  if (!shown() && !openView()) return;
   await load();
 }
 
@@ -71,7 +75,30 @@ export function showBranchPanel(st, pr, tgt) {
   target = tgt;
   if (loading?.key === `${folder}\n${target}`) return; // the load draws the panel when it is done
   if (data) drawPanel();
-  else if (!panel.hidden) load();
+  else if (shown()) load();
+}
+
+// ownPR is the number of the branch's open pull request, or 0.
+function ownPR() {
+  const p = prStatus?.pr;
+  return p && ['open', 'draft'].includes(p.state) ? p.number : 0;
+}
+
+// wakeBranch loads the branch changes when the panel just showed without them.
+export function wakeBranch() {
+  if (!data && folder && shown() && !loading) load();
+}
+
+export function redrawBranchPanel() {
+  if (data) drawPanel();
+}
+
+// setBranchThreads takes the answer about the branch's pull request, for its threads in Local mode.
+export function setBranchThreads(res) {
+  branchPR = res;
+  if (data) drawPanel();
+  const v = openView();
+  if (v) redraw(v, [...new Set((res?.threads || []).map(t => t.path))]);
 }
 
 export function focusBranchList() {
@@ -185,6 +212,10 @@ function header() {
   base.title = `Compared with ${data.base}`;
   meta.append(el('span', 'ref head', data.branch), arrow, base);
   h.append(top, meta);
+  const extra = page.branchHead?.() || {};
+  top.prepend(...(extra.before || []));
+  h.append(...(extra.after || []));
+  if (extra.note) h.append(el('p', 'pr-note', extra.note));
   return h;
 }
 
@@ -257,16 +288,23 @@ function fileList() {
     const at = rows.indexOf(e.target.closest('li'));
     const to = { ArrowDown: at + 1, ArrowUp: at - 1, Home: 0, End: rows.length - 1 }[e.key];
     if (to !== undefined && rows[to]) {
-      goTo(rows[to].dataset.path);
+      if (rows[to].dataset.path) goTo(rows[to].dataset.path);
+      for (const r of rows) r.tabIndex = r === rows[to] ? 0 : -1;
       rows[to].focus();
     } else if (e.key === 'Enter' && rows[at]) {
-      goTo(rows[at].dataset.path, true);
+      if (rows[at].dataset.path) goTo(rows[at].dataset.path, true);
+      else rows[at].click();
     } else {
       return;
     }
     e.preventDefault();
     e.stopPropagation();
   };
+  const ov = page.overviewRow?.(ownPR());
+  if (ov) {
+    ov.tabIndex = ul.querySelector('[tabindex="0"]') ? -1 : 0;
+    ul.prepend(ov);
+  }
   wrap.append(h, ul);
   if (!data.files.length) wrap.append(el('p', 'note', 'No changes yet'));
   return wrap;

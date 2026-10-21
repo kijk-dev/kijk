@@ -177,10 +177,12 @@ func TestBrowser(t *testing.T) {
 	})
 
 	t.Run("branch review", func(t *testing.T) {
-		repo := reviewRepo(t)
+		repo, origin := reviewRepo(t)
+		forge := newFakeForge(t)
+		reviewForge(t, forge, repo, origin)
 		claude := t.TempDir()
 		claudeAgent(t, claude, repo, "Fix the login", "idle")
-		k := startKijkIn(t, exe, t.TempDir(), "CLAUDE_CONFIG_DIR="+claude, "PATH="+fakeForgeTools(t)+string(os.PathListSeparator)+os.Getenv("PATH"))
+		k := startKijkIn(t, exe, t.TempDir(), "CLAUDE_CONFIG_DIR="+claude, forge.env())
 		b := openPage(t, newTab(t, tab), k, "/")
 		b.selectAgent("Fix the login", "review")
 		const session = "internal/auth/session.go"
@@ -189,14 +191,15 @@ func TestBrowser(t *testing.T) {
 		b.waitFor("the PRs tab", `(b => b && !b.hidden && b.dataset.tip.startsWith('PRs\n'))(`+prsTab+`)`)
 		b.press("prsTab")
 		b.waitFor("the PRs panel", `!document.querySelector('#prs').hidden && `+prsTab+`.classList.contains('active')`)
+		b.click("This branch", prRow(482))
 		b.waitFor("the pull request", `document.querySelector('#prs .pr-num')?.textContent === '#482' && document.querySelector('#prs .pr-title')?.textContent === 'Fix login redirect loop'`)
 		b.waitFor("the branch and its base", `[...document.querySelectorAll('#prs .prmeta .ref')].map(r => r.textContent).join(' ') === 'fix-login main'`)
 		b.waitFor("the bar", `document.querySelector('#prs .unpushed .t')?.textContent === "1 commit and 2 files not pushed. Reviewers don't see them yet." && `+
 			byText("#prs .unpushed button", "Push"))
-		b.waitFor("six files", `document.querySelectorAll('#prs .prfiles li').length === 6`)
+		b.waitFor("six files", `document.querySelectorAll('#prs-branch .prfiles li:not(.ov)').length === 6`)
 		b.waitFor("the new files marked", prsRow("redirect.go")+`.querySelector('.np') && `+prsRow("redirect_test.go")+`.querySelector('.np') && !`+prsRow("session.go")+`.querySelector('.np')`)
 		b.act("reload", chromedp.Reload())
-		b.waitFor("the PRs tab kept", prsTab+`.classList.contains('active') && !document.querySelector('#prs').hidden && document.querySelectorAll('#prs .prfiles li').length === 6`)
+		b.waitFor("the PRs tab kept", prsTab+`.classList.contains('active') && !document.querySelector('#prs').hidden && document.querySelectorAll('#prs-branch .prfiles li:not(.ov)').length === 6`)
 
 		// Branch changes: every file in one scroll.
 		b.waitFor("the Branch changes tab", `document.querySelector('#filetabs .filetab.active')?.textContent.startsWith('Branch changes')`)
@@ -277,7 +280,7 @@ func TestBrowser(t *testing.T) {
 		// Another branch: main has no branch changes and shows no notes; back on fix-login they return.
 		run(t, repo, "stash", "-q", "-u")
 		run(t, repo, "checkout", "-q", "main")
-		b.waitFor("no PRs tab on main", prsTab+`.hidden`)
+		b.waitFor("the list without this branch on main", `!`+prsTab+`.hidden && document.querySelector('#prs-branch').hidden && ![...document.querySelectorAll('#prs-list .section-toggle')].some(s => s.textContent === 'This branch')`)
 		b.waitFor("no branch changes on main", `!document.querySelector('.fbox') && !document.querySelector('.thr.note') && document.querySelector('#viewer .empty')?.textContent === 'This branch has no branch changes'`)
 		run(t, repo, "checkout", "-q", "fix-login")
 		run(t, repo, "stash", "pop", "-q")
@@ -290,7 +293,7 @@ func TestBrowser(t *testing.T) {
 		b.click("the Files tab", filesTab)
 		run(t, repo, "stash", "-q", "-u")
 		run(t, repo, "checkout", "-q", "main")
-		b.waitFor("no PRs tab on main", prsTab+`.hidden`)
+		b.waitFor("the list without this branch on main", `!`+prsTab+`.hidden && document.querySelector('#prs-branch').hidden && ![...document.querySelectorAll('#prs-list .section-toggle')].some(s => s.textContent === 'This branch')`)
 		b.click("the Branch changes tab", byText("#filetabs .filetab span", "Branch changes"))
 		b.waitFor("no branch changes on main", `!document.querySelector('.fbox') && !document.querySelector('.thr.note') && document.querySelector('#viewer .empty')?.textContent === 'This branch has no branch changes'`)
 		run(t, repo, "checkout", "-q", "fix-login")
@@ -465,6 +468,86 @@ func TestBrowser(t *testing.T) {
 		b.click("Copy for agent", byText("#prs .reviewbox button", "Copy for agent…"))
 		b.waitFor("the merge request in the prompt", `document.querySelector('.copypanel pre')?.textContent.startsWith('Review notes for branch fix-login (MR !12).\n')`)
 		b.key("Escape", kb.Escape)
+		b.noErrors()
+	})
+
+	t.Run("pull requests", func(t *testing.T) {
+		repo, origin := reviewRepo(t)
+		forge := newFakeForge(t)
+		reviewForge(t, forge, repo, origin)
+		claude := t.TempDir()
+		claudeAgent(t, claude, repo, "Fix the login", "idle")
+		k := startKijkIn(t, exe, t.TempDir(), "CLAUDE_CONFIG_DIR="+claude, forge.env())
+		b := openPage(t, newTab(t, tab), k, "/")
+		b.selectAgent("Fix the login", "review")
+
+		// The list, and the count of pull requests that wait for you, also while the tab is hidden.
+		b.waitFor("the count on the tab", prsTab+`.querySelector('.tabcount')?.textContent === '2' && !`+prsTab+`.classList.contains('active')`)
+		b.press("prsTab")
+		b.waitFor("the list", `!document.querySelector('#prs-list').hidden && [...document.querySelectorAll('#prs-list .section-toggle')].map(s => s.textContent).join('|') === 'This branch|Review requested 2|Yours 1|All open 5'`)
+		b.waitFor("this branch first", prRow(482)+`?.closest('ul') === document.querySelector('#prs-list ul') && `+prRow(482)+`.querySelector('.prt').textContent === 'Fix login redirect loop'`)
+		b.waitFor("review requested", `[...document.querySelectorAll('#prs-list ul')][1]?.textContent.includes('#477') && [...document.querySelectorAll('#prs-list ul')][1].textContent.includes('#471')`)
+		b.waitFor("row details", prRow(477)+`.querySelector('.ci.fail') && `+prRow(477)+`.querySelector('.who').textContent.startsWith('sanne · ') && `+prRow(477)+`.querySelector('.lc-add').textContent === '+37'`)
+		b.waitFor("all open folded", `document.querySelectorAll('#prs-list li.prrow').length === 4`)
+		b.click("All open", byText("#prs-list .section-toggle", "All open 5"))
+		b.waitFor("all open shown", `document.querySelectorAll('#prs-list li.prrow').length === 9 && `+prRow(463)+`.querySelector('.prstate.draft')`)
+		shots(b, "prs-list")
+		b.click("the search box", `document.querySelector('#prs-list .prsearch input')`)
+		b.typeText("webhook")
+		b.waitFor("one match", `document.querySelectorAll('#prs-list li.prrow').length === 1 && `+prRow(477))
+		b.key("Escape", kb.Escape)
+		b.waitFor("the search cleared", `document.querySelector('#prs-list .prsearch input').value === '' && document.querySelectorAll('#prs-list li.prrow').length === 9`)
+
+		// A teammate's pull request.
+		b.click("#477", prRow(477))
+		b.waitFor("its header", `!document.querySelector('#prs-pr').hidden && document.querySelector('#prs-pr .pr-num')?.textContent === '#477' && document.querySelector('#prs-pr .pr-title')?.textContent === 'Retry webhook delivery with backoff'`)
+		b.waitFor("author and branches", `document.querySelector('#prs-pr .prmeta')?.textContent === 'Ssanneretry-webhooksmain'`)
+		b.waitFor("its chips", `[...document.querySelectorAll('#prs-pr .chips .chip')].map(c => c.textContent).join('|') === '✗ Checks failed|✓ 1 approval'`)
+		b.waitFor("no switch on a teammate's pull request", `!document.querySelector('#prs-pr .prmode')`)
+		b.waitFor("Overview and the files", `[...document.querySelectorAll('#prs-pr .prfiles li')].map(l => l.querySelector('.name').textContent).join('|') === 'Overview|ci.yml|README.md|retry.go'`)
+		b.waitFor("the Changes tab", `(t => t?.firstChild.textContent === 'Changes' && t.querySelector('.muted')?.textContent === '#477')(document.querySelector('#filetabs .filetab.active'))`)
+		b.waitFor("three boxes", `document.querySelectorAll('#viewer .fbox').length === 3`)
+		b.waitFor("the forge diff", boxHas("internal/webhook/retry.go", "add", "\t\tif !retryable(err) {")+` && `+boxHas("README.md", "add", "Webhooks retry five times."))
+		if got := gitOut(t, repo, "rev-parse", "refs/kijk/pr/477"); got != gitOut(t, origin, "rev-parse", "refs/pull/477/head") {
+			t.Fatalf("refs/kijk/pr/477 is %q", got)
+		}
+		if out := gitOut(t, repo, "branch", "--list"); out != "* fix-login\n  main" {
+			t.Fatalf("branches changed: %q", out)
+		}
+		shots(b, "prs-changes")
+		b.click("README.md in the list", prsRow("README.md"))
+		b.waitFor("README.md at the top", `(s => s.scrollTop > 0 && Math.abs(`+fileBox("README.md")+`.offsetTop - 12 - s.scrollTop) < 2)(document.querySelector('.allfiles'))`)
+		b.click("Open the whole file", fileBox("internal/webhook/retry.go")+`.querySelector('[aria-label="Open the whole file"]')`)
+		b.waitFor("retry.go at #477", `(t => t?.firstChild.textContent === 'retry.go' && t.querySelector('.muted')?.textContent === '#477')(document.querySelector('#filetabs .filetab.active')) && `+viewHas("func (s *Sender) deliver(ctx context.Context, ev Event) error {"))
+
+		// The list again, with the button and with Alt+←.
+		b.click("back", `document.querySelector('#prs-pr .back')`)
+		b.waitFor("the list again", `!document.querySelector('#prs-list').hidden && document.querySelector('#prs-pr').hidden`)
+		b.click("#477", prRow(477))
+		b.waitFor("#477 again", `document.querySelector('#prs-pr .pr-num')?.textContent === '#477'`)
+		b.evalJS(`document.querySelector('#prs-pr .prfiles li[tabindex="0"]').focus()`)
+		b.press("prsBack")
+		b.waitFor("the list again", `!document.querySelector('#prs-list').hidden`)
+
+		// Your own branch: Local, and As on GitHub.
+		b.click("this branch", prRow(482))
+		b.waitFor("its switch", `[...document.querySelectorAll('#prs-branch .prmode button')].map(x => x.textContent + ':' + x.getAttribute('aria-pressed')).join('|') === 'Local:true|As on GitHub:false'`)
+		b.waitFor("Branch changes", `document.querySelector('#filetabs .filetab.active')?.textContent.startsWith('Branch changes') && document.querySelectorAll('#viewer .fbox').length === 6`)
+		b.click("As on GitHub", byText("#prs-branch .prmode button", "As on GitHub"))
+		b.waitFor("the forge diff of #482", `!document.querySelector('#prs-pr').hidden && document.querySelector('#prs-pr .pr-num')?.textContent === '#482'`)
+		b.waitFor("pushed files only", `document.querySelectorAll('#prs-pr .prfiles li').length === 4 && (t => t?.firstChild.textContent === 'Changes' && t.querySelector('.muted')?.textContent === '#482')(document.querySelector('#filetabs .filetab.active'))`)
+		b.act("reload", chromedp.Reload())
+		b.waitFor("the choice kept", `!document.querySelector('#prs-pr').hidden && document.querySelector('#prs-pr .prmode button[aria-pressed=true]')?.textContent === 'As on GitHub'`)
+		b.click("Local", byText("#prs-pr .prmode button", "Local"))
+		b.waitFor("Local again", `!document.querySelector('#prs-branch').hidden && document.querySelector('#filetabs .filetab.active')?.textContent.startsWith('Branch changes')`)
+
+		// Refresh asks the forge again.
+		before := len(forge.calls())
+		b.press("refreshPrs")
+		b.act("wait for the refresh", chromedp.Sleep(500*time.Millisecond))
+		if after := forge.calls(); len(after) <= before || !strings.Contains(strings.Join(after[before:], "\n"), "pullRequest(number") {
+			t.Fatalf("refresh asked nothing new: %q", after[before:])
+		}
 		b.noErrors()
 	})
 
@@ -776,9 +859,28 @@ const (
 	prsTab   = `document.querySelector('#tabs button[data-tab=prs]')`
 )
 
-// prsRow is the row of a file in the PRs tab's list.
+// shots saves the page in light and dark when KIJK_E2E_SHOTS is set.
+func shots(p page, name string) {
+	p.t.Helper()
+	if os.Getenv("KIJK_E2E_SHOTS") == "" {
+		return
+	}
+	for _, scheme := range []string{"light", "dark"} {
+		p.emulate(scheme, 1400)
+		p.act("wait for the layout", chromedp.Sleep(300*time.Millisecond))
+		p.screenshot(e2eOut(p.t), name+"-"+scheme)
+	}
+	p.emulate("light", 1400)
+}
+
+// prsRow is the row of a file in the PRs tab's file list.
 func prsRow(name string) string {
-	return fmt.Sprintf(`[...document.querySelectorAll('#prs .prfiles li')].find(e => e.querySelector('.name')?.textContent === %s)`, jsString(name))
+	return fmt.Sprintf(`[...document.querySelectorAll('#prs > :not([hidden]) .prfiles li')].find(e => e.querySelector('.name')?.textContent === %s)`, jsString(name))
+}
+
+// prRow is the row of pull request n in the PRs tab's list.
+func prRow(n int) string {
+	return fmt.Sprintf(`document.querySelector('#prs-list li.prrow[data-n="%d"]')`, n)
 }
 
 // fileBox is the box of a file in the Branch changes view.

@@ -479,8 +479,53 @@ button.pill:hover { background: color-mix(in srgb, var(--modified) 22%, var(--se
 @media (prefers-reduced-motion: reduce) { #stalebar { animation: none; } }
 @keyframes notice-in { from { opacity: 0; } }
 
-/* The PRs tab: the folder's own branch, its branch changes and the agent notes. */
+/* The PRs tab: the list of pull requests, the folder's own branch, or one pull request. */
 #prs:not([hidden]) { flex: 1; min-height: 0; display: flex; flex-direction: column; container-type: inline-size; }
+#prs > div:not([hidden]) { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+#prs .note { margin: 6px 12px; font-size: 12px; color: var(--muted); }
+
+/* The tab's count: pull requests that wait for your review. */
+#tabs button { position: relative; }
+.tabcount {
+  position: absolute; right: -3px; top: -2px; min-width: 13px; height: 13px; padding: 0 3px; border-radius: 7px;
+  background: var(--accent-fill); color: var(--on-accent); font: 600 9px/13px system-ui, -apple-system, sans-serif; text-align: center;
+  box-shadow: 0 0 0 2px var(--panel);
+}
+
+/* The list. */
+.prsearch { position: relative; flex: none; padding: 8px 12px 4px; }
+.prsearch svg { position: absolute; left: 19px; top: 13px; width: 13px; height: 13px; color: var(--muted); }
+.prsearch input {
+  width: 100%; font: inherit; font-size: 12px; padding: 3px 8px 3px 25px; border: 1px solid var(--edge); border-radius: 4px;
+  background: var(--bg); color: var(--text); caret-color: var(--modified);
+}
+.prsearch input::placeholder { color: var(--muted); }
+.prsearch input:focus { outline: 2px solid var(--modified); outline-offset: -1px; }
+.prsearch input::-webkit-search-cancel-button { display: none; }
+.section-toggle .n { font-weight: 600; color: var(--muted); }
+.section-toggle:disabled { cursor: default; }
+.section-toggle:disabled:hover { color: var(--muted); }
+.section-toggle:disabled .chev { visibility: hidden; }
+.prrow { padding: 6px 12px 7px; border-bottom: 1px solid var(--border); cursor: pointer; }
+.prrow:hover { background: color-mix(in srgb, var(--select) 50%, transparent); }
+.prrow:focus { outline: none; }
+.prrow:focus-visible { outline: 2px solid var(--busy); outline-offset: -2px; }
+.prrow .l1, .prrow .l2 { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.prrow .l2 { padding-left: 20px; margin-top: 1px; font-size: 12px; color: var(--muted); }
+.prrow .l2 > span { white-space: nowrap; }
+.prrow .l2 .who { overflow: hidden; text-overflow: ellipsis; }
+.prrow .lc { font-size: 11px; }
+.prstate { display: flex; flex: none; color: var(--muted); }
+.prstate svg { width: 14px; height: 14px; }
+.prnum { flex: none; color: var(--muted); font-variant-numeric: tabular-nums; }
+.prt { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prrow .pr-link { font-size: 12px; text-decoration: none; }
+.ci { flex: none; width: 6px; height: 6px; border-radius: 50%; }
+.ci.pass { background: var(--added); }
+.ci.fail { background: var(--conflict); }
+.ci.run { background: var(--busy); animation: fade 1.2s ease-in-out infinite; }
+.prmore { margin: 0; padding: 6px 12px 10px; font-size: 12px; color: var(--muted); }
+@media (prefers-reduced-motion: reduce) { .ci.run { animation: none; } }
 .prs-scroll { flex: 1; min-height: 0; overflow: auto; }
 .prhead { flex: none; display: flex; flex-direction: column; gap: 4px; padding: 6px 12px 7px; border-bottom: 1px solid var(--border); font-size: 12px; }
 .prhead .pr-top { gap: 5px; }
@@ -492,6 +537,14 @@ button.pill:hover { background: color-mix(in srgb, var(--modified) 22%, var(--se
 .prmeta .ref { font-size: 11px; line-height: 16px; }
 .prmeta .arrow { display: flex; }
 .prmeta .arrow svg { width: 11px; height: 11px; }
+.prhead:has(.back) { padding-left: 6px; }
+.prhead:has(.back) .prmeta, .prhead:has(.back) .prmode, .prhead:has(.back) .chips, .prhead:has(.back) .pr-note { padding-left: 26px; }
+.prhead .back { margin-right: 1px; }
+.prhead .pr-link { text-decoration: none; }
+.prhead .chips, .prhead .pr-note { padding-left: 19px; }
+.prmode { display: flex; align-items: center; gap: 6px; padding-left: 19px; margin-top: 2px; }
+.prmode .mode { margin-left: 0; }
+.prmeta .av { width: 16px; height: 16px; font-size: 9px; }
 
 /* What reviewers cannot see yet. Dashed means "only on this machine". */
 .unpushed { flex: none; display: flex; align-items: flex-start; gap: 7px; padding: 6px 12px 7px; border-bottom: 1px solid var(--border); font-size: 12px; }
@@ -515,6 +568,9 @@ button.pill:hover { background: color-mix(in srgb, var(--modified) 22%, var(--se
 .tc.open { color: var(--modified); }
 .prfiles .tc + .lc { margin-left: 0; }
 .prfiles .item .tc { margin-left: auto; }
+.prfiles .item.ov { gap: 7px; }
+.prfiles .item.ov svg { width: 13px; height: 13px; color: var(--muted); flex: none; }
+.prfiles .item.ov .dir { margin-left: auto; }
 
 /* The agent notes box at the bottom of the tab. */
 .reviewbox { flex: none; display: flex; flex-direction: column; gap: 6px; padding: 8px 12px; border-top: 1px solid var(--border); }
@@ -572,16 +628,67 @@ button.pill:hover { background: color-mix(in srgb, var(--modified) 22%, var(--se
 .addc svg { width: 14px; height: 14px; stroke-width: 2.5; }
 .ln:hover .addc { display: flex; }
 
-/* An agent note: a box under its line, with a notch that points up at it. Dashed: it never leaves kijk. */
+/* A thread is a box under its line, set apart from the code, with a notch that points up at the line.
+   An agent note is the same box with dashed edges: it never leaves kijk. */
 .thr {
   position: sticky; left: 24px; width: min(700px, calc(100cqi - 40px)); margin: 10px 16px 12px 24px; white-space: normal;
   font: 14px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--text);
-  background: var(--bg); border: 1px dashed var(--edge); border-radius: 8px;
+  background: var(--bg); border: 1px solid var(--edge); border-radius: 8px;
 }
 .thr::before {
   content: ""; position: absolute; top: -7px; left: 18px; width: 12px; height: 12px; transform: rotate(45deg);
-  background: var(--bg); border-top: 1px dashed var(--edge); border-left: 1px dashed var(--edge);
+  background: var(--bg); border-top: 1px solid var(--edge); border-left: 1px solid var(--edge);
 }
+.thr.note { border-style: dashed; }
+.thr.note::before { border-top-style: dashed; border-left-style: dashed; }
+/* An open thread wants an answer, so its header is tinted: the one color it carries. */
+.thr .thead {
+  display: flex; align-items: center; gap: 6px; min-height: 34px; padding: 4px 8px 4px 12px; border-bottom: 1px solid var(--border);
+  border-radius: 7px 7px 0 0; background: var(--select); font-size: 12.5px; font-weight: 600; color: var(--modified);
+}
+.thr:has(.thead)::before { background: var(--select); }
+.thr .thead .muted { font-weight: 400; }
+.thr .thead svg { width: 14px; height: 14px; flex: none; }
+.thr .thead .end { margin-left: auto; display: flex; gap: 2px; }
+.thr.resolved .thead { background: var(--panel); color: var(--muted); }
+.thr.resolved:has(.thead)::before { background: var(--panel); }
+.thr .c + .c { padding-top: 2px; }
+.thr .cbody { margin: 4px 0 0 30px; max-width: 72ch; overflow-wrap: anywhere; }
+.thr .cbody > :first-child { margin-top: 0; }
+.thr .cbody > :last-child { margin-bottom: 0; }
+.thr .cbody p, .thr .cbody ul, .thr .cbody ol, .thr .cbody pre { margin: 0 0 .5em; }
+.thr .cbody code { font: .88em var(--code-font); background: var(--panel); padding: .05em .35em; border-radius: 3px; }
+.thr .cbody pre { padding: 6px 9px; border-radius: 4px; background: var(--panel); overflow: auto; font: 12px/18px var(--code-font); }
+.thr .cbody pre code { padding: 0; background: none; }
+.thr .cbody a { color: var(--modified); }
+.av {
+  flex: none; display: flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 50%;
+  background: hsl(var(--hue) 45% 85%); color: hsl(var(--hue) 40% 28%); font: 600 10.5px/1 system-ui, -apple-system, sans-serif;
+}
+@media (prefers-color-scheme: dark) { .av { background: hsl(var(--hue) 26% 30%); color: hsl(var(--hue) 45% 85%); } }
+.thr .foot { display: flex; align-items: center; gap: 8px; padding: 10px 12px 12px 14px; border-top: 1px solid var(--border); background: var(--panel); border-radius: 0 0 7px 7px; }
+.thr .foot input {
+  flex: 1; min-width: 0; font: inherit; font-size: 13px; padding: 4px 9px; border: 1px solid var(--edge); border-radius: 4px;
+  background: var(--bg); color: var(--text); caret-color: var(--modified);
+}
+.thr .foot input::placeholder { color: var(--muted); }
+.thr .foot input:focus { outline: 2px solid var(--modified); outline-offset: -1px; }
+.thr .foot .hint { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* A resolved thread, folded to one line. */
+.thr.folded { display: flex; align-items: center; gap: 6px; padding: 5px 12px; border-color: var(--border); font-size: 12.5px; color: var(--muted); cursor: pointer; }
+.thr.folded::before { border-color: var(--border); }
+.thr.folded:hover { background: color-mix(in srgb, var(--select) 50%, var(--bg)); }
+.thr.folded:focus-visible { outline: 2px solid var(--busy); outline-offset: 1px; }
+.thr.folded > span { display: flex; flex: none; }
+.thr.folded svg { width: 13px; height: 13px; }
+.thr.folded .ok { color: var(--added); }
+.thr.folded > span:last-child { flex: 1; min-width: 0; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* The bar of threads whose lines changed, at the top of a file box. */
+.fnote.obar { border-top: 0; border-bottom: 1px solid var(--border); font: 12px system-ui, -apple-system, sans-serif; color: var(--text); }
+.fnote.obar > span:first-child { display: flex; color: var(--muted); }
+.fnote.obar svg { width: 13px; height: 13px; }
+.fnote.obar > span:nth-child(2) { flex: 1; }
+.fnote.obar .all { margin-left: auto; }
 .thr .c { padding: 10px 14px 12px; }
 .thr .who { display: flex; align-items: center; gap: 8px; font-size: 13px; }
 .thr .who b { font-weight: 600; }

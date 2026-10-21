@@ -4,6 +4,7 @@ import { refreshView, jumpChange, showMessage } from './view.js';
 import { setTabs, tabState, openTab, activeTab, recentFiles, closeActive, goPlace } from './tabs.js';
 import { showPR, FORGE } from './pr.js';
 import { setupReview, setBranchFolder, refreshBranch, showBranchPanel, focusBranchList } from './review.js';
+import { setupPrs, setPrsFolder, prsState, prsStatus, prsShown, showPrsItem, focusPrs, branchHead, overviewRow } from './prs.js';
 import { marks, showChanges, showGraph, revealHead, reviewKey, ago, lineCount } from './git.js';
 import { openFind, findAgain, openGotoLine, openGotoFile, openRecent } from './find.js';
 import { onKey, keyLabel, keyNames } from './keys.js';
@@ -67,12 +68,24 @@ let page = null;
 // update of the folder.
 export function setupFolder(p) {
   page = p;
+  const openBranch = () => openTab({ kind: 'branch', path: '' }, true);
   setupReview({
     announce: p.announce,
     say: p.say,
     push: pushNow,
     openFile: path => { if (!offline) openTab({ kind: 'file', path }, true); },
-    openBranch: () => openTab({ kind: 'branch', path: '' }, true),
+    openBranch,
+    branchHead,
+    overviewRow: n => overviewRow(n),
+  });
+  setupPrs({
+    announce: p.announce,
+    openTab: (t, pin) => { if (!offline) openTab({ ...t, num: FORGE[pr?.forge?.kind]?.num }, pin); },
+    save: saveState,
+    setCount: showCount,
+    openBranch: () => { if (!offline) openBranch(); },
+    openFile: (n, path) => { if (!offline) openTab({ kind: 'file', path, pr: n, num: FORGE[pr?.forge?.kind]?.num }, true); },
+    focusBranch: focusBranchList,
   });
 }
 
@@ -86,7 +99,7 @@ function loadState(key) {
 function saveState() {
   if (!openKey) return;
   try {
-    localStorage.setItem(`kijk.folder:${storeKey(openKey)}`, JSON.stringify({ ...tabState(), open: openFolders(), sidebar }));
+    localStorage.setItem(`kijk.folder:${storeKey(openKey)}`, JSON.stringify({ ...tabState(), open: openFolders(), sidebar, prs: prsState() }));
     localStorage.setItem(page.lastKey, openKey);
   } catch { /* storage blocked */ }
 }
@@ -117,6 +130,7 @@ export function openFolder(r, again) {
     onToggle: saveState,
   });
   setBranchFolder(r.key, page.agentIcon?.(r)); // before the tabs, which may open Branch changes
+  setPrsFolder(r.key, state.prs);
   setTabs(r.key, state, tabsChanged);
   tabsEl.hidden = true;
   sidebarHead.hidden = false;
@@ -172,6 +186,7 @@ export function closeFolder() {
   git = null;
   pr = null;
   setBranchFolder(null);
+  setPrsFolder(null);
   setTabs(null, {}, () => {});
   showMessage(viewer, page.start);
   filesEl.replaceChildren();
@@ -241,6 +256,7 @@ async function refreshPR() {
   showPrsTab();
   if (prTarget() !== before) refreshGit();
   else showBranchPanel(git, pr, prTarget());
+  prsStatus(git, pr);
   if (pr?.pr?.ci === 'running') prTimer = setTimeout(refreshPR, 60000);
 }
 
@@ -259,10 +275,11 @@ async function refreshGit() {
   gitNote.hidden = !st.error;
   gitNote.textContent = st.error || '';
   if (!st.git) return selectTab('files');
-  prsBtn.hidden = !st.total;
+  prsBtn.hidden = !st.total && !pr?.forge;
   if (!git || prsEl.hidden === (shownTab() === 'prs')) selectTab(shownTab());
   git = st;
   showBranchPanel(st, pr, prTarget());
+  prsStatus(st, pr);
   if (upHash !== null && st.upHash !== upHash) refreshPR();
   upHash = st.upHash || '';
   paint(filesEl, marks(st));
@@ -409,18 +426,33 @@ function selectTab(tab) {
   }
   filesEl.hidden = tab !== 'files';
   gitEl.hidden = tab !== 'git';
+  const was = !prsEl.hidden;
   prsEl.hidden = tab !== 'prs';
+  if (was !== !prsEl.hidden) prsShown(!prsEl.hidden);
 }
 
 // shownTab is the chosen sidebar tab, or Git while the branch has no PRs tab.
 const shownTab = () => (sidebar === 'prs' && prsBtn.hidden ? 'git' : sidebar);
 
-// The PRs tab is named for the forge: pull requests on GitHub, merge requests on GitLab.
+// The PRs tab is named for the forge: pull requests on GitHub, merge requests on GitLab. Its count
+// is the pull requests that wait for your review.
+let waiting = 0;
 function showPrsTab() {
   const kind = pr?.forge?.kind;
   const word = FORGE[kind] ? `${FORGE[kind].short}s` : 'Branch';
-  prsBtn.dataset.tip = `${word}\n${keyLabel('prsTab')}`;
-  prsBtn.setAttribute('aria-label', word);
+  const wait = waiting ? `\n${waiting} ${waiting === 1 ? 'waits' : 'wait'} for your review` : '';
+  prsBtn.dataset.tip = `${word}${wait}\n${keyLabel('prsTab')}`;
+  prsBtn.setAttribute('aria-label', waiting ? `${word}, ${waiting} for your review` : word);
+  let count = prsBtn.querySelector('.tabcount');
+  if (!waiting) return count?.remove();
+  if (!count) prsBtn.append(count = el('span', 'tabcount'));
+  count.textContent = waiting > 99 ? '99+' : String(waiting);
+  count.setAttribute('aria-hidden', 'true');
+}
+
+function showCount(n) {
+  waiting = n;
+  showPrsTab();
 }
 
 function switchSidebar(tab) {
@@ -428,7 +460,7 @@ function switchSidebar(tab) {
   selectTab(tab);
   saveState();
   refreshGit();
-  if (tab === 'prs' && !offline) openTab({ kind: 'branch', path: '' }, true);
+  if (tab === 'prs' && !offline) showPrsItem();
 }
 
 tabsEl.onclick = e => {
@@ -440,7 +472,7 @@ tabsEl.onclick = e => {
 function showSidebar(tab) {
   if (!openKey || (tab !== 'files' && tabsEl.hidden) || (tab === 'prs' && prsBtn.hidden)) return;
   switchSidebar(tab);
-  if (tab === 'prs') return focusBranchList();
+  if (tab === 'prs') return focusPrs();
   const list = tab === 'files' ? filesEl : changesEl;
   (list.querySelector('[tabindex="0"]') || list).focus();
 }
