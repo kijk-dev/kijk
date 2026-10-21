@@ -224,3 +224,17 @@ func TestListPRsNotLoggedIn(t *testing.T) {
 		t.Errorf("res = %+v", res)
 	}
 }
+
+// Both forges' words for a pull request's state read the same.
+func TestPRState(t *testing.T) {
+	for _, c := range []struct {
+		state string
+		draft bool
+		want  string
+	}{{"MERGED", false, "merged"}, {"merged", true, "merged"}, {"CLOSED", false, "closed"}, {"locked", false, "closed"},
+		{"OPEN", true, "draft"}, {"opened", false, "open"}} {
+		if got := prState(c.state, c.draft); got != c.want {
+			t.Errorf("prState(%s, %v) = %s, want %s", c.state, c.draft, got, c.want)
+		}
+	}
+}

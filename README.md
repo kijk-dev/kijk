@@ -137,8 +137,8 @@ icon counts the pull requests that wait for your review.
   thread whose lines changed after it was written is in a bar at the top of its file.
 - **Overview** shows the description, the reviewers and what they said, the conversation, and
   the checks. The checks of each GitHub workflow or GitLab pipeline are a graph: each job a pill,
-  with lines to the jobs it needs. The first three failed jobs show the last lines of their logs. On your own
-  branch, **Copy for agent** hands that failure to the agent.
+  with lines to the jobs it needs. The first three failed jobs show the last lines of their logs.
+  On your own branch, **Copy for agent** hands a failure to the agent.
 - Clicking the pull request's title in the Git tab opens it in the PRs tab.
 - `kijk https://github.com/acme/shop/pull/477` opens that pull request in a clone of the repo
   that kijk knows: a saved folder or an agent's folder. kijk never clones a repo.

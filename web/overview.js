@@ -4,6 +4,7 @@ import { cachedView, loadView, onView, age } from './prdata.js';
 import { avatar, comment } from './threads.js';
 import { FORGE } from './pr.js';
 import { mac } from './keys.js';
+import { svg } from './boxes.js';
 
 // The Overview tab of a pull request: title, reviewers, description, checks as graphs and the
 // conversation. Tab n 0 is the folder's own branch before it has a pull request.
@@ -25,12 +26,6 @@ const ICON = {
 };
 const STATE = { ok: 'Passed', bad: 'Failed', cancel: 'Cancelled', run: 'Running', skip: 'Skipped', wait: 'Waiting' };
 const REVIEW = { approved: ['ok', ICON.check, 'Approved'], commented: ['', ICON.msg, 'Commented'], changes: ['bad', ICON.x, 'Changes requested'], requested: ['', ICON.wait, 'Review requested'] };
-
-function svg(markup, cls) {
-  const s = el('span', cls);
-  s.innerHTML = markup; // a fixed string
-  return s;
-}
 
 function jobIcon(state) {
   if (state === 'run') {
