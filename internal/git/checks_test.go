@@ -3,7 +3,6 @@ package git
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -190,9 +189,7 @@ func TestJobLogOldGh(t *testing.T) {
 	gittest.Isolate(t)
 	repo := gittest.Repo(t)
 	gittest.Run(t, repo, "remote", "add", "origin", "git@github.com:acme/shop.git")
-	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "gh"), []byte("#!/bin/sh\ncase \"$*\" in *--allow-escape-sequences*) echo 'unknown flag: --allow-escape-sequences' >&2; exit 1 ;; esac\necho 'line one'\n"), 0o755)
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	gittest.FakeTool(t, "gh", gittest.Rule{Has: "--allow-escape-sequences", Err: "unknown flag: --allow-escape-sequences\n", Exit: 1}, gittest.Rule{Out: "line one\n"})
 	if lines, err := JobLog(repo, "3"); err != nil || strings.Join(lines, "|") != "line one" {
 		t.Errorf("lines %q %v", lines, err)
 	}

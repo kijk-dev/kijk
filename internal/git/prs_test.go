@@ -178,22 +178,10 @@ gid://gitlab/Discussion/c legacy.go:3 old=true orig=3 resolved=true outdated=fal
 	}
 }
 
-// fakeTool puts a gh or glab on PATH that saves its arguments, one per line, and prints answer.
+// fakeTool puts a gh or glab on PATH that prints answer, and gives the arguments of its last call.
 func fakeTool(t *testing.T, tool, answer string) (args func() []string) {
 	t.Helper()
-	dir := t.TempDir()
-	out := filepath.Join(dir, "args")
-	ans := filepath.Join(dir, "answer.json")
-	os.WriteFile(ans, []byte(answer), 0o644)
-	script := "#!/bin/sh\nfor a in \"$@\"; do printf '%s\\n' \"$a\"; done > '" + out + "'\ncat '" + ans + "'\n"
-	if err := os.WriteFile(filepath.Join(dir, tool), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	return func() []string {
-		b, _ := os.ReadFile(out)
-		return strings.Split(strings.TrimSuffix(string(b), "\n"), "\n")
-	}
+	return gittest.FakeTool(t, tool, gittest.Rule{Out: answer})
 }
 
 func TestListPRsSearch(t *testing.T) {
@@ -217,9 +205,7 @@ func TestListPRsNotLoggedIn(t *testing.T) {
 	gittest.Isolate(t)
 	repo := gittest.Repo(t)
 	gittest.Run(t, repo, "remote", "add", "origin", "https://gitlab.com/acme/shop.git")
-	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "glab"), []byte("#!/bin/sh\necho 'error: 401 Unauthorized' >&2\nexit 1\n"), 0o755)
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	gittest.FakeTool(t, "glab", gittest.Rule{Err: "error: 401 Unauthorized\n", Exit: 1})
 	if res := ListPRs(repo, ""); res.Note != "Log in with glab auth login to see the status" || res.Tool != "glab" {
 		t.Errorf("res = %+v", res)
 	}

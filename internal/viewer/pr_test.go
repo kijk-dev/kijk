@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -51,20 +50,10 @@ func prRepo(t *testing.T) (clone, head, base string) {
 // fakeGh answers the list, the pull request and a job log, and fails anything else.
 func fakeGh(t *testing.T, list, pr, log string) {
 	t.Helper()
-	dir := t.TempDir()
-	for name, body := range map[string]string{"list.json": list, "pr.json": pr, "log.txt": log} {
-		os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644)
-	}
-	script := fmt.Sprintf(`#!/bin/sh
-case "$*" in
-*"pullRequests(states"*) cat %[1]q/list.json ;;
-*"pullRequest(number"*) cat %[1]q/pr.json ;;
-*/actions/jobs/*) cat %[1]q/log.txt ;;
-*) echo "unknown call: $*" >&2; exit 1 ;;
-esac
-`, dir)
-	os.WriteFile(filepath.Join(dir, "gh"), []byte(script), 0o755)
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	gittest.FakeTool(t, "gh",
+		gittest.Rule{Has: "pullRequests(states", Out: list},
+		gittest.Rule{Has: "pullRequest(number", Out: pr},
+		gittest.Rule{Has: "/actions/jobs/", Out: log})
 }
 
 func prAnswer(state, head, base string) string {
