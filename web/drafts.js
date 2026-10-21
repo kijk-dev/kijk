@@ -5,8 +5,7 @@ import { iconButton, plural } from './boxes.js';
 import { FORGE, forgeMark } from './pr.js';
 import { mac } from './keys.js';
 
-// Writing a review: comments on lines and replies as drafts on the forge, their edits and deletes,
-// resolves, the review box with its summary and verdict, and the one check before it is posted.
+// Writing a review: drafts on the forge, resolves, the review box and the check before posting.
 // Every write asks for the pull request again, so what shows is the forge's state.
 
 const ICON = {
@@ -50,9 +49,8 @@ async function send(root, n, route, body) {
   return res;
 }
 
-// shown sends a write that needs the diff on screen. The server answers 409 when the head moved
-// and 428 when it kept no diff, as after a restart; then the write goes once more only when the
-// head is still at, the one on screen.
+// shown sends a write that needs the diff on screen: on 428 (no diff kept, as after a restart) it
+// goes once more only when the head is still at, the one on screen; 409 means the head moved.
 async function shown(root, n, at, route, body) {
   try {
     return await post(route, { root, n, ...body });
