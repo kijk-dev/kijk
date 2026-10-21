@@ -84,6 +84,34 @@ _Avoid_: diff size, diffstat, churn
 The line counts of everything a branch adds to its PR target or main line: its commits since they split, plus its uncommitted work. A folder that is on the main line itself has no branch total.
 _Avoid_: PR size, branch diff
 
+**Branch changes**:
+Every change a branch makes against its PR target or main line, taken as one body of work: its commits since they split, plus its uncommitted work. The branch total is its line counts.
+_Avoid_: branch diff, PR diff, "the changes"
+
+**Forge**:
+The site that hosts a repo's origin: GitHub or GitLab.
+_Avoid_: host (a machine is not a forge), remote, provider
+
+**Pull request**:
+A request on a forge to merge a branch into another. GitLab calls it a merge request, and the UI uses the forge's own word, but in code and docs "pull request" (PR) covers both.
+_Avoid_: MR (except in GitLab UI text), change request
+
+**Forge diff**:
+The diff a pull request shows on its forge: only what has been pushed. A teammate's pull request has only a forge diff; your own branch also has its branch changes, which include work not yet pushed.
+_Avoid_: remote diff, PR changes
+
+**Review**:
+Your comments on a pull request and a verdict (approve, request changes, or comment only), sent to the forge together when you submit it.
+_Avoid_: feedback, approval (an approval is one kind of verdict)
+
+**Agent note**:
+A comment you leave on your own branch changes for the agent, not for people. It stays in kijk, never goes to the forge, and you hand it to the agent by copying it.
+_Avoid_: local comment, draft (a draft is part of a review not yet submitted)
+
+**Viewed mark**:
+A per-file mark that says you have read that file's diff in a pull request. It clears when the file changes again after you marked it.
+_Avoid_: seen, read, checked
+
 **Telemetry**:
 The anonymous usage events kijk sends about itself: that it started, that it ran on a day, its version, operating system, how many folders are in the folders window, and, on a day kijk looked for agents, how many agents of each agent type run on the local machine and how many remote machines and agents on them it sees. Never folder paths, names, code, or an IP address. On by default, and the user can turn it off.
 _Avoid_: analytics, tracking, usage stats
