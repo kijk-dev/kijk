@@ -1,7 +1,7 @@
 import { el, get } from './api.js';
 import { loadView, onView, age } from './prdata.js';
 import { plural } from './boxes.js';
-import { reviewOf, moveReview } from './viewed.js';
+import { reviewOf } from './viewed.js';
 import { FORGE } from './pr.js';
 
 // Since your review: what changed in a pull request from the head of your last review to the head
@@ -21,7 +21,7 @@ const key = (root, n) => `${root}\n${n}`;
 export const onSince = fn => listeners.add(fn);
 const tell = (root, n) => { for (const fn of listeners) fn(root, n); };
 
-function ask(root, n, from, at, k, forge) {
+function ask(root, n, from, at, k) {
   if (answers.size > 100) for (const [k2, a] of answers) if (!a.then) answers.delete(k2);
   const once = () => get('pr/since', { root, n, from });
   // The call stays in answers until it is done, so a draw meanwhile does not ask again.
@@ -40,7 +40,6 @@ function ask(root, n, from, at, k, forge) {
       return;
     }
     answers.set(k, res);
-    if (!why(res) && !res.files.length) moveReview(root, n, forge, from, at);
     tell(root, n);
   }, err => {
     if (answers.get(k) !== call) return;
@@ -54,17 +53,17 @@ onView((root, n) => {
   for (const [k, a] of answers) if (a.failed && k.startsWith(`${key(root, n)}\n`)) answers.delete(k);
 });
 
-// sinceOf is null when pull request n has no reviewed head, or is at it; else {on, from, time,
-// answer}, where answer is null while kijk asks.
+// sinceOf is null when pull request n has no last review, is at its head, or no file of it changed
+// since; else {on, from, time, answer}, where answer is null while kijk asks.
 function sinceOf(root, n, res) {
   const r = res?.at && res.forge ? reviewOf(root, n, res.forge) : null;
-  if (!r?.head || r.head === res.at) {
+  const k = r?.head && r.head !== res.at && `${key(root, n)}\n${r.head}\n${res.at}`;
+  if (k && !answers.has(k)) ask(root, n, r.head, res.at, k);
+  const a = k && answers.get(k);
+  if (!k || (a && !a.then && !why(a) && !a.files.length)) {
     on.delete(key(root, n));
     return null;
   }
-  const k = `${key(root, n)}\n${r.head}\n${res.at}`;
-  if (!answers.has(k)) ask(root, n, r.head, res.at, k, res.forge);
-  const a = answers.get(k);
   return { on: on.has(key(root, n)), from: r.head, time: r.time, answer: a?.then ? null : a || null };
 }
 
@@ -86,7 +85,7 @@ export function shown(root, n, res) {
   if (!since?.on) return { files: all, since: null, from: '' };
   const a = since.answer;
   if (!a) return { files: null, since, from: '' };
-  if (why(a) || !a.files.length) return { files: all, since, from: '' };
+  if (why(a)) return { files: all, since, from: '' };
   return { files: a.files, since, from: since.from };
 }
 
