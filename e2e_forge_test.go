@@ -274,6 +274,8 @@ func reviewForge(t *testing.T, f *fakeForge, repo, origin string, ownThread bool
 				ghComment("priya", "Check ctx before the first sleep?"), ghComment("sanne", "Done."), ghComment("priya", "Thanks.")),
 			ghThread("T3", "internal/webhook/retry.go", nil, 20, false, true, "@@ -0,0 +1,20 @@\n+\ttime.Sleep(time.Second)",
 				ghComment("tim", "Name this delay.")),
+			ghThread("T6", "internal/webhook/retry.go", nil, 21, true, true, "@@ -0,0 +1,21 @@\n+\tlog.Print(err)",
+				ghComment("priya", "Log less here."), ghComment("sanne", "Removed.")),
 		},
 		[]obj{
 			ghCheck(301, "build", "COMPLETED", "SUCCESS", 1284, ".github/workflows/ci.yml"),
