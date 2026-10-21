@@ -7,7 +7,7 @@ import { iconButton } from './boxes.js';
 import { avatar, threadCount } from './threads.js';
 import { goToChange, setupChanges } from './changes.js';
 import { setupOverview } from './overview.js';
-import { setupDrafts } from './drafts.js';
+import { setupDrafts, reviewBox } from './drafts.js';
 import { setBranchThreads, redrawBranchPanel, wakeBranch } from './review.js';
 
 // The PRs tab: the list of open pull requests, one pull request opened in the sidebar, the count
@@ -51,7 +51,7 @@ const failed = new Map(); // pull request number: why kijk could not read it
 export function setupPrs(p) {
   page = p;
   setupChanges({ onTop: (n, path) => selectFile(path), openFile: p.openFile });
-  setupDrafts({ announce: p.announce });
+  setupDrafts({ announce: p.announce, say: p.say, reviewed: root => { if (root === folder) loadList(); } });
   setupOverview({
     branch: () => ({ branch: st?.branch, base: st?.total?.base?.replace(/^origin\//, ''), ahead: st?.ahead, forge: line?.forge?.kind, create: line?.create }),
     own: n => n === ownNumber() && onBranch(),
@@ -298,6 +298,8 @@ function prRowEl(r) {
     l2.append(dot);
   }
   l2.append(el('span', 'who', r.number ? `${r.author} · ${age(r.createdAt)}` : `No ${words().kind} yet`));
+  const drafts = r.number ? cachedView(folder, r.number)?.drafts ?? r.drafts : 0;
+  if (drafts) l2.append(el('span', 'yours', `${drafts} ${drafts === 1 ? 'draft' : 'drafts'}`));
   const lc = lineCount(r.add, r.del);
   if (lc) l2.append(lc);
   li.append(l1, l2);
@@ -427,7 +429,7 @@ export function overviewRow(n, res) {
   li.tabIndex = -1;
   li.dataset.path = '';
   const parts = [];
-  const open = (res?.threads || []).filter(t => !t.resolved && !t.outdated).length;
+  const open = (res?.threads || []).filter(t => !t.resolved && !t.outdated && !t.draft).length;
   if (open) parts.push(`${open} open ${open === 1 ? 'thread' : 'threads'}`);
   else if (res?.comments?.length) parts.push(`${res.comments.length} ${res.comments.length === 1 ? 'comment' : 'comments'}`);
   li.append(svg(ICON.doc), el('span', 'name', 'Overview'), el('span', 'dir', parts.join(' · ')));
@@ -511,8 +513,17 @@ function drawPR(n, mine) {
   wrap.append(h, ul);
   if (!res && !why) wrap.append(el('p', 'note', `Fetching ${words().num}${n}…`));
   parts.push(wrap);
+  const box = res && reviewBox(folder, n, res);
+  if (box) parts.push(box);
+  // The review box is one element that moves into the new panel; a move loses the focus.
+  const typing = box?.contains(document.activeElement) ? document.activeElement : null;
+  const at = typing && [typing.selectionStart, typing.selectionEnd];
   prEl.replaceChildren(...parts);
   if (focused === 'list') ul.querySelector('[tabindex="0"]')?.focus();
+  if (typing?.isConnected) {
+    typing.focus();
+    if (at[0] != null) typing.setSelectionRange(...at);
+  }
 }
 
 function selectFile(path) {

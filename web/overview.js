@@ -4,6 +4,7 @@ import { cachedView, loadView, onView, age } from './prdata.js';
 import { avatar, comment } from './threads.js';
 import { FORGE } from './pr.js';
 import { mac } from './keys.js';
+import { threadOpts, writable, summarySlot, commentFoot } from './drafts.js';
 
 // The Overview tab of a pull request: title, reviewers, description, checks as graphs and the
 // conversation. Tab n 0 is the folder's own branch before it has a pull request.
@@ -72,7 +73,10 @@ function column(v, ...parts) {
   const pane = el('div', 'pane');
   pane.append(scroll);
   const top = v.scroll?.scrollTop;
+  // The comment box is one element that moves into the new page; a move loses the focus.
+  const typing = v.viewer.contains(document.activeElement) && document.activeElement.matches('input, textarea') ? document.activeElement : null;
   v.viewer.replaceChildren(pane);
+  if (typing?.isConnected) typing.focus({ preventScroll: true });
   v.scroll = scroll;
   if (top) scroll.scrollTop = top;
   return doc;
@@ -114,11 +118,16 @@ function draw(v, res) {
   }
   parts.push(desc, ...checks(v, res, words));
   const talk = el('h2', null, 'Conversation');
-  talk.append(el('span', 'muted', res.comments.length ? `${res.comments.length} ${res.comments.length === 1 ? 'comment' : 'comments'}` : 'no comments yet'));
+  const said = res.comments.filter(c => !c.draft).length;
+  talk.append(el('span', 'muted', said ? `${said} ${said === 1 ? 'comment' : 'comments'}` : 'no comments yet'));
   parts.push(talk);
-  if (res.comments.length) {
+  // Where kijk may write, the conversation ends in your drafts, your summary and a box for more.
+  const write = writable(res);
+  if (res.comments.length || write) {
     const box = el('div', 'thr conv');
-    box.append(...res.comments.map(c => comment(c)));
+    const drafts = threadOpts(v.root, res.number, res, () => isCurrent(v) && draw(v, v.res)).drafts;
+    box.append(...res.comments.map(c => comment(c, drafts)));
+    if (write) box.append(summarySlot(v.root, res.number, res), commentFoot(v.root, res.number, res));
     parts.push(box);
   }
   column(v, ...parts);
