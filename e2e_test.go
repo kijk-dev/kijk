@@ -238,6 +238,63 @@ func TestBrowser(t *testing.T) {
 		b.waitFor("the new lines", boxHas("README.md", "add", "Then run the binary."))
 		b.waitFor("session.go still at the top", `Math.abs(`+fileBox(session)+`.offsetTop - 12 - document.querySelector('.allfiles').scrollTop) < 2`)
 
+		// Agent notes: with + and with the key.
+		b.waitFor("no + on a removed line", fileBox(session)+`.querySelector('.ln.del') && !`+fileBox(session)+`.querySelector('.ln.del .addc')`)
+		noted := boxRow(session, "\tsess, ok := s.byID[id]")
+		b.hover("the line to note", noted)
+		b.waitFor("the + button", `getComputedStyle(`+noted+`.querySelector('.addc')).display !== 'none'`)
+		b.click("+", noted+`.querySelector('.addc')`)
+		b.waitFor("the note editor", `document.activeElement?.matches('.thr.editing textarea')`)
+		b.typeText("Return a copy, not the pointer.")
+		b.press("submitNote")
+		b.waitFor("the note under its line", noted+`.nextElementSibling?.matches('.thr.note') && `+noted+`.nextElementSibling.querySelector('p').textContent === 'Return a copy, not the pointer.'`)
+		b.waitFor("one note on session.go", fileBox(session)+`.querySelector('.fhead .tc')?.textContent === '1' && `+prsRow("session.go")+`.querySelector('.tc')?.textContent === '1'`)
+		redirect := boxRow("internal/auth/redirect.go", "\treturn next")
+		b.click("a line of redirect.go", redirect+`.querySelector('.tx')`)
+		b.press("addNote")
+		b.waitFor("the note editor", `document.activeElement?.matches('.thr.editing textarea')`)
+		b.press("submitNote")
+		b.waitFor("an empty note not added", `document.querySelector('.thr.editing') && !`+fileBox("internal/auth/redirect.go")+`.querySelector('.thr.note:not(.editing)')`)
+		b.typeText("Keep next only when it is a path on this site.")
+		b.press("submitNote")
+		b.waitFor("the second note", redirect+`.nextElementSibling?.matches('.thr.note:not(.editing)')`)
+		b.click("Edit", redirect+`.nextElementSibling.querySelector('[aria-label=Edit]')`)
+		b.waitFor("the editor with the note", `document.activeElement?.value === 'Keep next only when it is a path on this site.'`)
+		b.typeText(" A //evil.com path passes now.")
+		b.press("submitNote")
+		b.waitFor("the edited note", redirect+`.nextElementSibling?.querySelector('p')?.textContent === 'Keep next only when it is a path on this site. A //evil.com path passes now.'`)
+		b.waitFor("two notes in the box", `document.querySelector('#prs .reviewbox .head .muted')?.textContent === '2'`)
+
+		// Notes stay over a reload.
+		b.act("reload", chromedp.Reload())
+		b.waitFor("the notes after a reload", noted+`?.nextElementSibling?.matches('.thr.note') && `+redirect+`?.nextElementSibling?.matches('.thr.note')`)
+		b.waitFor("the PRs tab kept", prsTab+`.classList.contains('active') && !document.querySelector('#prs').hidden`)
+		b.evalJS(`document.querySelector('.allfiles').scrollTop = 0`)
+		b.evalJS(`document.querySelector('.allfiles').focus()`)
+		b.press("nextNote")
+		b.waitFor("the first note below the top", `(s => [...s.querySelectorAll('.thr.note')].some(n => Math.abs(n.getBoundingClientRect().top - s.getBoundingClientRect().top - 124) < 2))(document.querySelector('.allfiles'))`)
+
+		// The agent changes the noted line: the note is outdated and keeps the old line.
+		write(t, filepath.Join(repo, session), sessionGo("sess, ok := s.lookup(c.Value)", strings.Replace(lookupGo, "sess, ok := s.byID[id]", "sess, ok := s.copyOf(id)", 1)))
+		b.waitFor("the note outdated", `[...document.querySelectorAll('.thr.note')].some(n => [...n.querySelectorAll('.chip')].some(c => c.textContent === 'Outdated') && n.querySelector('.was')?.textContent === '\tsess, ok := s.byID[id]')`)
+
+		for range 2 {
+			b.click("Delete", `document.querySelector('.thr.note [aria-label=Delete]')`)
+		}
+		b.waitFor("no notes", `document.querySelector('#prs .reviewbox .head .muted')?.textContent === 'none yet' && !document.querySelector('.thr.note')`)
+
+		// A note on a line the diff no longer shows keeps that line in view.
+		check := boxRow(session, "func check16() bool {")
+		b.hover("a line next to the change", check)
+		b.click("+", check+`.querySelector('.addc')`)
+		b.typeText("Name this for what it checks.")
+		b.press("submitNote")
+		b.waitFor("the note", check+`.nextElementSibling?.matches('.thr.note')`)
+		write(t, filepath.Join(repo, session), sessionGo("sess, ok := s.lookup(c.Value)", ""))
+		b.waitFor("its line as a hunk of its own", `!`+boxHas(session, "add", "// lookup reads a session without touching its expiry.")+` && `+check+`?.previousElementSibling?.matches('.sep') && `+check+`.nextElementSibling?.matches('.thr.note')`)
+		b.click("Delete", check+`.nextElementSibling.querySelector('[aria-label=Delete]')`)
+		b.waitFor("the note deleted", `!document.querySelector('.thr.note') && !`+check)
+
 		b.noErrors()
 	})
 

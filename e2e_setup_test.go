@@ -22,6 +22,7 @@ import (
 	"github.com/chromedp/cdproto"
 	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/emulation"
+	"github.com/chromedp/cdproto/input"
 	"github.com/chromedp/chromedp"
 	"github.com/chromedp/chromedp/kb"
 
@@ -258,8 +259,11 @@ func (p page) press(action string) {
 		"gotoLine":   {{"l", []chromedp.Modifier{meta}}, {"g", []chromedp.Modifier{ctrl}}},
 		"gotoFile":   {{"o", []chromedp.Modifier{meta, shift}}, {"n", []chromedp.Modifier{ctrl, shift}}},
 		"prsTab":     {{"2", []chromedp.Modifier{meta}}, {"2", []chromedp.Modifier{alt}}},
+		"addNote":    {{"n", []chromedp.Modifier{meta, alt}}, {"n", []chromedp.Modifier{ctrl, alt}}},
+		"nextNote":   {{kb.ArrowDown, []chromedp.Modifier{alt}}, {kb.ArrowDown, []chromedp.Modifier{alt}}},
 		"nextChange": {{kb.F7, nil}, {kb.F7, nil}},
 		"prevChange": {{kb.F7, []chromedp.Modifier{shift}}, {kb.F7, []chromedp.Modifier{shift}}},
+		"submitNote": {{"\r", []chromedp.Modifier{meta}}, {"\r", []chromedp.Modifier{ctrl}}},
 	}
 	c, ok := keys[action]
 	if !ok {
@@ -270,6 +274,13 @@ func (p page) press(action string) {
 		k = c[0]
 	}
 	p.key(action, k.key, k.mods...)
+}
+
+// hover moves the mouse over the left part of an element.
+func (p page) hover(what, el string) {
+	p.t.Helper()
+	at := evalJS[[]float64](p, `(e => { e.scrollIntoView({block: 'center'}); const r = e.getBoundingClientRect(); return [r.left + 40, r.top + r.height / 2]; })(`+el+`)`)
+	p.act("hover "+what, chromedp.MouseEvent(input.DispatchMouseEventTypeMouseMoved, at[0], at[1]))
 }
 
 func (p page) evalJS(js string) {

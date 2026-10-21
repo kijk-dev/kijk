@@ -522,6 +522,12 @@ button.pill:hover { background: color-mix(in srgb, var(--modified) 22%, var(--se
 .reviewbox .head b { font-weight: 600; }
 .reviewbox .head > * { white-space: nowrap; }
 .reviewbox .head .muted { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.reviewbox .hint { margin: 0; font-size: 12px; color: var(--muted); }
+.reviewbox .gone { max-height: 120px; overflow: auto; font-size: 12px; }
+.reviewbox .gone li { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.reviewbox .gone .where { flex: none; color: var(--muted); font: 11px var(--code-font); }
+.reviewbox .gone .body { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 /* Branch changes: every file in one scroll. Each file is a box whose header sticks while you scroll it. */
 .allfiles { position: relative; flex: 1; min-height: 0; overflow: auto; padding: 12px 12px 0; background: var(--panel); }
 .allfiles:focus { outline: none; }
@@ -555,4 +561,42 @@ button.pill:hover { background: color-mix(in srgb, var(--modified) 22%, var(--se
 .np-tag svg { width: 10px; height: 10px; }
 /* A dashed change bar: the line exists only on this machine. */
 .ln.np .gut::after { background: repeating-linear-gradient(var(--added) 0 3px, transparent 3px 6px); }
+.allfiles:focus .ln.cur .gut { box-shadow: inset 2px 0 var(--busy); }
+.addc {
+  position: absolute; left: calc(var(--gutter) * 2 - 19px); top: 1px; z-index: 1; display: none; width: 16px; height: 16px; padding: 1px;
+  border: 0; border-radius: 3px; background: var(--accent-fill); color: var(--on-accent); cursor: pointer;
+}
+.addc svg { width: 14px; height: 14px; stroke-width: 2.5; }
+.ln:hover .addc { display: flex; }
+
+/* An agent note: a box under its line, with a notch that points up at it. Dashed: it never leaves kijk. */
+.thr {
+  position: sticky; left: 24px; width: min(700px, calc(100cqi - 40px)); margin: 10px 16px 12px 24px; white-space: normal;
+  font: 14px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--text);
+  background: var(--bg); border: 1px dashed var(--edge); border-radius: 8px;
+}
+.thr::before {
+  content: ""; position: absolute; top: -7px; left: 18px; width: 12px; height: 12px; transform: rotate(45deg);
+  background: var(--bg); border-top: 1px dashed var(--edge); border-left: 1px dashed var(--edge);
+}
+.thr .c { padding: 10px 14px 12px; }
+.thr .who { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.thr .who b { font-weight: 600; }
+.thr .who .muted { font-size: 12px; white-space: nowrap; }
+.thr .who .end { margin-left: auto; display: flex; gap: 2px; }
+.thr .agent { display: flex; flex: none; width: 22px; height: 22px; align-items: center; justify-content: center; color: var(--agent-color, var(--muted)); }
+.thr .agent svg { width: 14px; height: 14px; }
+.thr .agent.plain svg { fill: none; stroke: currentColor; }
+.thr p { margin: 4px 0 0 30px; max-width: 72ch; overflow-wrap: anywhere; white-space: pre-wrap; }
+.thr.copied p { color: var(--muted); }
+.thr .was { display: block; max-width: calc(72ch - 30px); margin: 6px 0 0 30px; padding: 0 6px; border-radius: 3px; background: var(--del-bg); font: 12px/18px var(--code-font); white-space: pre; overflow: hidden; text-overflow: ellipsis; }
+.thr textarea {
+  display: block; width: calc(100% - 30px); margin: 6px 0 0 30px; min-height: 56px; resize: vertical;
+  font: inherit; font-size: 13.5px; padding: 6px 9px; border: 1px solid var(--edge); border-radius: 4px; background: var(--bg); color: var(--text); caret-color: var(--modified);
+}
+.thr textarea:focus { outline: 2px solid var(--modified); outline-offset: -1px; }
+.thr .acts { display: flex; align-items: center; justify-content: flex-end; gap: 6px; margin: 8px 0 0 30px; font-size: 12px; }
+.thr .acts .muted { margin-right: auto; }
+kbd { font: 11px/1 var(--code-font); padding: 1px 4px; border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 3px; background: var(--bg); color: var(--muted); }
+
 @media (prefers-reduced-motion: reduce) { .fhead .fold svg { transition: none; } }
