@@ -50,37 +50,34 @@ func BranchChanges(root, target string) (Branch, error) {
 	// The git calls run side by side: on a big repo the diffs against the split point take most of
 	// the time, and the page asks for this on each refresh while the PRs tab is open.
 	var (
-		wg               sync.WaitGroup
-		out, names       []byte
-		stErr, nmErr     error
-		counts           map[string]lineCount
-		upHash           string
-		added            = map[string]bool{}
-		upErr            error
-		pr               *pullRequest
-		main, base, fork string
+		wg           sync.WaitGroup
+		out, names   []byte
+		stErr, nmErr error
+		counts       map[string]lineCount
+		upHash       string
+		added        = map[string]bool{}
+		upErr        error
+		pr           *pullRequest
 	)
-	run := func(fn func()) {
-		wg.Add(1)
-		go func() { defer wg.Done(); fn() }()
-	}
-	run(func() { out, stErr = Raw(root, "status", "--porcelain=v2", "-z", "--branch", "-uall") })
-	run(func() {
-		// A file is not pushed when the upstream lacks it; without an upstream nothing is pushed.
-		if upHash, upErr = Run(root, "rev-parse", "--verify", "-q", "@{upstream}"); upErr != nil {
-			return
-		}
-		var raw []byte
-		raw, upErr = Raw(root, "diff", "--no-ext-diff", "--no-renames", "--diff-filter=A", "--name-only", "-z", "@{upstream}")
-		for _, p := range strings.Split(string(raw), "\x00") {
-			added[p] = true
-		}
-	})
-	run(func() { pr = KnownPR(root) })
-	main, base, fork = branchBase(root, target)
-	if fork != "" {
-		run(func() { names, nmErr = Raw(root, "diff", "--no-ext-diff", "--name-status", "-z", "-M", fork) })
-		run(func() { counts = numstat(root, "-M", fork) })
+	wg.Go(func() { out, stErr = Raw(root, "status", "--porcelain=v2", "-z", "--branch", "-uall") })
+	// On the main line there are no branch changes, so the diffs are not started.
+	main, base, fork := branchBase(root, target)
+	head, _ := Run(root, "symbolic-ref", "--short", "-q", "HEAD")
+	if fork != "" && !onBase(head, main, base) {
+		wg.Go(func() {
+			// A file is not pushed when the upstream lacks it; without an upstream nothing is pushed.
+			if upHash, upErr = Run(root, "rev-parse", "--verify", "-q", "@{upstream}"); upErr != nil {
+				return
+			}
+			var raw []byte
+			raw, upErr = Raw(root, "diff", "--no-ext-diff", "--no-renames", "--diff-filter=A", "--name-only", "-z", "@{upstream}")
+			for _, p := range strings.Split(string(raw), "\x00") {
+				added[p] = true
+			}
+		})
+		wg.Go(func() { pr = KnownPR(root) })
+		wg.Go(func() { names, nmErr = Raw(root, "diff", "--no-ext-diff", "--name-status", "-z", "-M", fork) })
+		wg.Go(func() { counts = numstat(root, "-M", fork) })
 	}
 	wg.Wait()
 
