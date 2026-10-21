@@ -1031,6 +1031,20 @@ func TestBrowser(t *testing.T) {
 		// A draft is not a comment yet: the Overview row does not count it.
 		b.waitFor("a summary from the website", box+`.querySelector('.head').textContent === 'Your reviewno drafts yet' && `+box+`.querySelector('textarea').value === 'Thanks for this.' && `+
 			`!`+box+`.querySelector('button.primary').disabled && `+prsRow("Overview")+`.querySelector('.dir').textContent === ''`)
+
+		// Text not saved in the box stays, after the summary that changed on the forge meanwhile.
+		b.evalJS(`(a => { a.focus(); a.setSelectionRange(a.value.length, a.value.length) })(` + box + `.querySelector('textarea'))`)
+		b.typeText(" More.")
+		b.waitFor("not saved", `!`+box+`.querySelector('.saved').hidden`)
+		forge.after(t, "put", "glab-drafts.json", `[{"id":61,"note":"Thanks for this.\n\nFix the retry.","discussion_id":null,"position":null}]`)
+		n := forge.settle()
+		b.click("Overview", prsRow("Overview"))
+		foot := `document.querySelector('.md.ov .thr.conv .foot')`
+		b.click("the comment box", foot+`.querySelector('input')`)
+		b.typeText("Fix the retry.")
+		b.click("Add to review", byText(".md.ov .thr.conv .foot button", "Add to review"))
+		forge.waitFor(t, n, "--method PUT projects/acme%2Freview/merge_requests/12/draft_notes/61")
+		b.waitFor("both kept", box+`.querySelector('textarea').value === 'Thanks for this.\n\nFix the retry. More.' && !`+box+`.querySelector('.saved').hidden`)
 		b.noErrors()
 
 		// Below 16.3 the merge request is read only, and the box's place says why.
