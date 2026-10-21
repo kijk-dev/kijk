@@ -1,0 +1,4 @@
+{"data":{"viewer":{"login":"you"},"search":{"issueCount":2,"nodes":[
+{"number":301,"title":"Webhook signing","isDraft":false,"url":"https://github.com/acme/shop/pull/301","createdAt":"2026-06-01T08:00:00Z","headRefName":"sign-webhooks","baseRefName":"main","additions":20,"deletions":2,"author":{"login":"tim"},"commits":{"nodes":[{"commit":{"statusCheckRollup":{"state":"SUCCESS"}}}]}},
+{}
+]}}}

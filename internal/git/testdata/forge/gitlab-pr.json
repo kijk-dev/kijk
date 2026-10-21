@@ -1,0 +1,22 @@
+{"data":{"currentUser":{"username":"you"},"project":{"mergeRequest":{
+"iid":"12","title":"Draft: Retry webhook delivery","description":"Retry *up to* five times.","webUrl":"https://gitlab.com/acme/shop/-/merge_requests/12","state":"opened","draft":true,"createdAt":"2026-10-19T09:00:00Z","sourceBranch":"retry-webhooks","targetBranch":"main","diffHeadSha":"3333333333333333333333333333333333333333","commitCount":2,
+"author":{"username":"sanne"},"diffStatsSummary":{"additions":30,"deletions":4},
+"diffRefs":{"baseSha":"4444444444444444444444444444444444444444","headSha":"3333333333333333333333333333333333333333","startSha":"5555555555555555555555555555555555555555"},
+"approvedBy":{"nodes":[{"username":"priya"},{"username":"lead"}]},
+"reviewers":{"nodes":[{"username":"you","mergeRequestInteraction":{"approved":false,"reviewState":"UNREVIEWED"}},{"username":"priya","mergeRequestInteraction":{"approved":true,"reviewState":"APPROVED"}},{"username":"tim","mergeRequestInteraction":{"approved":false,"reviewState":"REVIEWED"}},{"username":"ana","mergeRequestInteraction":{"approved":false,"reviewState":"REQUESTED_CHANGES"}}]},
+"discussions":{"nodes":[
+{"id":"gid://gitlab/Discussion/a","resolved":false,"resolvable":true,"notes":{"nodes":[
+ {"author":{"username":"tim"},"body":"Should a 429 count?","createdAt":"2026-10-20T08:00:00Z","url":"https://gitlab.com/acme/shop/-/merge_requests/12#note_1","system":false,"position":{"filePath":"retry.go","newPath":"retry.go","oldPath":"retry.go","newLine":27,"oldLine":null,"diffRefs":{"headSha":"3333333333333333333333333333333333333333"}}},
+ {"author":{"username":"sanne"},"body":"Yes.","createdAt":"2026-10-20T09:00:00Z","url":"","system":false,"position":{"filePath":"retry.go","newPath":"retry.go","oldPath":"retry.go","newLine":27,"oldLine":null,"diffRefs":{"headSha":"3333333333333333333333333333333333333333"}}},
+ {"author":{"username":"sanne"},"body":"changed this line in version 2 of the diff","createdAt":"2026-10-20T10:00:00Z","url":"","system":true,"position":null}]}},
+{"id":"gid://gitlab/Discussion/b","resolved":false,"resolvable":true,"notes":{"nodes":[
+ {"author":{"username":"tim"},"body":"Name this delay.","createdAt":"2026-10-19T08:00:00Z","url":"","system":false,"position":{"filePath":"retry.go","newPath":"retry.go","oldPath":"retry.go","newLine":40,"oldLine":null,"diffRefs":{"headSha":"6666666666666666666666666666666666666666"}}}]}},
+{"id":"gid://gitlab/Discussion/c","resolved":true,"resolvable":true,"notes":{"nodes":[
+ {"author":{"username":"tim"},"body":"Was anyone calling this?","createdAt":"2026-10-19T09:00:00Z","url":"","system":false,"position":{"filePath":"legacy.go","newPath":"legacy.go","oldPath":"legacy.go","newLine":null,"oldLine":3,"diffRefs":{"headSha":"3333333333333333333333333333333333333333"}}}]}},
+{"id":"gid://gitlab/Discussion/d","resolved":false,"resolvable":false,"notes":{"nodes":[
+ {"author":{"username":"tim"},"body":"Do we want the attempt number in the log?","createdAt":"2026-10-20T07:00:00Z","url":"","system":false,"position":null}]}},
+{"id":"gid://gitlab/Discussion/e","resolved":false,"resolvable":false,"notes":{"nodes":[
+ {"author":{"username":"sanne"},"body":"assigned to @you","createdAt":"2026-10-19T07:00:00Z","url":"","system":true,"position":null}]}}
+]},
+"headPipeline":null
+}}}}
