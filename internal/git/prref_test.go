@@ -389,11 +389,16 @@ func TestPRSince(t *testing.T) {
 	if err != nil || !s.Rebased || len(s.Files) != 0 {
 		t.Errorf("rebased: %+v %v", s, err)
 	}
+	// A head reviewed in another clone may not be here: that is not a rebase.
 	s, err = PRSince(work, newSplit, strings.Repeat("ab", 20), head)
-	if err != nil || !s.Rebased {
+	if err != nil || !s.Missing || s.Rebased {
 		t.Errorf("missing commit: %+v %v", s, err)
 	}
-	if _, err := PRSince(work, newSplit, "main", head); err != ErrBadHash {
-		t.Errorf("a branch name: %v, want ErrBadHash", err)
+	// Only a full commit id: a short one may name a branch.
+	gittest.Run(t, work, "branch", "cafe", "main")
+	for _, bad := range []string{"main", "cafe", reviewed[:12]} {
+		if _, err := PRSince(work, newSplit, bad, head); err != ErrBadHash {
+			t.Errorf("from %q: %v, want ErrBadHash", bad, err)
+		}
 	}
 }
