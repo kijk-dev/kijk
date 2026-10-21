@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -158,7 +159,21 @@ func PRFor(root string) prStatus {
 	if err != nil {
 		res.Note = toolNote(res.Tool, err)
 	}
+	if res.Note == "" {
+		knownPRs.Store(root+"\n"+branch, res.PR)
+	}
 	return res
+}
+
+// knownPRs keeps the last pull request PRFor found per folder and branch, so other views can show
+// it without asking the forge again.
+var knownPRs sync.Map
+
+// KnownPR is the pull request of the branch HEAD is on, as PRFor last found it; nil when unknown.
+func KnownPR(root string) *pullRequest {
+	p, _ := knownPRs.Load(root + "\n" + prBranch(root))
+	pr, _ := p.(*pullRequest)
+	return pr
 }
 
 // prBranch is the branch name on the remote: the upstream's, else the local one.
