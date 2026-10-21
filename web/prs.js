@@ -192,7 +192,7 @@ onView((root, n, res) => {
 });
 
 onViewed(root => {
-  if (root === folder) draw();
+  if (!root || root === folder) draw();
 });
 
 // refresh asks again about what the tab shows. The list is asked too, for the count.
@@ -305,8 +305,8 @@ function prRowEl(r) {
   }
   l2.append(el('span', 'who', r.number ? `${r.author} · ${age(r.createdAt)}` : `No ${words().kind} yet`));
   const drafts = r.number ? cachedView(folder, r.number)?.drafts ?? r.drafts : 0;
-  const seen = r.number && list?.forge ? listCount(folder, list.forge, r.number) : null;
-  const yours = [drafts ? plural(drafts, 'draft') : '', seen?.viewed ? `${seen.viewed}/${seen.files} viewed` : ''].filter(Boolean);
+  const viewed = r.number && list?.forge ? listCount(folder, list.forge, r.number) : null;
+  const yours = [drafts ? plural(drafts, 'draft') : '', viewed?.viewed ? `${viewed.viewed}/${viewed.files} viewed` : ''].filter(Boolean);
   if (yours.length) l2.append(el('span', 'yours', yours.join(' · ')));
   const lc = lineCount(r.add, r.del);
   if (lc) l2.append(lc);
@@ -547,14 +547,14 @@ function drawPR(n, mine) {
 
 // viewedBox is a file row's Viewed box. It takes no Tab stop: V works on the focused row.
 function viewedBox(n, res, f, state) {
-  const box = el('input', 'seen');
+  const box = el('input', 'viewedbox');
   box.type = 'checkbox';
   box.checked = state === 'viewed';
   box.tabIndex = -1;
   box.setAttribute('aria-label', 'Viewed');
   box.dataset.tip = `Viewed\n${keyLabel('markViewed')}`;
   box.onclick = e => e.stopPropagation();
-  box.onchange = () => setViewed(folder, n, res, f, box.checked);
+  box.onchange = () => { if (!setViewed(folder, n, res, f, box.checked)) box.checked = !box.checked; };
   return box;
 }
 
@@ -562,11 +562,11 @@ function viewedBox(n, res, f, state) {
 // row not viewed.
 function markRow(li) {
   const w = which();
-  const res = w.panel === 'pr' && cachedView(folder, w.n);
-  const f = res?.files.find(x => x.path === li.dataset.path);
+  const res = w.panel === 'pr' ? cachedView(folder, w.n) : null;
+  const f = res?.files?.find(x => x.path === li.dataset.path);
   if (!f) return;
   const on = marksOf(folder, w.n, res).state(f) !== 'viewed';
-  setViewed(folder, w.n, res, f, on);
+  if (!setViewed(folder, w.n, res, f, on)) return;
   const marks = marksOf(folder, w.n, res);
   const rows = [...prEl.querySelectorAll('.prfiles li')];
   const next = on && res.files.slice(res.files.indexOf(f) + 1).find(x => marks.state(x) !== 'viewed');
