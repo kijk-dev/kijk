@@ -62,12 +62,14 @@ let sidebar = 'files'; // the sidebar tab chosen for the open folder
 let page = null;
 
 // setupFolder tells the view about the page around it: lastKey, the localStorage key that keeps the
-// open folder; start, shown when no folder is open; announce(text); agentIcon(row), the icon of the
-// row's agent type; and onFolderEvent, run on each live update of the folder.
+// open folder; start, shown when no folder is open; announce(text); say(text), a short note in the
+// status bar; agentIcon(row), the icon of the row's agent type; and onFolderEvent, run on each live
+// update of the folder.
 export function setupFolder(p) {
   page = p;
   setupReview({
     announce: p.announce,
+    say: p.say,
     push: pushNow,
     openFile: path => { if (!offline) openTab({ kind: 'file', path }, true); },
     openBranch: () => openTab({ kind: 'branch', path: '' }, true),

@@ -523,6 +523,9 @@ button.pill:hover { background: color-mix(in srgb, var(--modified) 22%, var(--se
 .reviewbox .head > * { white-space: nowrap; }
 .reviewbox .head .muted { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .reviewbox .hint { margin: 0; font-size: 12px; color: var(--muted); }
+.reviewbox .tool.wide { display: flex; align-items: center; justify-content: center; gap: 6px; padding: 3px 8px; font-size: 13px; }
+.reviewbox .tool.wide svg { width: 13px; height: 13px; }
+.reviewbox .tool:disabled { opacity: .5; cursor: default; }
 .reviewbox .gone { max-height: 120px; overflow: auto; font-size: 12px; }
 .reviewbox .gone li { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .reviewbox .gone .where { flex: none; color: var(--muted); font: 11px var(--code-font); }
@@ -599,4 +602,27 @@ button.pill:hover { background: color-mix(in srgb, var(--modified) 22%, var(--se
 .thr .acts .muted { margin-right: auto; }
 kbd { font: 11px/1 var(--code-font); padding: 1px 4px; border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 3px; background: var(--bg); color: var(--muted); }
 
+/* Copy for agent: pick the notes that go into the prompt. */
+.copypanel {
+  position: fixed; z-index: 5; width: min(440px, calc(100vw - 16px)); max-height: 80vh; display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--panel); color: var(--text); box-shadow: 0 4px 12px rgb(0 0 0 / .25); font-size: 12px;
+}
+.copypanel h2 { margin: 0; padding: 8px 12px 6px; font-size: 13px; font-weight: 600; }
+.copypanel ul { padding: 0 0 4px; overflow: auto; }
+.copypanel li { display: flex; align-items: flex-start; gap: 7px; padding: 4px 12px; }
+.copypanel li:hover { background: color-mix(in srgb, var(--select) 50%, transparent); }
+.copypanel li input { margin: 2px 0 0; accent-color: var(--modified); flex: none; }
+.copypanel .what { flex: 1; min-width: 0; cursor: pointer; }
+.copypanel .where { display: block; color: var(--muted); font: 11px/16px var(--code-font); }
+.copypanel .body { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.copypanel li.used .body { color: var(--muted); }
+.copypanel pre {
+  margin: 0 12px; max-height: 150px; overflow: auto; padding: 7px 9px; border: 1px solid var(--border); border-radius: 4px;
+  background: var(--bg); font: 11px/16px var(--code-font); white-space: pre-wrap;
+}
+.copypanel pre:focus { outline: 2px solid var(--busy); outline-offset: -1px; }
+.copypanel .acts { display: flex; align-items: center; gap: 6px; padding: 8px 12px; }
+.copypanel .acts .muted { margin-right: auto; }
+.copypanel .tool:disabled { opacity: .5; cursor: default; }
+.copypanel .label { padding: 6px 12px 3px; font-size: 11px; font-weight: 700; text-transform: uppercase; color: var(--muted); }
 @media (prefers-reduced-motion: reduce) { .fhead .fold svg { transition: none; } }

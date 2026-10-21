@@ -3,7 +3,7 @@ import { refreshTip, tipSide } from './tip.js';
 import { openKey, openFolder, closeFolder, setMachine, setupFolder, showFetched, SERVER } from './folder.js';
 import { ago, lineCount } from './git.js';
 import { mac } from './keys.js';
-import { showKijk, showAgentErrors, showUndo, restarting } from './status.js';
+import { showKijk, showAgentErrors, showUndo, showSaid, restarting } from './status.js';
 
 // The agent types kijk knows, in its order. They come from the local kijk, also for remote rows.
 const agentTypes = await get('agenttypes');
@@ -53,7 +53,7 @@ function agentIcon(r) {
   if (type.color) icon.style.setProperty('--agent-color', type.color);
   return icon;
 }
-setupFolder({ lastKey, start, announce, agentIcon, onFolderEvent: () => { if (foldersMode) refreshRow(); } });
+setupFolder({ lastKey, start, announce, say: showSaid, agentIcon, onFolderEvent: () => { if (foldersMode) refreshRow(); } });
 tipSide('#rail', 'right');
 tipSide('#statusbar', 'above');
 

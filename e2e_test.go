@@ -278,9 +278,32 @@ func TestBrowser(t *testing.T) {
 		write(t, filepath.Join(repo, session), sessionGo("sess, ok := s.lookup(c.Value)", strings.Replace(lookupGo, "sess, ok := s.byID[id]", "sess, ok := s.copyOf(id)", 1)))
 		b.waitFor("the note outdated", `[...document.querySelectorAll('.thr.note')].some(n => [...n.querySelectorAll('.chip')].some(c => c.textContent === 'Outdated') && n.querySelector('.was')?.textContent === '\tsess, ok := s.byID[id]')`)
 
-		for range 2 {
-			b.click("Delete", `document.querySelector('.thr.note [aria-label=Delete]')`)
-		}
+		// Copy for agent.
+		b.evalJS(`window.e2eFetches = []; { const f = window.fetch; window.fetch = (u, o) => f(u, o).then(r => (e2eFetches.push(u + ' ' + r.status), r)); }`)
+		b.evalJS(`navigator.clipboard.writeText = () => Promise.reject(new Error('denied'))`)
+		b.click("Copy for agent", byText("#prs .reviewbox button", "Copy for agent…"))
+		b.waitFor("the panel with both notes checked", `[...document.querySelectorAll('.copypanel li input')].filter(c => c.checked).length === 2`)
+		prompt := "Review notes for branch fix-login (PR #482).\nFix each one, then say what you changed.\n\n" +
+			"internal/auth/redirect.go:8\n  Keep next only when it is a path on this site. A //evil.com path passes now.\n\n" +
+			fmt.Sprintf("internal/auth/session.go:%d\n  Return a copy, not the pointer.", lineOf(sessionGo("", lookupGo), "\tsess, ok := s.byID[id]"))
+		b.waitFor("the prompt", `document.querySelector('.copypanel pre').textContent === `+jsString(prompt))
+		b.click("Copy 2", byText(".copypanel button", "Copy 2"))
+		b.waitFor("the prompt selected when the clipboard is refused", `document.querySelector('.copypanel') && getSelection().toString().trim() === document.querySelector('.copypanel pre').textContent.trim()`)
+		b.key("Escape", kb.Escape)
+		b.waitFor("the panel closed", `!document.querySelector('.copypanel')`)
+		b.evalJS(`navigator.clipboard.writeText = t => (window.e2eClip = t, Promise.resolve())`)
+		b.click("Copy for agent", byText("#prs .reviewbox button", "Copy for agent…"))
+		b.waitFor("the first box focused", `document.activeElement?.matches('.copypanel li input')`)
+		b.key("Space", " ")
+		b.waitFor("one note picked", `document.querySelector('.copypanel .acts .muted').textContent === '1 of 2 picked'`)
+		b.key("Space", " ")
+		b.waitFor("two notes picked", `document.querySelector('.copypanel .acts .muted').textContent === '2 of 2 picked'`)
+		b.key("Enter", "\r")
+		b.waitFor("the prompt on the clipboard", `window.e2eClip === `+jsString(prompt))
+		b.waitFor("the notes copied", `document.querySelector('#prs .reviewbox .head .muted')?.textContent === '2 · 2 copied' && document.querySelectorAll('.thr.note.copied').length === 2`)
+		b.waitFor("the status bar", `document.querySelector('#statusbar').textContent.includes('Copied 2 notes')`)
+		b.waitFor("the copy counted by the local kijk", `e2eFetches.includes('/api/count?name=agent-copy 200')`)
+		b.click("Clear copied", byText("#prs .reviewbox button", "Clear copied"))
 		b.waitFor("no notes", `document.querySelector('#prs .reviewbox .head .muted')?.textContent === 'none yet' && !document.querySelector('.thr.note')`)
 
 		// A note on a line the diff no longer shows keeps that line in view.
@@ -601,6 +624,11 @@ func boxRow(path, text string) string {
 // boxHas is true when a box has a row of the classes cls, such as "add np", with the text.
 func boxHas(path, cls, text string) string {
 	return fmt.Sprintf(`[...(%s?.querySelectorAll('.ln.%s') || [])].some(e => e.querySelector('.tx')?.textContent === %s)`, fileBox(path), strings.ReplaceAll(cls, " ", "."), jsString(text))
+}
+
+// lineOf is the number of the first line of text that is line.
+func lineOf(text, line string) int {
+	return slices.Index(strings.Split(text, "\n"), line) + 1
 }
 
 // changeAt is true when a change starts five lines below the top of the Branch changes view.

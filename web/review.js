@@ -12,6 +12,7 @@ const ICON = {
   arrow: '<svg class="arrow" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>',
   local: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10.1 2.18a9.93 9.93 0 0 1 3.8 0"/><path d="M17.6 3.71a9.95 9.95 0 0 1 2.69 2.7"/><path d="M21.82 10.1a9.93 9.93 0 0 1 0 3.8"/><path d="M20.29 17.6a9.95 9.95 0 0 1-2.7 2.69"/><path d="M13.9 21.82a9.94 9.94 0 0 1-3.8 0"/><path d="M6.4 20.29a9.95 9.95 0 0 1-2.69-2.7"/><path d="M2.18 13.9a9.93 9.93 0 0 1 0-3.8"/><path d="M3.71 6.4a9.95 9.95 0 0 1 2.7-2.69"/></svg>',
   msg: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>',
+  copy: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>',
   plus: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>',
   chev: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>',
   doc: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/></svg>',
@@ -47,14 +48,16 @@ let notesKey = '';
 let view = null; // the Branch changes view, while it is open
 let selected = ''; // the path of the file at the top of the view
 let goal = ''; // a file to scroll to once the view is drawn
+let copyPanel = null;
 
-// setupReview tells the tab about the folder view around it: announce(text), push(),
-// openFile(path) and openBranch(), which opens the Branch changes tab.
+// setupReview tells the tab about the folder view around it: announce(text), say(text),
+// push(), openFile(path) and openBranch(), which opens the Branch changes tab.
 export function setupReview(p) {
   page = p;
 }
 
 export function setBranchFolder(key, icon) {
+  closeCopy();
   folder = key;
   agentIcon = icon || null;
   data = null;
@@ -303,7 +306,19 @@ function selectRow(path) {
 function notesBox() {
   const box = el('div', 'reviewbox');
   const head = el('div', 'head');
-  head.append(el('b', null, 'Agent notes'), el('span', 'muted', notes.length ? `${notes.length}` : 'none yet'));
+  const copied = notes.filter(n => n.copiedAt).length;
+  head.append(el('b', null, 'Agent notes'), el('span', 'muted', notes.length ? `${notes.length}${copied ? ` · ${copied} copied` : ''}` : 'none yet'));
+  if (copied) {
+    const clear = el('button', 'all', 'Clear copied');
+    clear.dataset.k = 'clear';
+    clear.title = 'Delete the notes you copied';
+    clear.onclick = () => {
+      notes = notes.filter(n => !n.copiedAt);
+      notesChanged();
+      page.announce('Copied notes deleted');
+    };
+    head.append(clear);
+  }
   box.append(head);
   const gone = notes.filter(n => !inBranch(n.path));
   if (gone.length) {
@@ -320,6 +335,13 @@ function notesBox() {
     box.append(ul);
   }
   if (!notes.length) box.append(el('p', 'hint', 'Hover a line and press + to leave a note for the agent.'));
+  const copy = el('button', 'tool wide');
+  copy.dataset.k = 'copy';
+  copy.innerHTML = ICON.copy;
+  copy.append('Copy for agent…');
+  copy.disabled = !notes.length;
+  copy.onclick = () => openCopy(copy);
+  box.append(copy);
   return box;
 }
 
@@ -863,3 +885,124 @@ const noteKey = dir => () => {
 };
 onKey('nextNote', noteKey(1));
 onKey('prevNote', noteKey(-1));
+
+// ----- Copy for agent -----
+
+// prompt is the text the agent gets: two fixed lines, then each note under its file and line.
+function prompt(picked) {
+  const f = prStatus?.forge;
+  const p = prStatus?.pr || data.pr;
+  const words = forgeWords(f?.kind || 'github');
+  const pr = p ? ` (${words.short} ${words.num}${p.number})` : '';
+  const out = [`Review notes for branch ${data.branch}${pr}.`, 'Fix each one, then say what you changed.'];
+  for (const n of picked) {
+    out.push('', `${n.path}:${n.line}`, ...n.body.split('\n').map(l => `  ${l}`));
+  }
+  return out.join('\n');
+}
+
+function closeCopy() {
+  copyPanel?.close();
+}
+
+function openCopy(button) {
+  closeCopy();
+  const all = [...notes].sort((a, b) => a.path.localeCompare(b.path) || a.line - b.line);
+  const box = el('div', 'copypanel');
+  box.setAttribute('role', 'dialog');
+  box.setAttribute('aria-label', 'Copy for agent');
+  const list = el('ul');
+  const picks = all.map(n => {
+    const li = el('li', n.copiedAt ? 'used' : '');
+    const check = el('input');
+    check.type = 'checkbox';
+    check.checked = !n.copiedAt;
+    check.setAttribute('aria-label', `${n.path}:${n.line}`);
+    const what = el('label', 'what');
+    const state = [n.copiedAt && 'copied', n.outdated && 'outdated', !inBranch(n.path) && 'file no longer changed'].filter(Boolean).join(', ');
+    what.append(el('span', 'where', `${n.path}:${n.line}${state ? ` · ${state}` : ''}`), el('span', 'body', n.body));
+    what.onclick = () => { check.checked = !check.checked; update(); };
+    check.onchange = update;
+    li.append(check, what);
+    list.append(li);
+    return { n, check };
+  });
+  const pre = el('pre');
+  pre.tabIndex = 0;
+  const count = el('span', 'muted');
+  const cancel = el('button', 'tool', 'Cancel');
+  const copy = el('button', 'tool');
+  const acts = el('div', 'acts');
+  acts.append(count, cancel, copy);
+  box.append(el('h2', null, 'Copy for agent'), el('div', 'label', 'Agent notes'), list, pre, acts);
+  function picked() { return picks.filter(p => p.check.checked).map(p => p.n); }
+  function update() {
+    const k = picked().length;
+    pre.textContent = prompt(picked());
+    count.textContent = `${k} of ${all.length} picked`;
+    copy.textContent = `Copy ${k}`;
+    copy.disabled = !k;
+  }
+  update();
+  const markCopied = list => {
+    const at = Date.now();
+    for (const n of list) n.copiedAt = at;
+    close();
+    notesChanged();
+    page.say(`Copied ${plural(list.length, 'note')}`);
+    fetch('/api/count?name=agent-copy', { method: 'POST' }).catch(() => {}); // the local kijk counts, also for a remote folder
+  };
+  const doCopy = async () => {
+    const list = picked();
+    if (!list.length) return;
+    try {
+      await navigator.clipboard.writeText(prompt(list));
+    } catch {
+      // The browser refused: keep the prompt selected, so the copy key copies it.
+      getSelection().selectAllChildren(pre);
+      pre.focus();
+      box.classList.add('refused');
+      page.announce(`Press ${mac ? '⌘C' : 'Ctrl+C'} to copy the prompt`);
+      return;
+    }
+    markCopied(list);
+  };
+  const onCopy = () => {
+    if (getSelection().toString().trim() === pre.textContent.trim() && picked().length) setTimeout(() => markCopied(picked()));
+  };
+  const outside = e => { if (!box.contains(e.target) && !e.target.closest?.('[data-k=copy]')) close(); };
+  function close() {
+    box.remove();
+    document.removeEventListener('copy', onCopy);
+    document.removeEventListener('mousedown', outside, true);
+    copyPanel = null;
+    if (button.isConnected) button.focus();
+  }
+  copy.onclick = doCopy;
+  cancel.onclick = close;
+  // Enter copies when it is let go, so the rest of its key press cannot reach the button that
+  // gets the focus back; it must also have gone down here, not on the button that opened the panel.
+  let enter = false;
+  box.onkeydown = e => {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      close();
+    } else if (e.key === 'Enter' && !e.target.closest('button')) {
+      e.preventDefault();
+      enter = true;
+    }
+  };
+  box.onkeyup = e => {
+    if (e.key === 'Enter' && enter) doCopy();
+    enter = false;
+  };
+  document.addEventListener('copy', onCopy);
+  document.addEventListener('mousedown', outside, true);
+  document.body.append(box);
+  const r = button.getBoundingClientRect();
+  box.style.left = `${Math.max(8, Math.min(r.left, innerWidth - box.offsetWidth - 8))}px`;
+  box.style.bottom = `${innerHeight - r.top + 6}px`;
+  copyPanel = { close };
+  (picks[0]?.check || copy).focus();
+}
