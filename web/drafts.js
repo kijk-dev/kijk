@@ -1,7 +1,7 @@
 import { el, post, storeKey } from './api.js';
 import { loadView } from './prdata.js';
 import { avatar } from './threads.js';
-import { iconButton } from './boxes.js';
+import { iconButton, plural } from './boxes.js';
 import { FORGE, forgeMark } from './pr.js';
 import { mac } from './keys.js';
 
@@ -294,16 +294,27 @@ function setReview(root, n, patch) {
   for (const part of Object.values(live.get(`${root}\n${n}`) || {})) if (part.isConnected) part.sync();
 }
 
-// tally sorts your drafts: comments on lines, replies, comments not on a line, and how many were
-// written somewhere else.
+// tally sorts your drafts: comments on lines, replies with whom and where they answer, and
+// comments not on a line; web(list) counts those written somewhere else.
 function tally(root, n, res) {
   const lines = [];
   const replies = [];
   const conv = [];
-  for (const t of res?.threads || []) for (const c of t.comments) if (c.draft) (t.draft ? lines : replies).push({ c, t });
-  for (const c of res?.comments || []) if (c.draft) conv.push({ c });
-  const all = [...lines, ...replies, ...conv];
-  return { lines, replies, conv, all: all.length, web: all.filter(d => !wroteHere(root, n, d.c)).length };
+  const short = path => path.split('/').pop();
+  for (const t of res?.threads || []) {
+    for (const c of t.comments) {
+      if (!c.draft) continue;
+      if (t.draft) lines.push(c);
+      else replies.push({ c, to: `${t.comments[0].author} on ${short(t.path)}:${t.line || t.origLine}` });
+    }
+  }
+  for (const c of res?.comments || []) {
+    if (!c.draft) continue;
+    if (c.replyTo) replies.push({ c, to: `${c.replyTo} on the ${words(res).kind}` });
+    else conv.push(c);
+  }
+  const web = list => list.filter(d => !wroteHere(root, n, d.c || d)).length;
+  return { lines, replies, conv, web, all: lines.length + replies.length + conv.length };
 }
 
 const VERDICTS = [['comment', 'Comment'], ['approve', 'Approve'], ['changes', 'Request changes']];
@@ -349,7 +360,8 @@ export function reviewBox(root, n, res) {
     box.sync = () => {
       const r = box.res;
       const t = tally(root, n, r);
-      count.textContent = t.all ? `${t.all} ${t.all === 1 ? 'draft' : 'drafts'}${t.web ? ` · ${t.web} from ${words(r).name}` : ''}` : 'no drafts yet';
+      const web = t.web([...t.lines, ...t.replies, ...t.conv]);
+      count.textContent = t.all ? `${plural(t.all, 'draft')}${web ? ` · ${web} from ${words(r).name}` : ''}` : 'no drafts yet';
       const picked = verdict(root, n, r);
       mode.replaceChildren(...VERDICTS.map(([v, text]) => {
         const b = el('button', null, text);
@@ -430,8 +442,6 @@ export function commentFoot(root, n, res) {
 
 // ----- The check before anything is posted -----
 
-const short = path => path.split('/').pop();
-
 function checkRows(root, n, res) {
   const w = words(res);
   const r = review(root, n);
@@ -443,15 +453,16 @@ function checkRows(root, n, res) {
   const where = [];
   if (t.lines.length) where.push(t.lines.length === 1 ? '1 on a line' : `${t.lines.length} on lines`);
   if (t.conv.length) where.push(`${t.conv.length} on the ${w.kind}`);
-  if (where.length) {
-    const v2 = el('span', 'v', where.join(' · '));
-    if (t.web) v2.append(' ', el('span', 'muted', `· ${t.web} written on ${w.name}`));
-    rows.push(['Comments', v2]);
-  }
+  // Each row says how many of its drafts were written on the website.
+  const elsewhere = (value, list) => {
+    const k = t.web(list);
+    if (k) value.append(' ', el('span', 'muted', `· ${k} written on ${w.name}`));
+    return value;
+  };
+  if (where.length) rows.push(['Comments', elsewhere(el('span', 'v', where.join(' · ')), [...t.lines, ...t.conv])]);
   if (t.replies.length) {
-    const to = ({ t: th }) => `${th.comments[0].author} on ${short(th.path)}:${th.line || th.origLine}`;
     const k = t.replies.length;
-    rows.push(['Replies', el('span', 'v', k > 2 ? String(k) : `${k}, to ${t.replies.map(to).join(' and ')}`)]);
+    rows.push(['Replies', elsewhere(el('span', 'v', k > 2 ? String(k) : `${k}, to ${t.replies.map(r => r.to).join(' and ')}`), t.replies)]);
   }
   if (r.summary.trim()) rows.push(['Summary', el('span', 'v', r.summary.trim().split('\n')[0])]);
   return rows.map(([key, value]) => {
