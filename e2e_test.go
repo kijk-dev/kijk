@@ -1018,7 +1018,7 @@ func TestBrowser(t *testing.T) {
 			b.waitFor("the MRs tab", prsTab+`.querySelector('.tabcount')?.textContent === '1'`)
 			b.press("prsTab")
 			b.click("!12", prRow(12))
-			b.waitFor("!12", `document.querySelector('#prs-pr .pr-num')?.textContent === '!12' && document.querySelectorAll('#viewer .fbox').length === 3`)
+			b.waitFor("!12", `document.querySelector('#prs-pr .pr-num')?.textContent === '!12' && document.querySelectorAll('#viewer .fbox').length >= 3`)
 			return b
 		}
 
@@ -1048,6 +1048,47 @@ func TestBrowser(t *testing.T) {
 		b.click("Add to review", byText(".md.ov .thr.conv .foot button", "Add to review"))
 		forge.waitFor(t, n, "--method PUT projects/acme%2Freview/merge_requests/12/draft_notes/61")
 		b.waitFor("both kept", box+`.querySelector('textarea').value === 'Thanks for this.\n\nFix the retry. More.' && !`+box+`.querySelector('.saved').hidden`)
+		b.noErrors()
+
+		// Since your review, a comment on a line far from every change of the merge request goes
+		// with its line in the target: 10 lines above it are new.
+		const session = "internal/auth/session.go"
+		work := filepath.Join(t.TempDir(), "sanne")
+		run(t, t.TempDir(), "clone", "-q", origin, work)
+		run(t, work, "fetch", "-q", "origin", "refs/merge-requests/12/head")
+		run(t, work, "checkout", "-qb", "sanne", "FETCH_HEAD")
+		onMain := sessionGo("sess, ok := s.byID[c.Value]", "")
+		pushMR := func(text string) string {
+			write(t, filepath.Join(work, filepath.FromSlash(session)), text)
+			run(t, work, "commit", "-qam", "Note the session store")
+			run(t, work, "push", "-q", "origin", "HEAD:refs/merge-requests/12/head")
+			head := gitOut(t, work, "rev-parse", "HEAD")
+			mr["diffHeadSha"], mr["diffRefs"] = head, obj{"baseSha": main, "headSha": head, "startSha": main}
+			forge.set(t, "glab-pr-12.json", ghData(obj{"currentUser": obj{"username": "you"}, "project": obj{"mergeRequest": mr}}))
+			return head
+		}
+		top := strings.Repeat("// The store.\n", 10)
+		reviewed := pushMR(top + strings.Replace(onMain, "return 16 > 0", "return 16 > 1", 1))
+		b.press("refreshPrs")
+		b.click("Overview", prsRow("Overview"))
+		b.waitFor("four files", `document.querySelectorAll('#prs-pr .prfiles input.viewedbox').length === 4`)
+		for _, name := range []string{"ci.yml", "README.md", "session.go", "retry.go"} {
+			b.click("the box of "+name+"'s row", prsRow(name)+`?.querySelector('input.viewedbox')`)
+		}
+		b.waitFor("every file viewed: the last review", `Object.entries(localStorage).some(([k, v]) => k.startsWith('kijk.viewed:') && k.endsWith(':12') && JSON.parse(v).review?.head === `+jsString(reviewed)+`)`)
+		pushMR(top + onMain) // sanne puts check16 back as on main
+		b.press("refreshPrs")
+		b.click("Since your review", byText("#prs-pr .prmode.since .mode button", "Since your review"))
+		near := boxRow(session, "func check16() bool {")
+		b.waitFor("only the line put back", `document.querySelectorAll('#viewer .fbox').length === 1 && `+near)
+		b.evalJS(`window.e2ePosts = []; { const f = window.fetch; window.fetch = (u, o) => (String(u).includes('/api/pr/comment') && e2ePosts.push(JSON.parse(o.body)), f(u, o)); }`)
+		b.hover("a line", near)
+		b.click("+", near+`.querySelector('.addc')`)
+		b.waitFor("the editor", `document.activeElement?.matches('#viewer textarea')`)
+		b.typeText("Why 16?")
+		b.press("submitNote")
+		at := lineOf(onMain, "func check16() bool {")
+		b.waitFor("the comment with its line in the target", fmt.Sprintf(`window.e2ePosts.length === 1 && e2ePosts[0].path === %s && e2ePosts[0].line === %d && e2ePosts[0].oldLine === %d`, jsString(session), at+10, at))
 		b.noErrors()
 
 		// Below 16.3 the merge request is read only, and the box's place says why.
