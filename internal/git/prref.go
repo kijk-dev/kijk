@@ -21,7 +21,8 @@ func FetchPR(root, kind string, n int, head, base, baseBranch string) (fetched b
 	if (head != "" && !ValidHash(head)) || (base != "" && !ValidHash(base)) || n <= 0 {
 		return false, ErrBadHash
 	}
-	if head != "" && (base == "" || hasCommit(root, base)) {
+	// Only GitHub's base is fetched, so only there does a missing base call for a fetch.
+	if head != "" && (kind != "github" || base == "" || hasCommit(root, base)) {
 		if at, _ := Run(root, "rev-parse", "--verify", "-q", prRef(n)); at == head {
 			return false, nil
 		}
