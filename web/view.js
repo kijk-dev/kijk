@@ -95,7 +95,7 @@ export function line(numbers, content, cls, key) {
 
 // viewInfo tells find and go to line what is open: a file, a diff with its rows, or rendered markdown.
 export function viewInfo() {
-  if (!current?.scroll || current.kind === 'branch') return null;
+  if (!current?.scroll || current.kind === 'boxes') return null;
   return current;
 }
 
@@ -902,7 +902,7 @@ export function setViewScroll(top) {
 // A changed image, or a diagram's changed include, redraws on its own, so the page does not move.
 export function refreshView(change) {
   if (!current?.reload) return;
-  if (current.kind === 'branch') return current.reload(change);
+  if (current.kind === 'boxes') return current.reload(change);
   for (const pic of current.pics || []) if (change.all || change.paths.includes(pic.path)) pic.reload();
   const stale = (current.diagrams || []).filter(x => x.entry?.result?.includes?.some(p => change.all || change.paths.includes(p)));
   for (const x of stale) if (drawn.get(x.entry.key) === x.entry) drawn.delete(x.entry.key);
