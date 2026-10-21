@@ -113,7 +113,7 @@ A per-file mark that says you have read that file's diff in a pull request. It c
 _Avoid_: seen, read, checked
 
 **Telemetry**:
-The anonymous usage events kijk sends about itself: that it started, that it ran on a day, its version, operating system, how many folders are in the folders window, and, on a day kijk looked for agents, how many agents of each agent type run on the local machine and how many remote machines and agents on them it sees. Never folder paths, names, code, or an IP address. On by default, and the user can turn it off.
+The anonymous usage events kijk sends about itself: that it started, that it ran on a day, its version, operating system, how many folders are in the folders window, how many times Copy for agent was used, and, on a day kijk looked for agents, how many agents of each agent type run on the local machine and how many remote machines and agents on them it sees. Never folder paths, names, code, or an IP address. On by default, and the user can turn it off.
 _Avoid_: analytics, tracking, usage stats
 
 **Install ID**:
