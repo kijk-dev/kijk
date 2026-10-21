@@ -255,3 +255,18 @@ func TestPRFileIncludes(t *testing.T) {
 		t.Errorf("text %d %s", w.Code, w.Body.String())
 	}
 }
+
+// When the head cannot be fetched, the pull request still has the checks the forge sent.
+func TestPRViewChecksWithoutHead(t *testing.T) {
+	clone, head, base := prRepo(t)
+	fakeGh(t, listAnswer, prAnswer("OPEN", head, base), "")
+	get := prServer(t, clone)
+	var v prView
+	w := get("/api/pr/view", url.Values{"n": {"9"}}) // origin has no refs/pull/9/head
+	if err := json.Unmarshal(w.Body.Bytes(), &v); w.Code != 200 || err != nil {
+		t.Fatalf("%d %v %s", w.Code, err, w.Body.String())
+	}
+	if !strings.HasPrefix(v.Error, "Cannot fetch #9") || v.Checks == nil {
+		t.Errorf("error %q, checks %v", v.Error, v.Checks)
+	}
+}
