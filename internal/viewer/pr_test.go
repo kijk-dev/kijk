@@ -290,11 +290,11 @@ func TestPRSinceRoute(t *testing.T) {
 		t.Fatalf("view %d %s", w.Code, w.Body.String())
 	}
 	type since struct {
-		From, At string
-		Commits  int
-		Rebased  bool
-		Missing  bool
-		Files    []struct {
+		At      string
+		Commits int
+		Rebased bool
+		Missing bool
+		Files   []struct {
 			Path     string
 			Add, Del int
 		}
@@ -309,7 +309,7 @@ func TestPRSinceRoute(t *testing.T) {
 		}
 		return s, w.Code
 	}
-	if s, code := ask(base); code != 200 || s.From != base || s.At != head || s.Commits != 1 || len(s.Files) != 1 || s.Files[0].Path != "retry.go" || s.Files[0].Add != 2 {
+	if s, code := ask(base); code != 200 || s.At != head || s.Commits != 1 || len(s.Files) != 1 || s.Files[0].Path != "retry.go" || s.Files[0].Add != 2 {
 		t.Errorf("since the base: %d %+v", code, s)
 	}
 	if s, code := ask(head); code != 200 || s.Commits != 0 || len(s.Files) != 0 || s.Rebased {

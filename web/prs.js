@@ -10,7 +10,7 @@ import { setupOverview } from './overview.js';
 import { setupDrafts, reviewBox } from './drafts.js';
 import { setBranchThreads, redrawBranchPanel, wakeBranch } from './review.js';
 import { marksOf, setViewed, onViewed, listCount, sweep } from './viewed.js';
-import { shown, sinceParts, onSince } from './since.js';
+import { shown, sinceParts, onSince, ownFile } from './since.js';
 
 // The PRs tab: the list of open pull requests, one pull request opened in the sidebar, the count
 // on the tab, and when to ask the forge again. The folder's own branch in Local mode is review.js.
@@ -493,8 +493,7 @@ function drawPR(n, mine) {
   const lc = lineCount(...sum);
   if (lc) h.append(lc);
   const marks = marksOf(folder, n, res);
-  // Since your review, a file is marked as the pull request's own file of that path.
-  const own = f => res?.files.find(x => x.path === f.path);
+  const own = ownFile(res);
   const viewedNow = files.filter(f => own(f) && marks.state(own(f)) === 'viewed').length;
   if (files.length) h.append(el('span', 'viewedcount', `${viewedNow} of ${files.length} viewed`));
   const ul = el('ul');
@@ -578,7 +577,7 @@ function markRow(li) {
   if (!setViewed(folder, w.n, res, f, on)) return;
   const marks = marksOf(folder, w.n, res);
   const rows = [...prEl.querySelectorAll('.prfiles li')];
-  const list = (shown(folder, w.n, res).files || res.files).map(x => res.files.find(y => y.path === x.path)).filter(Boolean);
+  const list = (shown(folder, w.n, res).files || res.files).map(ownFile(res)).filter(Boolean);
   const next = on && list.slice(list.indexOf(f) + 1).find(x => marks.state(x) !== 'viewed');
   const to = rows.find(r => r.dataset.path === (next ? next.path : f.path));
   if (!to) return;
