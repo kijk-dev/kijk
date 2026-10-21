@@ -179,7 +179,7 @@ func TestBrowser(t *testing.T) {
 	t.Run("branch review", func(t *testing.T) {
 		repo, origin := reviewRepo(t)
 		forge := newFakeForge(t)
-		reviewForge(t, forge, repo, origin)
+		reviewForge(t, forge, repo, origin, false)
 		claude := t.TempDir()
 		claudeAgent(t, claude, repo, "Fix the login", "idle")
 		k := startKijkIn(t, exe, t.TempDir(), "CLAUDE_CONFIG_DIR="+claude, forge.env())
@@ -474,7 +474,7 @@ func TestBrowser(t *testing.T) {
 	t.Run("pull requests", func(t *testing.T) {
 		repo, origin := reviewRepo(t)
 		forge := newFakeForge(t)
-		reviewForge(t, forge, repo, origin)
+		reviewForge(t, forge, repo, origin, true)
 		claude := t.TempDir()
 		claudeAgent(t, claude, repo, "Fix the login", "idle")
 		k := startKijkIn(t, exe, t.TempDir(), "CLAUDE_CONFIG_DIR="+claude, forge.env())
@@ -514,6 +514,26 @@ func TestBrowser(t *testing.T) {
 		if out := gitOut(t, repo, "branch", "--list"); out != "* fix-login\n  main" {
 			t.Fatalf("branches changed: %q", out)
 		}
+		// Threads: open under its line, resolved folded to one line, outdated in the bar.
+		const retry = "internal/webhook/retry.go"
+		open := boxRow(retry, "\t\tif !retryable(err) {") + `.nextElementSibling`
+		b.waitFor("the open thread", open+`?.matches('.thr') && `+open+`.querySelector('.thead').textContent === 'Open thread · line 15· 3 comments' && `+open+`.querySelectorAll('.c').length === 3`)
+		b.waitFor("its comments as markdown", open+`.querySelector('.c .cbody p')?.textContent === 'Should a 429 count as retryable?'`)
+		resolved := boxRow(retry, "\t\tselect {") + `.nextElementSibling`
+		b.waitFor("the resolved thread folded", resolved+`?.matches('.thr.folded') && `+resolved+`.textContent === 'Resolved · priya: Check ctx before the first sleep? · 2 replies'`)
+		b.click("the resolved thread", resolved)
+		b.waitFor("the resolved thread open", resolved+`?.matches('.thr.resolved') && `+resolved+`.querySelectorAll('.c').length === 3`)
+		b.click("Fold", resolved+`.querySelector('.thead button')`)
+		b.waitFor("folded again", resolved+`?.matches('.thr.folded')`)
+		b.waitFor("the outdated bar", fileBox(retry)+`.querySelector('.obar')?.textContent.startsWith('1 outdated thread · its lines changed after it was written')`)
+		b.click("retry.go in the list", prsRow("retry.go"))
+		b.click("Show", fileBox(retry)+`.querySelector('.obar button')`)
+		b.waitFor("the outdated thread with its old line", fileBox(retry)+`.querySelector('.obar + .thr .thead')?.textContent.startsWith('Outdated thread · line 20') && `+fileBox(retry)+`.querySelector('.obar + .thr .was')?.textContent === '\ttime.Sleep(time.Second)'`)
+		b.waitFor("thread counts", fileBox(retry)+`.querySelector('.fhead .tc')?.textContent === '3' && `+prsRow("retry.go")+`.querySelector('.tc')?.textContent === '3'`)
+		b.evalJS(`document.querySelector('.allfiles').scrollTop = 0`)
+		b.evalJS(`document.querySelector('.allfiles').focus()`)
+		b.press("nextNote")
+		b.waitFor("the first thread below the top", `(s => [...s.querySelectorAll('.thr')].some(n => Math.abs(n.getBoundingClientRect().top - s.getBoundingClientRect().top - 124) < 2))(document.querySelector('.allfiles'))`)
 		shots(b, "prs-changes")
 		b.click("README.md in the list", prsRow("README.md"))
 		b.waitFor("README.md at the top", `(s => s.scrollTop > 0 && Math.abs(`+fileBox("README.md")+`.offsetTop - 12 - s.scrollTop) < 2)(document.querySelector('.allfiles'))`)
@@ -540,6 +560,22 @@ func TestBrowser(t *testing.T) {
 		b.waitFor("the choice kept", `!document.querySelector('#prs-pr').hidden && document.querySelector('#prs-pr .prmode button[aria-pressed=true]')?.textContent === 'As on GitHub'`)
 		b.click("Local", byText("#prs-pr .prmode button", "Local"))
 		b.waitFor("Local again", `!document.querySelector('#prs-branch').hidden && document.querySelector('#filetabs .filetab.active')?.textContent.startsWith('Branch changes')`)
+
+		// In Local mode sanne's thread is on its line on disk, and its reply strip makes an agent note.
+		const session = "internal/auth/session.go"
+		asked := boxRow(session, "\tsess, ok := s.lookup(c.Value)")
+		b.waitFor("the thread on its line", asked+`?.nextElementSibling?.matches('.thr:not(.note)') && `+asked+`.nextElementSibling.querySelector('.cbody').textContent.trim() === 'Does lookup also check the expiry?'`)
+		b.waitFor("the reply strip", asked+`.nextElementSibling.querySelector('.foot input')?.placeholder === 'Note for the agent…' && `+asked+`.nextElementSibling.querySelector('.foot .hint').textContent === 'Reply to sanne in “As on GitHub”'`)
+		b.waitFor("counts with the thread", prsRow("session.go")+`.querySelector('.tc')?.textContent === '1'`)
+		b.click("the reply strip", asked+`.nextElementSibling.querySelector('.foot input')`)
+		b.typeText("Check the expiry in lookup too.")
+		b.key("Enter", "\r")
+		b.waitFor("an agent note under the thread", `(t => t?.nextElementSibling?.matches('.thr.note') && t.nextElementSibling.querySelector('p').textContent === 'Check the expiry in lookup too.')(`+asked+`.nextElementSibling)`)
+		b.waitFor("nothing sent", `!document.querySelector('.thr:not(.note) .foot input')?.value`)
+		if calls := strings.Join(forge.calls(), "\n"); strings.Contains(calls, "mutation") {
+			t.Fatalf("kijk wrote to the forge:\n%s", calls)
+		}
+		shots(b, "prs-local")
 
 		// Refresh asks the forge again.
 		before := len(forge.calls())
