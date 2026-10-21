@@ -794,7 +794,7 @@ func TestBrowser(t *testing.T) {
 		b.evalJS(readme + `.scrollIntoView({block: 'center'})`)
 		b.click("Delete", readme+`.querySelector('[aria-label=Delete]')`)
 		forge.waitFor(t, n, "-f id=C40")
-		b.waitFor("the website's draft gone", `!`+fileBox("README.md")+`.querySelector('.thr')`)
+		b.waitFor("the website's draft gone", `!`+fileBox("README.md")+`.querySelector('.thr') && document.querySelector('#prs-pr .reviewbox .head').textContent === 'Your review1 draft'`)
 
 		// Resolve and unresolve happen at once.
 		resolved := func(on bool) obj {
@@ -813,6 +813,12 @@ func TestBrowser(t *testing.T) {
 		b.click("Unresolve", byText("#viewer .thr.resolved .thead button", "Unresolve"))
 		forge.waitFor(t, n, "unresolveReviewThread(")
 		b.waitFor("the thread open again", open+`?.matches('.thr:not(.resolved):not(.folded)') && `+open+`.querySelector('.thead button')?.textContent === 'Resolve'`)
+
+		// A resolve the forge refuses says why in the thread.
+		forge.set(t, "gh-resolve.json", `{"data":{"resolveReviewThread":null},"errors":[{"message":"Resource not accessible by integration"}]}`)
+		b.click("Resolve", open+`.querySelector('.thead button')`)
+		b.waitFor("the reason", open+`?.querySelector('.thead + .error')?.textContent === 'gh: Resource not accessible by integration' && !`+open+`.matches('.folded')`)
+		forge.set(t, "gh-resolve.json", ghData(obj{}))
 
 		// Someone pushed since kijk showed the diff: kijk writes nothing, keeps the text, shows the new
 		// head, and moves the editor to its line there.
