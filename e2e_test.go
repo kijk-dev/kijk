@@ -1089,6 +1089,10 @@ func TestBrowser(t *testing.T) {
 			return `(` + check(path) + ` && !` + fileBox(path) + `.matches('.viewed') && !` + check(path) + `.checked)`
 		}
 		shut := func(path string) string { return fileBox(path) + `?.matches('.shut')` }
+		// still is true once an element is where it was at the poll before, so a click lands on it.
+		still := func(el string) string {
+			return `(r => { const y = Math.round(r.top); const same = window.e2eY === y; window.e2eY = y; return same })(` + el + `.getBoundingClientRect())`
+		}
 		b.waitFor("a Viewed box on each file", `[...document.querySelectorAll('#viewer .fbox')].every(f => f.querySelector('.fhead .check')?.textContent.trim() === 'Viewed' && f.querySelector('.fhead .check').dataset.tip === 'Viewed\nV')`)
 		b.waitFor("nothing viewed yet", notViewed(ci)+` && `+notViewed(readme)+` && `+notViewed(retry))
 
@@ -1114,6 +1118,7 @@ func TestBrowser(t *testing.T) {
 		b.evalJS(`document.querySelector('.allfiles').scrollTop = 0`)
 
 		// Checked in its header, a file folds; its chevron still opens it.
+		b.waitFor("the Viewed box of README.md in place", still(check(readme)))
 		b.click("Viewed of README.md", check(readme))
 		b.waitFor("README.md viewed and folded", viewed(readme)+` && `+shut(readme))
 		b.waitFor("the focus kept in Changes, for V", `document.activeElement === document.querySelector('.allfiles')`)
@@ -1184,6 +1189,7 @@ func TestBrowser(t *testing.T) {
 		b.waitFor("ci.yml still viewed", viewed(ci)+` && `+shut(ci)+` && !`+fileBox(ci)+`.querySelector('.again')`)
 		b.waitFor("the row of retry.go changed", `!`+rowViewed("retry.go")+` && `+prsRow("retry.go")+`.querySelector('.again')?.textContent === 'changed' && `+prsRow("retry.go")+`.querySelector('.again').dataset.tip === 'Changed since you viewed it' && `+count("1 of 3 viewed"))
 		shots(b, "viewed-changes")
+		b.waitFor("the Viewed box of retry.go in place", still(check(retry)))
 		b.click("Viewed of retry.go", check(retry))
 		b.waitFor("retry.go viewed again", viewed(retry)+` && `+shut(retry)+` && !`+fileBox(retry)+`.querySelector('.again')`)
 		b.waitFor("its row too", rowViewed("retry.go")+` && !`+prsRow("retry.go")+`.querySelector('.again') && `+count("2 of 3 viewed"))
@@ -1244,6 +1250,7 @@ func TestBrowser(t *testing.T) {
 		w.waitFor("the count kept with the marks", prRow(477)+`?.querySelector('.yours')?.textContent === '3/4 viewed'`)
 		w.click("#477", prRow(477))
 		w.waitFor("the same marks", viewed(ci)+` && `+viewed(retry)+` && `+viewed(readme)+` && `+notViewed("go.sum"))
+		w.waitFor("the Viewed box of ci.yml in place", still(check(ci)))
 		w.click("Viewed of ci.yml", check(ci))
 		w.waitFor("ci.yml cleared there", notViewed(ci))
 		b.waitFor("ci.yml cleared here", notViewed(ci)+` && !`+rowViewed("ci.yml"))
