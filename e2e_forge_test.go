@@ -13,7 +13,8 @@ import (
 )
 
 // fakeForge is a folder with a gh and a glab that answer from the files in it, picked by the
-// question they get, and log every call. A question with no file fails, as a tool would.
+// question they get, and log every call. A question with no file fails, as a tool would; with
+// gh-error.txt, gh fails every call with its text.
 type fakeForge struct{ dir string }
 
 func newFakeForge(t *testing.T) *fakeForge {
@@ -22,6 +23,7 @@ func newFakeForge(t *testing.T) *fakeForge {
 	gh := `#!/bin/sh
 d=%[1]q
 echo "home=$HOME gh $*" | tr '\n' ' ' >> "$d/calls.log"; echo >> "$d/calls.log"
+if [ -f "$d/gh-error.txt" ]; then cat "$d/gh-error.txt" >&2; exit 1; fi
 f=
 if [ "$1" = pr ]; then
   [ -f "$d/gh-pr-view.json" ] || { echo "no pull requests found for branch" >&2; exit 1; }

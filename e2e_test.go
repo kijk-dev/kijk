@@ -637,6 +637,13 @@ func TestBrowser(t *testing.T) {
 			t.Fatalf("kijk <PR link> said:\n%s", out)
 		}
 		f.waitFor("#477 in the folders window", `!document.querySelector('#prs-pr').hidden && document.querySelector('#prs-pr .pr-num')?.textContent === '#477' && (t => t?.firstChild.textContent === 'Changes' && t.querySelector('.muted')?.textContent === '#477')(document.querySelector('#filetabs .filetab.active'))`)
+		// Not logged in to gh: the tab opens on This branch and says why there is no list.
+		forge.set(t, "gh-error.txt", "To get started with GitHub CLI, please run:  gh auth login")
+		b.act("reload", chromedp.Reload())
+		b.press("prsTab")
+		b.waitFor("This branch and the note", `!document.querySelector('#prs-branch').hidden && document.querySelector('#prs-branch .pr-note')?.textContent === 'Log in with gh auth login to see the status' && !document.querySelector('#prs-branch .back')`)
+		os.Remove(filepath.Join(forge.dir, "gh-error.txt"))
+
 		cmd := exec.Command(exe, "-port", fmt.Sprint(k.port), "-no-open", "https://github.com/acme/billing/pull/12")
 		cmd.Env = append(os.Environ(), k.env...)
 		out, err := cmd.CombinedOutput()
@@ -742,6 +749,9 @@ func TestBrowser(t *testing.T) {
 			t.Fatalf("the list did not come from gh on the machine:\n%s", calls)
 		}
 		r.click("this branch", `document.querySelector('#prs-list li.prrow[data-n="branch"]')`)
+		r.click("Overview", prsRow("Overview"))
+		r.waitFor("the Overview of a branch with no pull request", `document.querySelector('.md.ov h1')?.textContent === 'start' && document.querySelector('.md.ov').textContent.includes('There is no pull request for this branch yet.')`)
+		r.press("prsTab")
 		r.waitFor("the bar", `document.querySelector('#prs .unpushed .t')?.textContent === "This branch is not pushed yet. Reviewers don't see it."`)
 		r.waitFor("the change", boxHas("app.go", "add np", "// Start runs the app."))
 		r.click("the new line", boxRow("app.go", "func Start() {}")+`.querySelector('.tx')`)
