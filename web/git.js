@@ -1,7 +1,7 @@
 import { el, get } from './api.js';
 
 const KIND = { A: 'added', D: 'deleted', '?': 'untracked', U: 'conflict' };
-const kind = status => KIND[status] || 'modified';
+export const kind = status => KIND[status] || 'modified';
 const filesOf = c => (c.orig ? [c.path, c.orig] : [c.path]);
 const shown = path => path.replace(/\/$/, '');
 
@@ -50,7 +50,7 @@ let items = [];
 let selectedKey = null;
 let handlers = null;
 
-function fileRow(c, onClick) {
+export function fileRow(c, onClick) {
   const name = shown(c.path);
   const slash = name.lastIndexOf('/');
   const row = el('li', 'item');

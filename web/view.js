@@ -55,11 +55,16 @@ function virtual(scroll, count, width, top, drawRange) {
   return render;
 }
 
+// setView makes another kind of view, such as Branch changes, the open view: {kind, scroll, reload(change), jump(dir)}.
+export function setView(v) { current = v; }
+
+export const isCurrent = v => current === v;
+
 // content is plain text, or colored pieces [class, text] from the server. marks are find matches.
-function line(numbers, content, cls, key) {
+export function line(numbers, content, cls, key) {
   const row = el('div', cls ? `ln ${cls}` : 'ln');
   const flash = current?.flash;
-  if (flash?.key === key && Date.now() < flash.until) row.classList.add('flash');
+  if (flash && flash.key === key && Date.now() < flash.until) row.classList.add('flash');
   const gut = el('span', 'gut');
   for (const n of numbers) gut.append(el('span', null, n || ''));
   const tx = el('span', 'tx');
@@ -90,7 +95,7 @@ function line(numbers, content, cls, key) {
 
 // viewInfo tells find and go to line what is open: a file, a diff with its rows, or rendered markdown.
 export function viewInfo() {
-  if (!current?.scroll) return null;
+  if (!current?.scroll || current.kind === 'branch') return null;
   return current;
 }
 
@@ -897,6 +902,7 @@ export function setViewScroll(top) {
 // A changed image, or a diagram's changed include, redraws on its own, so the page does not move.
 export function refreshView(change) {
   if (!current?.reload) return;
+  if (current.kind === 'branch') return current.reload(change);
   for (const pic of current.pics || []) if (change.all || change.paths.includes(pic.path)) pic.reload();
   const stale = (current.diagrams || []).filter(x => x.entry?.result?.includes?.some(p => change.all || change.paths.includes(p)));
   for (const x of stale) if (drawn.get(x.entry.key) === x.entry) drawn.delete(x.entry.key);
@@ -908,6 +914,7 @@ export function refreshView(change) {
 
 // jumpChange is F7 / Shift+F7: the next or previous change of a diff, or of a file since HEAD.
 export function jumpChange(dir) {
+  if (current?.jump) return current.jump(dir);
   if (!current?.scroll || !current.starts) return false;
   const { scroll, starts } = current;
   const at = Math.floor(scroll.scrollTop / LINE_HEIGHT) + 5;

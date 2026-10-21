@@ -1,8 +1,10 @@
 import { el } from './api.js';
 import { openFile, openDiff, showMessage, viewScroll, setViewScroll, LINE_HEIGHT } from './view.js';
+import { openBranch } from './review.js';
 import { keyLabel, keyNames } from './keys.js';
 
-// A tab is {kind: 'file', path, source} or {kind: 'diff', mode, path, orig, hash, source}, plus preview and scrollTop.
+// A tab is {kind: 'file', path, source}, {kind: 'diff', mode, path, orig, hash, source} or
+// {kind: 'branch', path: '', folds}, the one Branch changes tab; plus preview and scrollTop.
 // At most one tab is a preview; a single click replaces it, a double click keeps it.
 const bar = document.getElementById('filetabs');
 const viewer = document.getElementById('viewer');
@@ -135,6 +137,7 @@ function show(i) {
   const keep = t?.scrollTop != null ? { scrollTop: t.scrollTop } : undefined;
   if (!t) showMessage(viewer, 'Select a file');
   else if (t.kind === 'file') openFile(viewer, root, t.path, keep, viewOptions(t));
+  else if (t.kind === 'branch') openBranch(viewer, root, t, keep, () => changed());
   else openDiff(viewer, root, t, t.mode, 3, keep, viewOptions(t));
   record(); // after the open, so the place takes the tab's position, not the old view's
   changed();
@@ -185,10 +188,11 @@ function close(i) {
 
 // folderOf gives just enough parent folders to tell apart tabs whose file names clash, else ''.
 function folderOf(t) {
+  if (t.kind === 'branch') return '';
   const dirs = p => p.replace(/\/$/, '').split('/');
   const own = dirs(t.path);
   const name = own.pop();
-  const others = tabs.map(x => dirs(x.path)).filter(p => p.pop() === name && p.join('/') !== own.join('/'));
+  const others = tabs.filter(x => x.kind !== 'branch').map(x => dirs(x.path)).filter(p => p.pop() === name && p.join('/') !== own.join('/'));
   if (!others.length) return '';
   for (let n = 1; n <= own.length; n++) {
     const dir = own.slice(-n).join('/');
@@ -205,8 +209,9 @@ function render() {
     tab.setAttribute('aria-selected', i === active);
     tab.setAttribute('aria-keyshortcuts', `Delete ${keyNames('closeTab')}`);
     tab.tabIndex = i === active ? 0 : -1;
-    tab.title = t.preview ? `${t.path} (preview: double-click to keep)` : t.path;
-    tab.append(el('span', null, t.path.replace(/\/$/, '').split('/').pop()));
+    const name = t.kind === 'branch' ? 'Branch changes' : t.path;
+    tab.title = t.preview ? `${name} (preview: double-click to keep)` : name;
+    tab.append(el('span', null, name.replace(/\/$/, '').split('/').pop()));
     const folder = folderOf(t);
     if (folder) tab.append(el('span', 'muted', folder));
     if (t.kind === 'diff') tab.append(el('span', 'muted', t.hash ? t.hash.slice(0, 7) : t.mode));

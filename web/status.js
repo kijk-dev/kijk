@@ -13,6 +13,8 @@ let shown = '';
 let restartSince = 0;
 let agentErrors = []; // the agent types kijk cannot read: [{label, reasons}]
 let undo = null;
+let said = ''; // a short note, such as "Copied 3 notes", shown for a few seconds
+let saidTimer = 0;
 
 // Each notice remembers what it was closed for (a version, or the error text): closing "is out"
 // still lets "is installed" show.
@@ -45,6 +47,14 @@ export function showAgentErrors(errors) {
 // showUndo shows "Removed <name>" with an Undo button on the left of the bar; null takes it away.
 export function showUndo(u) {
   undo = u;
+  if (last) draw();
+}
+
+// showSaid shows a short note on the left of the bar for four seconds.
+export function showSaid(text) {
+  said = text;
+  clearTimeout(saidTimer);
+  saidTimer = setTimeout(() => { said = ''; if (last) draw(); }, 4000);
   if (last) draw();
 }
 
@@ -102,6 +112,11 @@ function draw() {
     parts[0].classList.add('agent-error');
   }
 
+  if (said) {
+    const n = news('', said, said, said);
+    n.classList.add('undo');
+    parts.unshift(n);
+  }
   if (undo) {
     const keys = mac ? '⌘Z' : 'Ctrl+Z';
     const n = news('', `Removed ${undo.name}`, `Removed ${undo.name}`,

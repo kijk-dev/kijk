@@ -242,7 +242,14 @@ func TestMachineProxy(t *testing.T) {
 	if w := do("POST", "/m/azvm/api/stage", true); w.Code != http.StatusOK {
 		t.Fatalf("post: %d %q", w.Code, w.Body.String())
 	}
+	// The branch changes of a remote folder come from the kijk on its machine.
+	if w := do("GET", "/m/azvm/api/branch?root=/x&target=release", true); w.Code != http.StatusOK || w.Body.String() != `{"ok":true}` {
+		t.Fatalf("branch: %d %q", w.Code, w.Body.String())
+	}
 	remote.mu.Lock()
+	if last := remote.paths[len(remote.paths)-1]; last != "/api/branch?root=/x&target=release" {
+		t.Fatalf("branch path %q", last)
+	}
 	for i, c := range remote.cookies {
 		if c != "kijk-4012=remote-token" || remote.origins[i] != "" {
 			t.Fatalf("the remote got cookie %q, origin %q", c, remote.origins[i])
@@ -253,7 +260,8 @@ func TestMachineProxy(t *testing.T) {
 	}
 	remote.mu.Unlock()
 
-	for _, p := range []string{"/m/azvm/api/update", "/m/azvm/api/restart", "/m/nope/api/tree"} {
+	// Copy for agent counts on the local kijk, also for a remote folder.
+	for _, p := range []string{"/m/azvm/api/update", "/m/azvm/api/restart", "/m/azvm/api/count?name=agent-copy", "/m/nope/api/tree"} {
 		if w := do("POST", p, true); w.Code != http.StatusNotFound {
 			t.Errorf("%s: %d", p, w.Code)
 		}

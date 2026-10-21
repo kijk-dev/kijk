@@ -22,6 +22,7 @@ import (
 	"github.com/chromedp/cdproto"
 	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/emulation"
+	"github.com/chromedp/cdproto/input"
 	"github.com/chromedp/chromedp"
 	"github.com/chromedp/chromedp/kb"
 
@@ -252,11 +253,17 @@ func (p page) press(action string) {
 		mods []chromedp.Modifier
 	}
 	keys := map[string][2]combo{ // macOS, other systems
-		"back":     {{"[", []chromedp.Modifier{meta}}, {kb.ArrowLeft, []chromedp.Modifier{ctrl, alt}}},
-		"forward":  {{"]", []chromedp.Modifier{meta}}, {kb.ArrowRight, []chromedp.Modifier{ctrl, alt}}},
-		"find":     {{"f", []chromedp.Modifier{meta}}, {"f", []chromedp.Modifier{ctrl}}},
-		"gotoLine": {{"l", []chromedp.Modifier{meta}}, {"g", []chromedp.Modifier{ctrl}}},
-		"gotoFile": {{"o", []chromedp.Modifier{meta, shift}}, {"n", []chromedp.Modifier{ctrl, shift}}},
+		"back":       {{"[", []chromedp.Modifier{meta}}, {kb.ArrowLeft, []chromedp.Modifier{ctrl, alt}}},
+		"forward":    {{"]", []chromedp.Modifier{meta}}, {kb.ArrowRight, []chromedp.Modifier{ctrl, alt}}},
+		"find":       {{"f", []chromedp.Modifier{meta}}, {"f", []chromedp.Modifier{ctrl}}},
+		"gotoLine":   {{"l", []chromedp.Modifier{meta}}, {"g", []chromedp.Modifier{ctrl}}},
+		"gotoFile":   {{"o", []chromedp.Modifier{meta, shift}}, {"n", []chromedp.Modifier{ctrl, shift}}},
+		"prsTab":     {{"2", []chromedp.Modifier{meta}}, {"2", []chromedp.Modifier{alt}}},
+		"addNote":    {{"n", []chromedp.Modifier{meta, alt}}, {"n", []chromedp.Modifier{ctrl, alt}}},
+		"nextNote":   {{kb.ArrowDown, []chromedp.Modifier{alt}}, {kb.ArrowDown, []chromedp.Modifier{alt}}},
+		"nextChange": {{kb.F7, nil}, {kb.F7, nil}},
+		"prevChange": {{kb.F7, []chromedp.Modifier{shift}}, {kb.F7, []chromedp.Modifier{shift}}},
+		"submitNote": {{"\r", []chromedp.Modifier{meta}}, {"\r", []chromedp.Modifier{ctrl}}},
 	}
 	c, ok := keys[action]
 	if !ok {
@@ -267,6 +274,18 @@ func (p page) press(action string) {
 		k = c[0]
 	}
 	p.key(action, k.key, k.mods...)
+}
+
+// hover moves the mouse over the left part of an element.
+func (p page) hover(what, el string) {
+	p.t.Helper()
+	at := evalJS[[]float64](p, `(e => { e.scrollIntoView({block: 'center'}); const r = e.getBoundingClientRect(); return [r.left + 40, r.top + r.height / 2]; })(`+el+`)`)
+	p.act("hover "+what, chromedp.MouseEvent(input.DispatchMouseEventTypeMouseMoved, at[0], at[1]))
+}
+
+func (p page) evalJS(js string) {
+	p.t.Helper()
+	evalJS[any](p, js+`; null`)
 }
 
 // emulate sets the color scheme and the window width the page sees.
@@ -467,4 +486,71 @@ func copyEngines(from, to string) {
 func fileCached(p string) bool {
 	st, err := os.Stat(p)
 	return err == nil && st.Size() > 0
+}
+
+// sessionGo is the agent's file in the branch review journey: a session store, long enough to scroll.
+func sessionGo(lookup, extra string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "package auth\n\nimport \"net/http\"\n\n// Store keeps the sessions.\ntype Store struct{ byID map[string]*Session }\n\n")
+	fmt.Fprintf(&b, "func (s *Store) Resume(w http.ResponseWriter, r *http.Request) (*Session, error) {\n\tc, err := r.Cookie(cookieName)\n\tif err != nil {\n\t\treturn nil, ErrNoSession\n\t}\n")
+	fmt.Fprintf(&b, "\t%s\n\tif !ok {\n\t\treturn nil, ErrNoSession\n\t}\n\treturn sess, nil\n}\n", lookup)
+	for i := 1; i <= 16; i++ {
+		fmt.Fprintf(&b, "\nfunc check%02d() bool {\n\treturn %d > 0\n}\n", i, i)
+	}
+	return b.String() + extra
+}
+
+const lookupGo = "\n// lookup reads a session without touching its expiry.\nfunc (s *Store) lookup(id string) (*Session, bool) {\n\tsess, ok := s.byID[id]\n\treturn sess, ok\n}\n"
+
+// reviewRepo is the folder of an agent's branch fix-login, whose origin is on GitHub: one commit
+// pushed, one not, an edit not committed and a new file. git pushes to a bare repo in GitHub's place.
+func reviewRepo(t *testing.T) string {
+	t.Helper()
+	origin := filepath.Join(t.TempDir(), "review.git")
+	run(t, t.TempDir(), "init", "-q", "--bare", "-b", "main", origin)
+	dir := namedRepo(t, "review")
+	write(t, filepath.Join(dir, "README.md"), "# Review\n\nA shop backend.\n")
+	write(t, filepath.Join(dir, "go.sum"), "example.com/a v1.0.0 h1:aaa=\n")
+	write(t, filepath.Join(dir, "internal", "auth", "session.go"), sessionGo("sess, ok := s.byID[c.Value]", ""))
+	run(t, dir, "add", ".")
+	run(t, dir, "commit", "-qm", "Add the session store")
+	const url = "https://github.com/acme/review.git"
+	run(t, dir, "remote", "add", "origin", url)
+	run(t, dir, "config", "url."+origin+".insteadOf", url)
+	run(t, dir, "push", "-q", "-u", "origin", "main")
+	run(t, dir, "checkout", "-qb", "fix-login")
+	write(t, filepath.Join(dir, "internal", "auth", "session.go"), sessionGo("sess, ok := s.lookup(c.Value)", ""))
+	write(t, filepath.Join(dir, "go.sum"), "example.com/a v1.0.0 h1:aaa=\nexample.com/b v1.2.0 h1:bbb=\nexample.com/c v0.3.0 h1:ccc=\n")
+	var js strings.Builder
+	for i := 1; i <= 30; i++ {
+		fmt.Fprintf(&js, "export const step%02d = () => %d;\n", i, i)
+	}
+	write(t, filepath.Join(dir, "web", "login.js"), js.String())
+	run(t, dir, "add", ".")
+	run(t, dir, "commit", "-qm", "Look sessions up")
+	run(t, dir, "push", "-q", "-u", "origin", "fix-login")
+	write(t, filepath.Join(dir, "internal", "auth", "session.go"), sessionGo("sess, ok := s.lookup(c.Value)", lookupGo))
+	write(t, filepath.Join(dir, "internal", "auth", "redirect.go"), "package auth\n\n// safeNext keeps next only when it is a path on this site.\nfunc safeNext(next string) string {\n\tif len(next) == 0 || next[0] != '/' {\n\t\treturn \"/\"\n\t}\n\treturn next\n}\n")
+	run(t, dir, "add", ".")
+	run(t, dir, "commit", "-qm", "Add safe redirects")
+	write(t, filepath.Join(dir, "README.md"), "# Review\n\nA shop backend.\n\nRun it with go run.\n")
+	write(t, filepath.Join(dir, "internal", "auth", "redirect_test.go"), "package auth\n\nimport \"testing\"\n\nfunc TestSafeNext(t *testing.T) {\n\tif safeNext(\"//evil.com\") != \"/\" {\n\t\tt.Fatal(\"open redirect\")\n\t}\n}\n")
+	return dir
+}
+
+// fakeForgeTools is a folder with a gh that answers every question with pull request #482, and a
+// glab that answers with merge request !12.
+func fakeForgeTools(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	pr := `{"number":482,"title":"Fix login redirect loop","state":"OPEN","isDraft":false,"url":"https://github.com/acme/review/pull/482","baseRefName":"main","reviewDecision":"","statusCheckRollup":[],"latestReviews":[]}`
+	mr := `{"iid":12,"title":"Fix login redirect loop","state":"opened","draft":false,"web_url":"https://gitlab.com/acme/review/-/merge_requests/12","target_branch":"main"}`
+	write(t, filepath.Join(dir, "gh"), "#!/bin/sh\necho '"+pr+"'\n")
+	write(t, filepath.Join(dir, "glab"), "#!/bin/sh\nif [ \"$1\" = mr ]; then echo '"+mr+"'; else echo '{}'; fi\n")
+	for _, tool := range []string{"gh", "glab"} {
+		if err := os.Chmod(filepath.Join(dir, tool), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir
 }

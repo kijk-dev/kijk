@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/kijk-dev/kijk/internal/agents"
+	"github.com/kijk-dev/kijk/internal/viewer"
 )
 
 type capturedEvent struct {
@@ -116,7 +118,7 @@ func TestEventsCarryOnlyTheAgreedProperties(t *testing.T) {
 		}
 	}
 	slices.SortFunc(ev, func(a, b capturedEvent) int { return strings.Compare(a.Event, b.Event) })
-	want := []string{"$os", "agents", "arch", "folders", "machines", "remote_agents", "version"}
+	want := []string{"$os", "agent_copies", "agents", "arch", "folders", "machines", "remote_agents", "version"}
 	for _, at := range agents.Types {
 		want = append(want, at.Name+"_agents")
 	}
@@ -172,6 +174,42 @@ func TestActiveWithoutAgentScan(t *testing.T) {
 		if strings.HasSuffix(k, "_agents") {
 			t.Fatalf("day without a scan: %v", e2.props)
 		}
+	}
+}
+
+// Copy for agent is counted by the local kijk, and kijk active carries the count since the one before.
+func TestAgentCopies(t *testing.T) {
+	agentCopies.Store(0)
+	srv := newServer("secret", 7717, nil, newHub(), &viewer.Roots{}, nil, nil, nil)
+	count := func(name string) int {
+		r := httptest.NewRequest("POST", "/api/count?name="+name, nil)
+		r.Host = "127.0.0.1:7717"
+		r.Header.Set("Origin", "http://127.0.0.1:7717")
+		r.AddCookie(&http.Cookie{Name: cookieName(7717), Value: "secret"})
+		w := httptest.NewRecorder()
+		srv.ServeHTTP(w, r)
+		return w.Code
+	}
+	tel := &telemetry{version: "0.3.0", events: make(chan telemetryEvent, 16)}
+	mon := time.Date(2026, 10, 12, 9, 0, 0, 0, time.Local)
+	tel.active(mon, 0, false, &agentCounts{})
+	for range 4 {
+		if code := count("agent-copy"); code != http.StatusOK {
+			t.Fatalf("count: %d", code)
+		}
+	}
+	if code := count("something-else"); code != http.StatusBadRequest {
+		t.Fatalf("another name: %d", code)
+	}
+	tel.active(mon.Add(time.Hour), 0, false, &agentCounts{}) // the same day: no event
+	tel.active(mon.Add(24*time.Hour), 0, false, &agentCounts{})
+	tel.active(mon.Add(48*time.Hour), 0, false, &agentCounts{})
+	var got []any
+	for range 3 {
+		got = append(got, (<-tel.events).props["agent_copies"])
+	}
+	if fmt.Sprint(got) != "[0 4 0]" {
+		t.Fatalf("agent_copies on three days: %v", got)
 	}
 }
 

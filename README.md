@@ -96,6 +96,29 @@ kijk ~/code/api ~/notes
 If you use the `gh` (GitHub) or `glab` (GitLab) command and are logged in, the Git tab shows the pull request or merge request of the branch. It shows the state, the checks or pipeline, and the review.
 kijk asks `gh` and `glab`. It never stores a token itself.
 
+### Review a branch
+
+The PRs tab shows your own branch the way a reviewer will see it, before you push. It shows when
+the branch has changes against its pull request target or the main line. Its tooltip says PRs on
+GitHub, MRs on GitLab, and Branch with no forge.
+
+- The tab shows the branch, the branch it is compared with, and its pull request when the Git tab
+  knows one. kijk asks GitHub or GitLab nothing more for it.
+- A bar says what reviewers cannot see yet, such as "2 commits and 1 file not pushed", with Push or
+  Publish.
+- **Branch changes** shows every changed file in one scroll: the commits since the branch split,
+  work not committed, and new files. Each file is a box. Its header stays at the top while you
+  scroll through it, and a click on the chevron folds it. Lock files, minified files and diffs over
+  2,000 lines start folded. The list in the tab follows the scroll; click a file to go to it.
+- Lines, hunks and files that are only on your machine have dashed marks.
+- **Agent notes** are notes for the agent on a line. Hover a line and click **+**, or press the
+  key. A note stays in kijk, per folder and branch, and never goes to GitHub or GitLab. When the
+  line moves, the note moves with it. When the line changes, the note says Outdated and shows the
+  line as it was.
+- **Copy for agent** shows the notes with a box each and the prompt they make. Copy puts the prompt
+  on the clipboard, to paste into the agent, and marks the notes Copied. **Clear copied** deletes
+  them.
+
 ### Live updates
 
 kijk watches the open folder. The tree, the Git tab and the open file update within a second after a change.
@@ -123,6 +146,10 @@ kijk uses the IntelliJ default keys.
 | Back and forward | ⌘[, ⌘] | Ctrl+Alt+←, Ctrl+Alt+→ |
 | Files tab | ⌘1 | Alt+1 |
 | Git tab | ⌘0 | Alt+0 |
+| PRs tab | ⌘2 | Alt+2 |
+| Note for the agent on the current line | ⌘⌥N | Ctrl+Alt+N |
+| Add the note | ⌘Enter | Ctrl+Enter |
+| Next and previous note | ⌥↓, ⌥↑ | Alt+↓, Alt+↑ |
 | Commit | ⌘K | Ctrl+K |
 | Push | ⇧⌘K | Ctrl+Shift+K |
 | Close tab | ⌘W | Ctrl+F4 |
@@ -302,7 +329,8 @@ It sends the number of folders in the folders window. On a day when kijk looked 
 also sends the number of agents on your machine, in total and per agent type, and how many remote
 machines you saved and how many agents run on them. The count per agent type is
 `<type>_agents` for each type kijk shows, such as `claude_agents` for Claude Code and
-`codex_agents` for Codex. It never sends their names or addresses. kijk on a remote machine sends
+`codex_agents` for Codex. It never sends their names or addresses. It sends how many times you
+used Copy for agent since its last report, never the notes. kijk on a remote machine sends
 nothing.
 
 To turn it off, set `KIJK_NO_TELEMETRY=1` or `DO_NOT_TRACK=1`, or start kijk with `-no-telemetry`.
