@@ -303,6 +303,11 @@ func TestBrowser(t *testing.T) {
 		b.waitFor("the notes copied", `document.querySelector('#prs .reviewbox .head .muted')?.textContent === '2 · 2 copied' && document.querySelectorAll('.thr.note.copied').length === 2`)
 		b.waitFor("the status bar", `document.querySelector('#statusbar').textContent.includes('Copied 2 notes')`)
 		b.waitFor("the copy counted by the local kijk", `e2eFetches.includes('/api/count?name=agent-copy 200')`)
+		if os.Getenv("KIJK_E2E_SHOTS") != "" {
+			b.evalJS(`[...document.querySelectorAll('.thr.note')].at(-1).scrollIntoView({block: 'center'})`)
+			b.act("wait for the layout", chromedp.Sleep(300*time.Millisecond))
+			b.screenshot(e2eOut(t), "branch-copied")
+		}
 		b.click("Clear copied", byText("#prs .reviewbox button", "Clear copied"))
 		b.waitFor("no notes", `document.querySelector('#prs .reviewbox .head .muted')?.textContent === 'none yet' && !document.querySelector('.thr.note')`)
 
@@ -318,6 +323,29 @@ func TestBrowser(t *testing.T) {
 		b.click("Delete", check+`.nextElementSibling.querySelector('[aria-label=Delete]')`)
 		b.waitFor("the note deleted", `!document.querySelector('.thr.note') && !`+check)
 
+		if os.Getenv("KIJK_E2E_SHOTS") != "" {
+			write(t, filepath.Join(repo, session), sessionGo("sess, ok := s.lookup(c.Value)", strings.Replace(lookupGo, "sess, ok := s.byID[id]", "sess, ok := s.copyOf(id)", 1)))
+			copyOf := boxRow(session, "\tsess, ok := s.copyOf(id)")
+			b.waitFor("the line", copyOf)
+			b.hover("a line", copyOf)
+			b.click("+", copyOf+`.querySelector('.addc')`)
+			b.typeText("Say why a copy is needed.")
+			b.press("submitNote")
+			b.click("session.go in the list", prsRow("session.go"))
+			dir := e2eOut(t)
+			for _, s := range []struct {
+				name, scheme string
+				width        int64
+			}{{"light", "light", 1400}, {"dark", "dark", 1400}, {"narrow", "light", 800}} {
+				b.emulate(s.scheme, s.width)
+				b.act("wait for the layout", chromedp.Sleep(300*time.Millisecond))
+				b.screenshot(dir, "branch-"+s.name)
+			}
+			b.emulate("light", 1400)
+			b.click("Copy for agent", byText("#prs .reviewbox button", "Copy for agent…"))
+			b.screenshot(dir, "branch-copy")
+			b.key("Escape", kb.Escape)
+		}
 		b.noErrors()
 	})
 
@@ -384,17 +412,40 @@ func TestBrowser(t *testing.T) {
 		publish(t, "0.0.1", exe)
 		app := namedRepo(t, "app")
 		write(t, filepath.Join(app, "app.go"), "package app\n")
+		run(t, app, "add", ".")
+		run(t, app, "commit", "-qm", "Add the app")
+		run(t, app, "checkout", "-qb", "start")
+		write(t, filepath.Join(app, "app.go"), "package app\n\n// Start runs the app.\nfunc Start() {}\n")
+		run(t, app, "commit", "-qam", "Add Start")
 		claudeAgent(t, filepath.Join(m.home(vm), ".claude"), app, "Remote work", "busy")
 		home := t.TempDir()
 		write(t, filepath.Join(home, ".config", "kijk", "machines.json"), fmt.Sprintf(`{"machines":[{"target":%q,"enabled":true}]}`, vm))
 		local := startKijkIn(t, exe, home)
 		r := openPage(t, newTab(t, tab), local, "/")
 		// The first connection installs kijk on the machine.
-		r.waitLong(time.Minute, "the agent on the machine", rowLabelIs("Remote work, Claude Code, app · main, Busy"))
+		r.waitLong(time.Minute, "the agent on the machine", rowLabelIs("Remote work, Claude Code, app · start, Busy"))
 		r.click("the remote row", row("Remote work"))
 		r.waitFor("app.go in the tree", treeItem("app.go"))
 		r.click("app.go", treeItem("app.go"))
 		r.waitFor("the remote code", activeFile("app.go")+" && "+viewHas("package app"))
+
+		// The PRs tab of a remote folder comes from the kijk on its machine; its copies count here.
+		r.waitFor("the PRs tab", `(b => b && !b.hidden && b.dataset.tip.startsWith('Branch\n'))(`+prsTab+`)`)
+		r.press("prsTab")
+		r.waitFor("the bar", `document.querySelector('#prs .unpushed .t')?.textContent === "This branch is not pushed yet. Reviewers don't see it."`)
+		r.waitFor("the change", boxHas("app.go", "add np", "// Start runs the app."))
+		r.click("the new line", boxRow("app.go", "func Start() {}")+`.querySelector('.tx')`)
+		r.press("addNote")
+		r.waitFor("the note editor", `document.activeElement?.matches('.thr.editing textarea')`)
+		r.typeText("Return an error.")
+		r.press("submitNote")
+		r.waitFor("the note", boxRow("app.go", "func Start() {}")+`.nextElementSibling?.matches('.thr.note')`)
+		r.evalJS(`window.e2eFetches = []; { const f = window.fetch; window.fetch = (u, o) => f(u, o).then(r => (e2eFetches.push(u + ' ' + r.status), r)); }`)
+		r.evalJS(`navigator.clipboard.writeText = t => (window.e2eClip = t, Promise.resolve())`)
+		r.click("Copy for agent", byText("#prs .reviewbox button", "Copy for agent…"))
+		r.click("Copy 1", byText(".copypanel button", "Copy 1"))
+		r.waitFor("the prompt", `window.e2eClip === `+jsString("Review notes for branch start.\nFix each one, then say what you changed.\n\napp.go:4\n  Return an error."))
+		r.waitFor("the copy counted by the local kijk", `e2eFetches.includes('/api/count?name=agent-copy 200')`)
 		r.noErrors()
 	})
 
