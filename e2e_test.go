@@ -619,7 +619,7 @@ func TestBrowser(t *testing.T) {
 		b.waitFor("the status bar", `document.querySelector('#statusbar').textContent.includes('Copied the failure of test (linux)')`)
 
 		// Refresh asks the forge again.
-		before := len(forge.calls())
+		before := forge.settle() // a call that runs takes in the refresh
 		b.press("refreshPrs")
 		forge.waitFor(t, before, "pullRequest(number")
 
@@ -711,13 +711,21 @@ func TestBrowser(t *testing.T) {
 		write(t, filepath.Join(app, "app.go"), "package app\n")
 		run(t, app, "add", ".")
 		run(t, app, "commit", "-qm", "Add the app")
+		appOrigin := filepath.Join(t.TempDir(), "app.git")
+		run(t, t.TempDir(), "init", "-q", "--bare", "-b", "main", appOrigin)
+		run(t, app, "remote", "add", "origin", "https://github.com/acme/app.git")
+		run(t, app, "config", "url."+appOrigin+".insteadOf", "https://github.com/acme/app.git")
+		run(t, app, "push", "-q", "origin", "main")
+		forge := newFakeForge(t)
+		forge.set(t, "gh-list.json", ghData(obj{"viewer": ghUser("you"), "repository": obj{"pullRequests": obj{"totalCount": 1,
+			"nodes": []obj{ghRow(9, "Add a health check", "tim", "health", false, 12, 0, "SUCCESS")}}}, "asked": obj{"nodes": []obj{{"number": 9}}}}))
 		run(t, app, "checkout", "-qb", "start")
 		write(t, filepath.Join(app, "app.go"), "package app\n\n// Start runs the app.\nfunc Start() {}\n")
 		run(t, app, "commit", "-qam", "Add Start")
 		claudeAgent(t, filepath.Join(m.home(vm), ".claude"), app, "Remote work", "busy")
 		home := t.TempDir()
 		write(t, filepath.Join(home, ".config", "kijk", "machines.json"), fmt.Sprintf(`{"machines":[{"target":%q,"enabled":true}]}`, vm))
-		local := startKijkIn(t, exe, home)
+		local := startKijkIn(t, exe, home, forge.env()) // the kijk on the machine gets the fake gh through ssh
 		r := openPage(t, newTab(t, tab), local, "/")
 		// The first connection installs kijk on the machine.
 		r.waitLong(time.Minute, "the agent on the machine", rowLabelIs("Remote work, Claude Code, app · start, Busy"))
@@ -727,8 +735,13 @@ func TestBrowser(t *testing.T) {
 		r.waitFor("the remote code", activeFile("app.go")+" && "+viewHas("package app"))
 
 		// The PRs tab of a remote folder comes from the kijk on its machine; its copies count here.
-		r.waitFor("the PRs tab", `(b => b && !b.hidden && b.dataset.tip.startsWith('Branch\n'))(`+prsTab+`)`)
+		r.waitFor("the PRs tab", `(b => b && !b.hidden && b.dataset.tip.startsWith('PRs\n'))(`+prsTab+`)`)
 		r.press("prsTab")
+		r.waitFor("the list from the machine", prRow(9)+`?.querySelector('.prt').textContent === 'Add a health check' && `+prsTab+`.querySelector('.tabcount')?.textContent === '1'`)
+		if calls := strings.Join(forge.calls(), "\n"); !strings.Contains(calls, "home="+m.home(vm)+" gh api graphql") {
+			t.Fatalf("the list did not come from gh on the machine:\n%s", calls)
+		}
+		r.click("this branch", `document.querySelector('#prs-list li.prrow[data-n="branch"]')`)
 		r.waitFor("the bar", `document.querySelector('#prs .unpushed .t')?.textContent === "This branch is not pushed yet. Reviewers don't see it."`)
 		r.waitFor("the change", boxHas("app.go", "add np", "// Start runs the app."))
 		r.click("the new line", boxRow("app.go", "func Start() {}")+`.querySelector('.tx')`)
