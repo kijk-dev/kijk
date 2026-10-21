@@ -154,3 +154,34 @@ func PRFile(root string, n int, path, dir string) (string, error) {
 	}
 	return p, os.Rename(tmp, p)
 }
+
+// PRSplit is where a pull request's forge diff starts: GitLab's own merge base when the repo has
+// it, else the merge base of the target's commit and head.
+func PRSplit(root string, pr *PR, head string) (string, error) {
+	if pr.MergeBase != "" && hasCommit(root, pr.MergeBase) {
+		return pr.MergeBase, nil
+	}
+	base := pr.BaseOid
+	if base == "" || !hasCommit(root, base) {
+		if !validBranch(root, pr.Base) {
+			return "", errors.New("the target branch " + pr.Base + " is not in this repo")
+		}
+		var err error
+		if base, err = Run(root, "rev-parse", "--verify", "-q", "refs/remotes/origin/"+pr.Base+"^{commit}"); err != nil {
+			return "", errors.New("the target branch " + pr.Base + " is not in this repo")
+		}
+	}
+	return MergeBase(root, base, head)
+}
+
+// FileAt is a file's text at a commit.
+func FileAt(root, commit, path string) (string, error) {
+	if !ValidHash(commit) {
+		return "", ErrBadHash
+	}
+	if !filepath.IsLocal(filepath.FromSlash(path)) {
+		return "", ErrOutside
+	}
+	b, err := Raw(root, "show", commit+":"+path)
+	return string(b), err
+}
