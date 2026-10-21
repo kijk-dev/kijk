@@ -1429,6 +1429,18 @@ func TestBrowser(t *testing.T) {
 		b.click("Viewed of retry.go", fileBox(retry)+`.querySelector('.fhead .check input')`)
 		b.waitFor("the switch gone", `!`+sw+` && `+reviewed(merged)+` && !`+bar+` && `+boxes+` === `+jsString(ci+" "+readme+" "+retry)+` && [...document.querySelectorAll('#viewer .fbox')].every(f => f.matches('.viewed.shut'))`)
 
+		// Sanne only merges main in again: no file of #477 changed, so the review still holds.
+		run(t, work, "checkout", "-q", "mainwork")
+		commit("billing_test.go", "package billing\n", "Test billing")
+		run(t, work, "push", "-q", "origin", "HEAD:main")
+		main = gitOut(t, work, "rev-parse", "HEAD")
+		run(t, work, "checkout", "-q", "sanne")
+		run(t, work, "merge", "-q", "--no-edit", "mainwork")
+		onlyMain := push(false)
+		b.press("refreshPrs")
+		b.waitFor("the review moved to the new head", reviewed(onlyMain))
+		b.waitFor("no switch", `document.querySelector('#prs-pr .prfiles h3') && !`+sw+` && `+boxes+` === `+jsString(ci+" "+readme+" "+retry))
+
 		// After a force push there is nothing to compare: all changes show, with a note.
 		run(t, work, "checkout", "-qb", "rebased", "mainwork")
 		run(t, work, "merge", "-q", "--squash", "sanne")

@@ -83,6 +83,16 @@ export function setReviewed(root, n, res) {
   tell(root, n, '');
 }
 
+// moveReview moves the head of your last review from from to at, when no file of the pull request
+// changed between them, so the review still holds.
+export function moveReview(root, n, forge, from, at) {
+  const k = repoKey(root, forge) + n;
+  const rec = read(k);
+  if (rec?.review?.head !== from) return;
+  write(k, { ...rec, review: { ...rec.review, head: at } });
+  tell(root, n, '');
+}
+
 // reviewOf is {head, time} of your last review of pull request n, or null.
 export const reviewOf = (root, n, forge) => read(repoKey(root, forge) + n)?.review || null;
 

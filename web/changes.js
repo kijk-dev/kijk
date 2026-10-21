@@ -156,7 +156,6 @@ async function show(v, res) {
   // GitHub takes a comment only on a line of its own diff, which shows 3 lines around a change.
   v.src.addNear = res.forge?.kind === 'github' ? 3 : 0;
   if (!res.files.length) return noBoxes(v, res.error || 'No changes');
-  if (!v.files.length) return noBoxes(v, 'No file of this pull request changed since your review');
   if (!v.scroll) v.goal = goals.get(`${v.root}\n${v.n}`) || '';
   goals.delete(`${v.root}\n${v.n}`);
   await showBoxes(v);
