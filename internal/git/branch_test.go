@@ -207,3 +207,25 @@ func TestNotPushed(t *testing.T) {
 		t.Fatalf("outside: %v", err)
 	}
 }
+
+// A path is a file name, never a pattern: docs/[draft].md must not match docs/d.md or docs/r.md.
+func TestBranchPathsAreLiteral(t *testing.T) {
+	repo := featureRepo(t)
+	gittest.Run(t, repo, "push", "-q", "-u", "origin", "feature")
+	for _, name := range []string{"[draft].md", "d.md", "r.md"} {
+		gittest.Write(t, filepath.Join(repo, "docs", name), name+"\n")
+	}
+	gittest.Run(t, repo, "add", ".")
+	gittest.Run(t, repo, "commit", "-qm", "docs")
+	d, err := Diff(repo, "docs/[draft].md", "", "branch", branchSplit(t, repo, ""), 3)
+	if err != nil || hunkText(d) != "+[draft].md" {
+		t.Fatalf("diff: %q, %v", hunkText(d), err)
+	}
+	gittest.Write(t, filepath.Join(repo, "docs", "d.md"), "d.md\nmore\n")
+	gittest.Run(t, repo, "commit", "-qam", "more")
+	gittest.Run(t, repo, "push", "-q")
+	gittest.Write(t, filepath.Join(repo, "docs", "r.md"), "r.md\nnot pushed\n")
+	if got, err := NotPushed(repo, "docs/[draft].md"); err != nil || fmt.Sprint(got) != "[]" {
+		t.Fatalf("not pushed: %v, %v", got, err)
+	}
+}

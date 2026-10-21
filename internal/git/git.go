@@ -585,11 +585,12 @@ func Diff(root, path, orig, mode, hash string, context int) (DiffResult, error) 
 	default:
 		return DiffResult{}, ErrBadMode
 	}
+	// Paths are file names, not patterns: "[draft].md" must not match "d.md".
 	args = append(args, "--")
 	if orig != "" {
-		args = append(args, orig)
+		args = append(args, ":(literal)"+orig)
 	}
-	out, err := Raw(root, append(args, path)...)
+	out, err := Raw(root, append(args, ":(literal)"+path)...)
 	if err != nil {
 		return DiffResult{}, err
 	}

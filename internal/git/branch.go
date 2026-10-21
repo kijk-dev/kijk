@@ -112,7 +112,7 @@ func NotPushed(root, path string) ([][2]int, error) {
 	if _, err := Run(root, "rev-parse", "--verify", "-q", "@{upstream}"); err != nil {
 		return all(), nil
 	}
-	out, err := Raw(root, "diff", "--no-color", "--no-ext-diff", "-U0", "@{upstream}", "--", path)
+	out, err := Raw(root, "diff", "--no-color", "--no-ext-diff", "-U0", "@{upstream}", "--", ":(literal)"+path)
 	if err != nil {
 		return nil, err
 	}
