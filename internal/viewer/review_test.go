@@ -60,6 +60,10 @@ func TestReviewRoutes(t *testing.T) {
 	if w := post("/api/pr/comment", comment); w.Code != http.StatusPreconditionRequired {
 		t.Fatalf("before the view: %d %s", w.Code, w.Body.String())
 	}
+	// Nor a summary, which may start your pending review.
+	if w := post("/api/pr/summary", js(map[string]any{"root": clone, "n": 7, "body": "Fine."})); w.Code != http.StatusPreconditionRequired {
+		t.Fatalf("summary before the view: %d %s", w.Code, w.Body.String())
+	}
 	// Nor can kijk approve before it showed the pull request: the approval is for the head on screen.
 	if w := post("/api/pr/submit", js(map[string]any{"root": clone, "n": 7, "verdict": "approve"})); w.Code != http.StatusPreconditionRequired {
 		t.Fatalf("approve before the view: %d %s", w.Code, w.Body.String())

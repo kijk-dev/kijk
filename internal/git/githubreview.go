@@ -84,7 +84,7 @@ func githubComment(f *forge, n int, head string, c NewComment) (string, error) {
 	}
 	// GitHub places a new thread by the commit of the review it goes into.
 	if c.Thread == "" && t.review != "" && t.reviewAt != head {
-		return "", sayErr(fmt.Sprintf("Your pending review on #%d is on an older commit. Post it first, or finish it on GitHub.", n))
+		return "", olderReview(n)
 	}
 	review, err := t.pending(f, cmp.Or(head, t.head))
 	if err != nil {
@@ -120,6 +120,10 @@ func githubComment(f *forge, n int, head string, c NewComment) (string, error) {
 	return "", nil
 }
 
+func olderReview(n int) error {
+	return sayErr(fmt.Sprintf("Your pending review on #%d is on an older commit. Post it first, or finish it on GitHub.", n))
+}
+
 // githubSummary sets the body of your pending review, making the review when there is none.
 func githubSummary(f *forge, n int, head, body string) error {
 	t, err := githubTargetOf(f, n)
@@ -129,6 +133,9 @@ func githubSummary(f *forge, n int, head, body string) error {
 	if t.review == "" {
 		if body == "" {
 			return nil
+		}
+		if t.head != head {
+			return headMoved(f, n) // the new review would start on a head that is not on screen
 		}
 		return mutate("gh", f, `mutation($pr: ID!, $commit: GitObjectID!, $body: String!) { addPullRequestReview(input: {pullRequestId: $pr, commitOID: $commit, body: $body}) { pullRequestReview { id } } }`,
 			map[string]any{"pr": t.id, "commit": cmp.Or(head, t.head), "body": body}, nil)
@@ -144,6 +151,10 @@ func githubSubmit(f *forge, n int, head, verdict string) error {
 		return err
 	}
 	event := Verdicts[verdict]
+	// GitHub records a submitted review on its own commit, and a verdict is for the head on screen.
+	if t.review != "" && verdict != "comment" && t.reviewAt != head {
+		return olderReview(n)
+	}
 	if t.review != "" {
 		return mutate("gh", f, `mutation($review: ID!, $event: PullRequestReviewEvent!, $body: String!) { submitPullRequestReview(input: {pullRequestReviewId: $review, event: $event, body: $body}) { pullRequestReview { id } } }`,
 			map[string]any{"review": t.review, "event": event, "body": t.summary}, nil)
