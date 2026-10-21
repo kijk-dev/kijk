@@ -73,16 +73,16 @@ function column(v, ...parts) {
   const pane = el('div', 'pane');
   pane.append(scroll);
   const top = v.scroll?.scrollTop;
-  // The comment box is one element that moves into the new page; a move loses the focus.
-  const typing = v.viewer.contains(document.activeElement) && document.activeElement.matches('input, textarea') ? document.activeElement : null;
   v.viewer.replaceChildren(pane);
-  if (typing?.isConnected) typing.focus({ preventScroll: true });
   v.scroll = scroll;
   if (top) scroll.scrollTop = top;
   return doc;
 }
 
 function draw(v, res) {
+  // The comment box is one element that moves into the new page, and the move takes its focus.
+  const typing = v.viewer.contains(document.activeElement) && document.activeElement.matches('input, textarea') ? document.activeElement : null;
+  const at = typing && [typing.selectionStart, typing.selectionEnd];
   v.res = res;
   const words = FORGE[res.forge?.kind] || FORGE.github;
   const h1 = el('h1', null, res.title);
@@ -131,6 +131,10 @@ function draw(v, res) {
     parts.push(box);
   }
   column(v, ...parts);
+  if (typing?.isConnected) {
+    typing.focus({ preventScroll: true });
+    if (at[0] != null) typing.setSelectionRange(...at);
+  }
   requestAnimationFrame(() => drawEdges(v));
 }
 
