@@ -5,9 +5,8 @@ import { avatar, comment } from './threads.js';
 import { FORGE } from './pr.js';
 import { mac } from './keys.js';
 
-// The Overview tab of a pull request, in the reading column: its title, who wants to merge what,
-// its reviewers, its description, its checks as graphs and its conversation. Tab n 0 is the
-// folder's own branch before it has a pull request.
+// The Overview tab of a pull request: title, reviewers, description, checks as graphs and the
+// conversation. Tab n 0 is the folder's own branch before it has a pull request.
 
 // hooks: branch(): {branch, base, ahead, forge, create}; own(n), whether n is the branch's pull
 // request; say(text) and announce(text).
