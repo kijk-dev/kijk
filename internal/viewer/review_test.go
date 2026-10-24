@@ -168,8 +168,8 @@ func TestReviewWriteOldHead(t *testing.T) {
 	}
 }
 
-// When the new head cannot be fetched, kijk shows the head it has and says why it cannot write,
-// rather than refuse each comment with "has new commits".
+// When the new head cannot be fetched, kijk shows the head it has and says why, and refuses only
+// the writes that go to the forge's head: a comment, not a resolve.
 func TestReviewWriteHeadNotFetched(t *testing.T) {
 	clone, head, base := prRepo(t)
 	js := func(v any) string { b, _ := json.Marshal(v); return string(b) }
@@ -189,18 +189,20 @@ func TestReviewWriteHeadNotFetched(t *testing.T) {
 	w := get("/api/pr/view", url.Values{"n": {"7"}})
 	var v struct {
 		At    string
-		Write struct {
-			OK   bool
-			Note string
-		}
+		Error string
+		Write struct{ OK bool }
 	}
 	const why = "Cannot fetch the new commits of #7 from origin: "
-	if err := json.Unmarshal(w.Body.Bytes(), &v); w.Code != 200 || err != nil || v.At != head || v.Write.OK || !strings.HasPrefix(v.Write.Note, why) {
+	if err := json.Unmarshal(w.Body.Bytes(), &v); w.Code != 200 || err != nil || v.At != head || !v.Write.OK || !strings.HasPrefix(v.Error, why) {
 		t.Fatalf("view %d %v %s", w.Code, err, w.Body.String())
 	}
 	n := len(calls())
 	if w := post("/api/pr/comment", js(map[string]any{"root": clone, "n": 7, "at": head, "path": "retry.go", "line": 4, "body": "Why 3?"})); w.Code != http.StatusConflict || !strings.HasPrefix(w.Body.String(), why) || len(calls()) != n {
 		t.Fatalf("comment: %d %s, calls %q", w.Code, w.Body.String(), calls()[n:])
+	}
+	post("/api/pr/resolve", js(map[string]any{"root": clone, "n": 7, "thread": "T1", "resolved": true}))
+	if len(calls()) == n {
+		t.Fatal("the resolve did not reach the forge")
 	}
 }
 

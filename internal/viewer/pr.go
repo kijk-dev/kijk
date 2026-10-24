@@ -1,7 +1,6 @@
 package viewer
 
 import (
-	"cmp"
 	"io/fs"
 	"net/http"
 	"os"
@@ -20,6 +19,7 @@ type openedPR struct {
 	split, head string // empty while kijk has no diff of it
 	write       git.Write
 	ref         string // as the forge says its number, such as "#7"
+	stale       string // why kijk cannot show the forge's head, which a comment would go to
 }
 
 type openedPRs struct {
@@ -148,11 +148,10 @@ func (a *api) prView(w http.ResponseWriter, r *http.Request) {
 			out.Error += ": " + err.Error()
 		}
 	}
-	// A write goes to the forge's head, so kijk writes only when it shows that head.
-	if err != nil && head != pr.HeadOid {
-		pr.Write = git.Write{Note: cmp.Or(out.Error, "Cannot fetch the new commits of "+ref+" from origin: "+err.Error())}
-		a.opened.set(root, n, func(p *openedPR) { p.write = pr.Write })
+	if err != nil && head != "" && head != pr.HeadOid {
+		out.Error = "Cannot fetch the new commits of " + ref + " from origin: " + err.Error()
 	}
+	a.opened.set(root, n, func(p *openedPR) { p.stale = out.Error })
 	if head != "" {
 		pr.HeadOid = head
 	}

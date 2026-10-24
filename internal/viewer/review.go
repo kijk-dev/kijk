@@ -72,6 +72,8 @@ func refused(p openedPR, known bool, req writeRequest) string {
 		return cmp.Or(can.Note, "kijk cannot write to this pull request")
 	case req.Verdict == "approve" && !can.Approve, req.Verdict == "changes" && !can.Changes:
 		return can.Why
+	case req.At != "" && p.stale != "":
+		return p.stale
 	case req.At != "" && p.head != "" && req.At != p.head:
 		return p.ref + " " + git.ErrHeadMoved.Error()
 	}
