@@ -683,6 +683,23 @@ func TestBrowser(t *testing.T) {
 		b.press("refreshPrs")
 		forge.waitFor(t, before, "pullRequest(number")
 
+		// git switch to a branch with another pull request: its threads show at once, not at the next ask.
+		pr482View := `{"number":482,"title":"Fix login redirect loop","state":"OPEN","isDraft":false,"url":"https://github.com/acme/review/pull/482","baseRefName":"main","reviewDecision":"","statusCheckRollup":[],"latestReviews":[]}`
+		forge.set(t, "gh-pr-view.json", strings.NewReplacer("482", "477", "Fix login redirect loop", "Retry webhook delivery with backoff").Replace(pr482View))
+		run(t, repo, "stash", "-q", "-u")
+		run(t, repo, "fetch", "-q", "origin", "refs/pull/477/head")
+		run(t, repo, "switch", "-q", "-c", "retry-webhooks", "FETCH_HEAD")
+		b.waitFor("#477 is this branch's", `document.querySelector('#prs-branch .pr-num')?.textContent === '#477'`)
+		b.click("retry.go in the list", prsRow("retry.go"))
+		b.waitFor("its open thread in Local mode", boxRow(retry, "\t\tif !retryable(err) {")+`?.nextElementSibling?.querySelector('.cbody')?.textContent.trim() === 'Should a 429 count as retryable?'`)
+		b.waitFor("its threads counted on the Overview row", prsRow("Overview")+`?.querySelector('.dir').textContent === '1 open thread'`)
+		forge.set(t, "gh-pr-view.json", pr482View)
+		run(t, repo, "switch", "-q", "fix-login")
+		run(t, repo, "stash", "pop", "-q")
+		b.waitFor("#482 again", `document.querySelector('#prs-branch .pr-num')?.textContent === '#482'`)
+		b.click("session.go in the list", prsRow("session.go"))
+		b.waitFor("its thread again", asked+`?.nextElementSibling?.matches('.thr:not(.note)')`)
+
 		// The PR line's title opens the PRs tab on its pull request; ↗ still goes to the website.
 		b.click("the Git tab", gitTab)
 		b.waitFor("the PR line", `document.querySelector('#prline .pr-title')?.textContent === 'Fix login redirect loop' && document.querySelector('#prline .pr-link')?.href === 'https://github.com/acme/review/pull/482'`)
