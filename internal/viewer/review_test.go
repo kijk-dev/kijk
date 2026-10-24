@@ -54,7 +54,7 @@ func TestReviewRoutes(t *testing.T) {
 	}
 	calls := gittest.FakeToolCalls(t, "gh", rules...)
 	get, post := reviewServer(t, clone)
-	comment := js(map[string]any{"root": clone, "n": 7, "path": "retry.go", "line": 4, "body": "Why 3?"})
+	comment := js(map[string]any{"root": clone, "n": 7, "at": head, "path": "retry.go", "line": 4, "body": "Why 3?"})
 
 	// A comment on a line needs the head kijk showed; after a restart kijk has none, which is not the
 	// same as a head that moved.
@@ -62,11 +62,11 @@ func TestReviewRoutes(t *testing.T) {
 		t.Fatalf("before the view: %d %s", w.Code, w.Body.String())
 	}
 	// Nor a summary, which may start your pending review.
-	if w := post("/api/pr/summary", js(map[string]any{"root": clone, "n": 7, "body": "Fine."})); w.Code != http.StatusPreconditionRequired {
+	if w := post("/api/pr/summary", js(map[string]any{"root": clone, "n": 7, "at": head, "body": "Fine."})); w.Code != http.StatusPreconditionRequired {
 		t.Fatalf("summary before the view: %d %s", w.Code, w.Body.String())
 	}
 	// Nor can kijk approve before it showed the pull request: the approval is for the head on screen.
-	if w := post("/api/pr/submit", js(map[string]any{"root": clone, "n": 7, "verdict": "approve"})); w.Code != http.StatusPreconditionRequired {
+	if w := post("/api/pr/submit", js(map[string]any{"root": clone, "n": 7, "at": head, "verdict": "approve"})); w.Code != http.StatusPreconditionRequired {
 		t.Fatalf("approve before the view: %d %s", w.Code, w.Body.String())
 	}
 	w := get("/api/pr/view", url.Values{"n": {"7"}})
@@ -87,12 +87,12 @@ func TestReviewRoutes(t *testing.T) {
 		route string
 		body  map[string]any
 	}{
-		{"/api/pr/comment", map[string]any{"n": 7, "thread": "T1", "body": "Agreed."}},
+		{"/api/pr/comment", map[string]any{"n": 7, "at": head, "thread": "T1", "body": "Agreed."}},
 		{"/api/pr/comment/edit", map[string]any{"n": 7, "id": "C9", "body": "Why three?"}},
 		{"/api/pr/comment/delete", map[string]any{"n": 7, "id": "C9"}},
 		{"/api/pr/resolve", map[string]any{"n": 7, "thread": "T1", "resolved": true}},
-		{"/api/pr/summary", map[string]any{"n": 7, "body": "Looks good."}},
-		{"/api/pr/submit", map[string]any{"n": 7, "verdict": "approve"}},
+		{"/api/pr/summary", map[string]any{"n": 7, "at": head, "body": "Looks good."}},
+		{"/api/pr/submit", map[string]any{"n": 7, "at": head, "verdict": "approve"}},
 	} {
 		c.body["root"] = clone
 		if w := post(c.route, js(c.body)); w.Code != 200 {
@@ -161,6 +161,20 @@ func TestReviewWriteOldHead(t *testing.T) {
 	}
 	if len(calls()) != n {
 		t.Fatalf("kijk called the forge for a head it did not show: %q", calls()[n:])
+	}
+	// A write that does not say its head is refused, not sent to the last head any page loaded.
+	for _, c := range []struct{ route, body string }{
+		{"/api/pr/comment", js(map[string]any{"root": clone, "n": 7, "path": "retry.go", "line": 4, "body": "Why 3?"})},
+		{"/api/pr/comment", js(map[string]any{"root": clone, "n": 7, "thread": "T1", "body": "Agreed."})},
+		{"/api/pr/summary", js(map[string]any{"root": clone, "n": 7, "body": "Fine."})},
+		{"/api/pr/submit", js(map[string]any{"root": clone, "n": 7, "verdict": "approve"})},
+	} {
+		if w := post(c.route, c.body); w.Code != http.StatusBadRequest {
+			t.Errorf("%s %.80s without a head: %d %s", c.route, c.body, w.Code, w.Body.String())
+		}
+	}
+	if len(calls()) != n {
+		t.Fatalf("kijk called the forge for a write with no head: %q", calls()[n:])
 	}
 	// The page with the newer head writes on it.
 	if w := post("/api/pr/comment", js(map[string]any{"root": clone, "n": 7, "at": newer, "path": "retry.go", "line": 4, "body": "Why 3?"})); w.Code != 200 {
