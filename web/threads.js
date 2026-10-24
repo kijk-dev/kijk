@@ -44,9 +44,7 @@ export function comment(c, drafts) {
 // The html is rendered by kijk's server, which drops raw HTML; its links open in a new tab.
 const newTab = e => Object.assign(e.target.closest('a[href]') || {}, { target: '_blank', rel: 'noopener' });
 
-const busy = new Set(); // threads whose resolve is on its way
-
-// threadEl draws a thread. opts: {redraw(), line, foot, drafts, reply(t), resolve(t, on), error(t)}.
+// threadEl draws a thread. opts: {redraw(), line, foot, drafts, reply(t), resolve(t, on), busy(id), error(t)}.
 // foot is Local mode's reply strip, reply(t) forge mode's; line is where it shows, if not its own.
 export function threadEl(t, opts) {
   const line = opts.line || t.line;
@@ -85,17 +83,13 @@ export function threadEl(t, opts) {
 }
 
 function resolveButton(t, text, on, opts) {
-  const onclick = () => {
-    busy.add(t.id);
+  const onclick = () => opts.resolve(t, on).then(() => {
+    if (on) opened.delete(t.id);
+    else opened.add(t.id);
     opts.redraw();
-    opts.resolve(t, on).then(() => (on ? opened.delete(t.id) : opened.add(t.id)), () => {}) // the thread shows why
-      .finally(() => {
-        busy.delete(t.id);
-        opts.redraw();
-      });
-  };
+  }, () => {}); // the thread shows why
   const tip = on ? 'Resolve this thread\nIt happens at once' : 'Open this thread again\nIt happens at once';
-  return h('button', { key: 'resolve', class: 'tool', disabled: busy.has(t.id), data: { tip }, onclick }, text);
+  return h('button', { key: 'resolve', class: 'tool', disabled: opts.busy(t.id), data: { tip }, onclick }, text);
 }
 
 // outdatedBar lists the threads whose lines changed after they were written, at the top of a box.

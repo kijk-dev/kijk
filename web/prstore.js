@@ -1,12 +1,14 @@
-import { get, storeKey, splitKey } from './api.js';
-import { ownPR } from './pr.js';
+import { get, post, storeKey, splitKey } from './api.js';
+import { ownPR, forgeWords } from './pr.js';
 
 // What kijk knows about the pull requests of each folder; parts draw from it and keep no copy.
 // A folder: line (/pr, from the kijk.pr: record at first), lists (q → /prs; q '' is the list) and
-// pulls (n → {view: /pr/view, floor, since, sinceOn}). An ask numbered at or below floor may be from
-// before a write, so its answer is not stored. An answer: res, why the last ask failed, seq of res,
-// call. since is {k, a}: what changed from the head of your last review to the head now (k); a is
-// null while kijk asks. sinceOn: the switch is at Since your review, in this window.
+// pulls (n → {view: /pr/view, floor, since, sinceOn, writes}) and text (`${n}\n${k}` → {text, base}:
+// text not sent; base is what the forge had when the typing started). An ask numbered at or below
+// floor may be from before a write, so its answer is not stored. An answer: res, why the last ask
+// failed, seq of res, call. since is {k, a}: what changed from the head of your last review to the
+// head now (k); a is null while kijk asks. sinceOn: the switch is at Since your review, in this
+// window. writes: k → {busy: true} while a write under k is on its way, or {why} after a refusal.
 const folders = new Map();
 let seq = 0; // one counter for every ask, so "newer" is one compare
 
@@ -16,11 +18,31 @@ const lineKey = root => `kijk.pr:${storeKey(root)}`;
 const kept = root => { try { return JSON.parse(localStorage.getItem(lineKey(root))); } catch { return null; } };
 
 function folderOf(root) {
-  if (!folders.has(root)) folders.set(root, { line: answer(kept(root)), lists: new Map(), pulls: new Map() });
+  if (!folders.has(root)) folders.set(root, { line: answer(kept(root)), lists: new Map(), pulls: new Map(), text: new Map() });
   return folders.get(root);
 }
 
+function pullOf(root, n) {
+  const pulls = folderOf(root).pulls;
+  if (!pulls.has(n)) pulls.set(n, { view: answer(null), floor: 0, since: null, sinceOn: false, writes: new Map() });
+  return pulls.get(n);
+}
+
 const resOf = (root, n) => folderOf(root).pulls.get(n)?.view.res || null;
+
+const local = (k, fallback) => { try { return JSON.parse(localStorage.getItem(k)) ?? fallback; } catch { return fallback; } };
+
+// The ids of the drafts kijk wrote, and the verdict picked, per folder and pull request.
+const draftsKey = (root, n) => `kijk.drafts:${storeKey(root)}:${n}`;
+const reviewKey = (root, n) => `kijk.review:${storeKey(root)}:${n}`;
+
+// allowed says whether the forge takes verdict v on the pull request of answer res.
+export const allowed = (res, v) => v === 'comment' || (v === 'approve' ? res.write.approve : res.write.changes);
+
+function verdictOf(root, n, res) {
+  const v = local(reviewKey(root, n), {}).verdict || 'comment';
+  return res?.write && allowed(res, v) ? v : 'comment';
+}
 
 // Viewed marks, one record per machine, forge repo and pull request: per file the blobs of its diff
 // when you marked it, so a file that changed since shows, and the number of its last mark change;
@@ -89,12 +111,21 @@ function sinceOf(p, res, review) {
 //                when all changes show instead
 //   files, from  the files that show (null while kijk asks what changed since); from is set when
 //                they are the files since your review
+//   verdict      the verdict picked, or Comment when that one is not allowed here
+//   mine(c)      kijk wrote draft c
+//   text(k)      {text, base} not sent under k, or null
+//   busy(k)      a write under k is on its way
+//   refused(k)   why the forge refused the last write under k, until the next answer
 export function pull(root, n) {
-  const p = folderOf(root).pulls.get(n), res = p?.view.res || null;
+  const f = folderOf(root), p = f.pulls.get(n), res = p?.view.res || null;
   const rec = res?.forge ? recOf(marksKey(root, res.forge, n)) : null;
   const since = sinceOf(p, res, rec?.review), a = since?.answer, all = res?.files || [];
   const [files, from] = !since?.on ? [all, ''] : !a ? [null, ''] : a.note ? [all, ''] : [a.files, since.from];
-  return { root, n, res, why: p?.view.why || '', marks: marksIn(rec, res), own: ownFile(res), since, files, from };
+  return {
+    root, n, res, why: p?.view.why || '', marks: marksIn(rec, res), own: ownFile(res), since, files, from,
+    verdict: verdictOf(root, n, res), mine: c => local(draftsKey(root, n), []).includes(c.id),
+    text: k => f.text.get(`${n}\n${k}`) || null, busy: k => !!p?.writes.get(k)?.busy, refused: k => p?.writes.get(k)?.why || '',
+  };
 }
 
 // line is the PR line's answer: the last one, else the one kept in the browser.
@@ -118,9 +149,7 @@ export function rowCounts(root, r) {
 // read asks for pull request n. It joins the ask on its way unless fresh; fresh also drops the
 // answers of asks on their way, which may be from before a write.
 export function read(root, n, fresh) {
-  const pulls = folderOf(root).pulls;
-  if (!pulls.has(n)) pulls.set(n, { view: answer(null), floor: 0, since: null, sinceOn: false });
-  const p = pulls.get(n);
+  const p = pullOf(root, n);
   if (fresh) p.floor = seq;
   else if (p.view.call && p.view.callSeq > p.floor) return p.view.call;
   return ask(root, p.view, () => get('pr/view', { root, n }), p, res => afterView(root, n, res));
@@ -165,7 +194,7 @@ export function mark(root, n, f, on) {
 }
 
 // setReviewed keeps the head of answer res as the head of your last review of pull request n.
-export function setReviewed(root, n, res) {
+function setReviewed(root, n, res) {
   if (!res?.forge || !res.at) return;
   const k = marksKey(root, res.forge, n), rec = { ...recOf(k), review: { head: res.at, time: Date.now() } };
   if (res.files?.length) save(k, rec, res.files);
@@ -178,6 +207,101 @@ export function setReviewed(root, n, res) {
 export function setSince(root, n, on) {
   folderOf(root).pulls.get(n).sinceOn = on;
   changed(root);
+}
+
+// What each write is: its route, and whether it needs the head on screen.
+const WRITES = {
+  comment: ['pr/comment', true], edit: ['pr/comment/edit'], delete: ['pr/comment/delete'],
+  resolve: ['pr/resolve'], summary: ['pr/summary', true], submit: ['pr/submit', true],
+};
+
+// write sends one write about pull request n under key k, then reads the pull request again: busy(k)
+// is true until then, and refused(k) says why the forge refused it. body may be a promise. The text
+// under k goes when it is still sent, the body's text by default.
+export async function write(root, n, what, k, body, sent) {
+  const p = pullOf(root, n), [route, head] = WRITES[what];
+  p.writes.set(k, { busy: true });
+  changed(root);
+  let res;
+  try {
+    const b = await body;
+    sent ??= b.body;
+    res = await (head ? withHead(root, n, route, b) : post(route, { root, n, ...b }));
+  } catch (err) {
+    p.writes.set(k, { why: err.message }); // after withHead's own read, so it stays
+    changed(root);
+    throw err;
+  }
+  if (what === 'comment' && res.id) {
+    const ids = local(draftsKey(root, n), []);
+    try { localStorage.setItem(draftsKey(root, n), JSON.stringify([...new Set([...ids, res.id])].slice(-500))); } catch { /* storage blocked */ }
+  }
+  await read(root, n, true);
+  const text = folderOf(root).text, t = text.get(`${n}\n${k}`);
+  if (t && t.text.trim() === sent?.trim()) text.delete(`${n}\n${k}`);
+  p.writes.delete(k);
+  changed(root);
+  return res;
+}
+
+// withHead posts with the head on screen, or with body.at, the head a comment was written on. On 428
+// (no diff kept, as after a restart) it posts once more only while the head is the same; 409 means
+// the head moved. Either way the new head shows.
+async function withHead(root, n, route, body) {
+  const p = pullOf(root, n), at = body.at ?? p.view.res?.at;
+  try {
+    return await post(route, { root, n, ...body, at });
+  } catch (err) {
+    if (err.status !== 409 && err.status !== 428) throw err;
+    await read(root, n, true);
+    if (err.status === 409) throw err;
+    const res = p.view.res;
+    if (res?.at !== at) throw new Error(`${forgeWords(res).num}${n} has new commits. kijk shows them now; look again first.`);
+    return post(route, { root, n, ...body, at });
+  }
+}
+
+// submit posts your review with the verdict picked. Then the verdict goes back to Comment and the
+// head on screen becomes your last review.
+export async function submit(root, n) {
+  const res = resOf(root, n);
+  try {
+    await write(root, n, 'submit', 'submit', { verdict: verdictOf(root, n, res) });
+  } catch (err) {
+    read(root, n, true);
+    throw err;
+  }
+  pick(root, n, 'comment');
+  setReviewed(root, n, res);
+}
+
+// pick keeps the verdict picked for your review of pull request n.
+export function pick(root, n, verdict) {
+  try {
+    if (verdict === 'comment') localStorage.removeItem(reviewKey(root, n));
+    else localStorage.setItem(reviewKey(root, n), JSON.stringify({ verdict }));
+  } catch { /* storage blocked */ }
+  changed(root);
+}
+
+// type keeps text not sent under k of pull request n; n 0 is the folder's own branch. The text goes
+// when it is null, or base again: what the box showed before the typing, '' by default. The parts
+// draw again only when the text comes or goes, or turns blank or the same as base but for spaces,
+// since a draw on every key is slow on a large pull request.
+export function type(root, n, k, text, base = '') {
+  const m = folderOf(root).text, key = `${n}\n${k}`, was = m.get(key)?.text, b = m.get(key)?.base ?? base;
+  const shows = t => (t == null || t === b ? '' : `${t.trim() === b.trim()} ${!t.trim()}`);
+  if (text === null || text === b) m.delete(key);
+  else m.set(key, { text, base: b });
+  if (shows(was) !== shows(text)) changed(root);
+}
+
+// merged is the summary that shows when the forge's went from base to forge while mine was not
+// saved: the new one, with what mine added after it, so Submit, which saves mine first, drops neither.
+function merged(forge, base, mine) {
+  if (mine.trim() === base.trim() || mine.trim() === forge.trim()) return forge;
+  if (base && mine.startsWith(base)) return forge + mine.slice(base.length);
+  return forge.trim() ? `${forge}\n\n${mine}` : mine;
 }
 
 // watch runs fn(root) once after each task in which something about folder root changed.
@@ -229,13 +353,20 @@ function ask(root, a, fetch, p, then) {
   return call;
 }
 
-// afterView runs on each new answer about pull request n: the list counts follow it, a failed
-// answer of what changed since holds only until it, and kijk asks what changed since.
+// afterView runs on each new answer about pull request n: the list counts and the summary not saved
+// follow it, refusals and a failed answer of what changed since hold only until it, and kijk asks
+// what changed since.
 function afterView(root, n, res) {
   const k = res.forge && marksKey(root, res.forge, n), rec = k && recOf(k), m = rec && marksIn(rec, res);
   if (m && m.files && (m.count !== rec.viewed || m.files !== rec.files)) save(k, rec, res.files);
-  const p = folderOf(root).pulls.get(n);
+  const p = pullOf(root, n), text = folderOf(root).text, s = text.get(`${n}\nsummary`), forge = res.summary || '';
   if (p.since?.a?.failed) p.since = null;
+  for (const [k, w] of p.writes) if (w.why) p.writes.delete(k);
+  if (s && s.base !== forge) {
+    const t = merged(forge, s.base, s.text);
+    if (t === forge) text.delete(`${n}\nsummary`);
+    else text.set(`${n}\nsummary`, { text: t, base: forge });
+  }
   askSince(root, n);
 }
 

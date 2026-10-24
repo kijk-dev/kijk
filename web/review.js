@@ -5,7 +5,7 @@ import { forgeMark, forgeWords, ownPR } from './pr.js';
 import { keyLabel, mac } from './keys.js';
 import { textBox, unsentKey } from './drafts.js';
 import { boxView, showBoxes, noBoxes, redraw, drawBox, iconButton, goToBox, plural } from './boxes.js';
-import { pull, line, own, watch } from './prstore.js';
+import { pull, line, own, watch, type } from './prstore.js';
 import { threadEl, outdatedBar, threadCount, avatar, sent, threadsChanged } from './threads.js';
 
 // The PRs tab for the folder's own branch: the panel in the sidebar, the Branch changes view, agent
@@ -631,11 +631,15 @@ function openEditor(v, path, n, text, note) {
   const c = el('div', 'c');
   const who = el('div', 'who');
   who.append(agentMark(), el('b', null, 'Agent note'), el('span', 'muted', `· line ${n}`));
+  const k = note ? `note\n${note.id}` : unsentKey(notesKey, path, { k: '+', t: text });
   const close = () => {
+    if (note) type(folder, 0, k, null);
     closeEditor(v);
     v.scroll.focus({ preventScroll: true });
   };
-  const edit = textBox(`Note for the agent on line ${n}`, note?.body || '', note ? 'Save' : 'Add note', body => {
+  const labels = { label: `Note for the agent on line ${n}`, text: note?.body, okText: note ? 'Save' : 'Add note', placeholder: 'Note for the agent' };
+  patch(c, who, textBox(pull(folder, 0), k, labels, body => {
+    type(folder, 0, k, null);
     if (note) {
       note.body = body;
       note.copiedAt = 0; // the agent has not seen the new text
@@ -646,9 +650,7 @@ function openEditor(v, path, n, text, note) {
     notesChanged([path]);
     page.announce(note ? 'Note saved' : `Note added on line ${n}`);
     v.scroll.focus({ preventScroll: true });
-  }, close, note ? '' : unsentKey(notesKey, path, { k: '+', t: text }));
-  edit.querySelector('textarea').placeholder = 'Note for the agent';
-  c.append(who, edit);
+  }, close));
   box.append(c);
   v.editor = { path, n, id: note?.id, el: box };
   const b = v.boxes.get(path);

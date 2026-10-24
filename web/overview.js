@@ -41,7 +41,7 @@ export function setupOverview(h) {
 }
 
 export async function openOverview(viewer, root, tab) {
-  const v = { kind: 'overview', viewer, root, n: tab.n };
+  const v = { kind: 'overview', viewer, root, n: tab.n, conv: el('div', 'thr conv') };
   setView(v);
   view = v;
   if (!tab.n) return drawBranch(v);
@@ -56,6 +56,7 @@ export async function openOverview(viewer, root, tab) {
 watch(root => {
   const res = view && isCurrent(view) && view.root === root && pull(root, view.n).res;
   if (res && res !== view.res) draw(view, res);
+  else if (res) drawConv(view);
 });
 
 function ref(name, cls) {
@@ -76,7 +77,7 @@ function column(v, ...parts) {
   return doc;
 }
 
-// Building the page moves the kept comment box and draft editors, so keepFocus wraps all of it.
+// Building the page moves the conversation, which is kept, so keepFocus wraps all of it.
 function draw(v, res) {
   v.res = res;
   keepFocus(v.viewer, () => column(v, ...content(v, res)));
@@ -124,12 +125,16 @@ function content(v, res) {
   // Where kijk may write, the conversation ends in your drafts, your summary and a box for more.
   const write = writable(res);
   if (res.comments.length || write) {
-    const box = el('div', 'thr conv');
-    const drafts = threadOpts(v.root, res.number, res, () => isCurrent(v) && draw(v, v.res)).drafts;
-    patch(box, res.comments.map(c => comment(c, drafts)), write && [summarySlot(v.root, res.number, res), commentFoot(v.root, res.number, res)]);
-    parts.push(box);
+    drawConv(v);
+    parts.push(v.conv);
   }
   return parts;
+}
+
+// drawConv draws the conversation in place: what is typed, busy or refused in it changes alone.
+function drawConv(v) {
+  const p = pull(v.root, v.n), drafts = threadOpts(p).drafts;
+  patch(v.conv, p.res.comments.map(c => comment(c, drafts)), writable(p.res) && [summarySlot(p), commentFoot(p)]);
 }
 
 // checks are the CI of the head: a graph per workflow run or pipeline, the end of each failed

@@ -989,6 +989,12 @@ func TestBrowser(t *testing.T) {
 		saveKey := map[bool]string{false: "Ctrl", true: "⌘"}[b.mac]
 		b.waitFor("not saved yet", box+`.querySelector('.saved').textContent === 'Not saved · `+saveKey+` Enter saves it'`)
 		shots(b, "prs-summary-unsaved")
+		for range len(" Thanks.") {
+			b.key("Backspace", kb.Backspace)
+		}
+		b.waitFor("the forge's summary again: saved", box+`.querySelector('.saved').hidden`)
+		b.typeText(" Thanks.")
+		b.waitFor("not saved again", `!`+box+`.querySelector('.saved').hidden`)
 		forge.settle()
 		if strings.Contains(strings.Join(forge.calls()[n:], "\n"), "updatePullRequestReview(") {
 			t.Fatal("kijk saved the summary on a key press")

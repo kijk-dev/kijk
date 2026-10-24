@@ -1,12 +1,12 @@
-import { el, post, storeKey, keepFocus } from './api.js';
-import { read, pull, watch, setReviewed } from './prstore.js';
+import { el, h } from './api.js';
+import { pull, write, submit, type, pick, allowed, redraw } from './prstore.js';
 import { avatar } from './threads.js';
 import { iconButton, plural } from './boxes.js';
 import { forgeMark, forgeWords } from './pr.js';
 import { mac } from './keys.js';
 
 // Writing a review: drafts on the forge, resolves, the review box and the check before posting.
-// Every write asks for the pull request again, so what shows is the forge's state.
+// The writes, the text not sent and the refusals are in prstore.js; these draw them.
 
 const ICON = {
   edit: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21.17 6.81a1 1 0 0 0-3.99-3.99L3.84 16.17a2 2 0 0 0-.5.83l-1.32 4.35a.5.5 0 0 0 .62.62l4.35-1.32a2 2 0 0 0 .83-.5z"/></svg>',
@@ -22,133 +22,61 @@ export function setupDrafts(h) {
 // writable says whether kijk may write to the pull request of answer res.
 export const writable = res => !!res?.write?.ok;
 
-// ----- The ids of the drafts kijk wrote, per folder and pull request -----
-
-const idsKey = (root, n) => `kijk.drafts:${storeKey(root)}:${n}`;
-
-function ids(root, n) {
-  try { return new Set(JSON.parse(localStorage.getItem(idsKey(root, n))) || []); } catch { return new Set(); }
-}
-
-function remember(root, n, id) {
-  if (!id) return;
-  const s = ids(root, n);
-  s.add(id);
-  try { localStorage.setItem(idsKey(root, n), JSON.stringify([...s].slice(-500))); } catch { /* storage blocked */ }
-}
-
-const wroteHere = (root, n, c) => ids(root, n).has(c.id);
-
-// ----- Sending -----
-
-async function send(root, n, route, body) {
-  const res = await post(`pr/${route}`, { root, n, ...body });
-  await read(root, n, true);
-  return res;
-}
-
-// shown sends a write that needs the diff on screen: on 428 (no diff kept, as after a restart) it
-// goes once more only when the head is still at, the one on screen; 409 means the head moved.
-async function shown(root, n, at, route, body) {
-  try {
-    return await post(route, { root, n, at, ...body });
-  } catch (err) {
-    if (err.status !== 409 && err.status !== 428) throw err;
-    await read(root, n, true); // shows the new head
-    if (err.status === 409) throw err;
-    const fresh = pull(root, n).res;
-    if (fresh?.at !== at) throw new Error(`${forgeWords(fresh).num}${n} has new commits. kijk shows them now; look again first.`);
-    return post(route, { root, n, at, ...body });
-  }
-}
-
-async function addComment(root, n, at, c) {
-  const res = await shown(root, n, at, 'pr/comment', c);
-  remember(root, n, res.id);
-  await read(root, n, true);
-}
-
-// ----- Text boxes -----
-
 const ctrlEnter = e => e.key === 'Enter' && (mac ? e.metaKey : e.ctrlKey);
+const told = err => hooks.announce?.(err.message);
 
-// unsent keeps what is typed for a new comment or agent note until it is added, by view, file and
-// the text of its line, so + on that line gives it back, also after the view closed or the line moved.
-const unsent = new Map();
-
-// unsentKey names the text of a new comment or note on a line of view's file path.
+// unsentKey names the text of a new comment or note on a line of view's file path, by the text of
+// its line, so + on that line gives it back, also after the view closed or the line moved.
 export const unsentKey = (view, path, l) => `${view}\n${path}\n${l.k === '-' ? '-' : '+'}${l.t}`;
 
-// textBox is a text box with its buttons: ok(text) runs on the button or Ctrl+Enter and may throw
-// to show why, cancel() on Cancel or Escape. The text stays when ok fails, and under keep in unsent.
-export function textBox(label, text, okText, ok, cancel, keep) {
-  const wrap = el('div', 'editbox');
-  const area = el('textarea');
-  area.setAttribute('aria-label', label);
-  area.value = (keep && unsent.get(keep)) || text;
-  if (keep) area.oninput = () => (area.value.trim() ? unsent.set(keep, area.value) : unsent.delete(keep));
-  const error = el('p', 'error');
-  error.hidden = true;
-  const acts = el('div', 'acts');
-  const hint = el('span', 'muted');
-  hint.append(el('kbd', null, mac ? '⌘' : 'Ctrl'), ' ', el('kbd', null, 'Enter'), okText === 'Save' ? ' saves it' : ' adds it');
-  const no = el('button', 'tool', 'Cancel');
-  const yes = el('button', 'tool', okText);
-  acts.append(hint, no, yes);
-  wrap.append(area, error, acts);
-  const submit = async () => {
+// textBox is a text box with its buttons, its text kept under k of pull p: ok(text) runs on the
+// button or Ctrl+Enter, cancel() on Cancel or Escape. box: {label, text, okText, placeholder, focus},
+// where focus false keeps the focus where it is when the box is made.
+export function textBox(p, k, box, ok, cancel) {
+  const why = p.refused(k);
+  const send = area => {
     const body = area.value.trim();
-    if (!body || yes.disabled) return;
-    yes.disabled = no.disabled = true;
-    error.hidden = true;
-    try {
-      await ok(body);
-      unsent.delete(keep);
-    } catch (err) {
-      error.textContent = err.message;
-      error.hidden = false;
-      hooks.announce?.(err.message);
-    } finally {
-      yes.disabled = no.disabled = false;
-    }
+    if (body && !p.busy(k)) Promise.resolve(ok(body)).catch(told);
   };
-  yes.onclick = submit;
-  no.onclick = cancel;
-  area.onkeydown = e => {
-    if (ctrlEnter(e)) {
-      e.preventDefault();
-      submit();
-    } else if (e.key === 'Escape') {
-      e.preventDefault();
-      e.stopPropagation();
-      cancel();
-    }
-  };
-  wrap.focus = () => requestAnimationFrame(() => area.isConnected && area.focus({ preventScroll: true }));
-  return wrap;
+  return h('div', { key: 'editbox', class: 'editbox' },
+    h('textarea', {
+      key: 'text', value: p.text(k)?.text ?? (box.text || ''), placeholder: box.placeholder || '', autofocus: box.focus ?? true, attrs: { 'aria-label': box.label },
+      oninput: e => type(p.root, p.n, k, e.currentTarget.value, box.text),
+      onkeydown: e => {
+        if (ctrlEnter(e)) {
+          e.preventDefault();
+          send(e.currentTarget);
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          e.stopPropagation();
+          cancel();
+        }
+      },
+    }),
+    h('p', { class: 'error', hidden: !why }, why),
+    h('div', 'acts', h('span', 'muted', h('kbd', null, mac ? '⌘' : 'Ctrl'), ' ', h('kbd', null, 'Enter'), box.okText === 'Save' ? ' saves it' : ' adds it'),
+      h('button', { class: 'tool', disabled: p.busy(k), onclick: cancel }, 'Cancel'),
+      h('button', { class: 'tool', disabled: p.busy(k), onclick: e => send(e.currentTarget.closest('.editbox').querySelector('textarea')) }, box.okText)));
 }
 
-// lineEditor is the box under row l of file f where a new comment is written; done() closes it, and
-// toForge(row), when set, gives the forge diff's row of a row's line. move(row, at) changes the head.
-export function lineEditor(root, n, res, f, l, done, toForge) {
+// lineEditor is the box under row l of file f where a new comment is written: ed.draw(p) describes
+// it, and ed.move(row, at) puts it on a row of head at. done() closes it; toForge(row), when set,
+// gives the forge diff's row of a row's line. ed.at is the head the user wrote on, not the one now.
+export function lineEditor(p, f, l, done, toForge) {
   const ed = { text: l.t };
-  const box = el('div', 'thr draftonly editing');
-  const head = el('div', 'thead');
-  const title = el('span');
-  head.append(title);
-  const c = el('div', 'c');
-  const who = el('div', 'who');
-  who.append(avatar(res.me || 'you'), el('b', null, res.me || 'you'));
-  const text = textBox('Comment', '', 'Add to review', async body => {
+  const k = unsentKey('comment', f.path, l);
+  const add = body => write(p.root, p.n, 'comment', k, (async () => {
     if (!ed.row) throw new Error('This line is not in the diff now. Copy your text and add it on another line.');
     const r = (await toForge?.(ed.row)) || ed.row;
-    await addComment(root, n, ed.at, { path: f.path, orig: f.orig || '', line: ed.line, old: ed.old, oldLine: r.k === ' ' ? r.o : 0, body });
+    return { at: ed.at, path: f.path, orig: f.orig || '', line: ed.line, old: ed.old, oldLine: r.k === ' ' ? r.o : 0, body };
+  })()).then(() => {
     hooks.announce?.(`Comment added to your review on line ${ed.line}`);
     done();
-  }, done, unsentKey(`${root}\n${n}`, f.path, l));
-  c.append(who, text);
-  box.append(head, c);
-  ed.el = box;
+  });
+  ed.draw = p => h('div', { key: 'editor', class: 'thr draftonly editing' },
+    h('div', 'thead', h('span', null, `New comment · line ${ed.line}`)),
+    h('div', 'c', h('div', 'who', avatar(p.res.me || 'you'), h('b', null, p.res.me || 'you')),
+      textBox(p, k, { label: `Comment on line ${ed.line}`, okText: 'Add to review' }, add, done)));
   ed.move = (row, at) => {
     ed.at = at;
     ed.row = row;
@@ -156,11 +84,8 @@ export function lineEditor(root, n, res, f, l, done, toForge) {
     ed.old = row.k === '-';
     ed.line = ed.old ? row.o : row.n;
     ed.key = `${ed.old ? 'o' : 'n'}:${ed.line}`;
-    title.textContent = `New comment · line ${ed.line}`;
-    text.querySelector('textarea').setAttribute('aria-label', `Comment on line ${ed.line}`);
   };
-  ed.move(l, res.at);
-  text.focus();
+  ed.move(l, p.res.at);
   return ed;
 }
 
@@ -176,156 +101,83 @@ export function moveEditor(ed, rows, at) {
 
 // ----- What a thread box needs to write -----
 
-const editors = new Map(); // a draft being edited: its text box
-// A write the forge refused: {why, redraw, root, n, res}, until an answer newer than res.
-const failed = new Map();
-const strips = new Map(); // the reply strips of forge mode, kept across redraws so what is typed stays
+const editors = new Set(); // the drafts open in a text box
+let opening = ''; // the draft whose text box opened last: its first draw takes the focus, not a later view
 
-// threadOpts are the parts of a thread box that write: who wrote each draft where, its text box and
-// buttons, the reply strip, and resolve. redraw() draws the threads again.
-export function threadOpts(root, n, res, redraw) {
-  const can = writable(res);
-  const key = id => `${root}\n${n}\n${id}`;
+// threadOpts are the parts of a thread box of pull p that write: who wrote each draft where, its
+// text box and buttons, the reply strip, resolve, and what is busy or was refused.
+export function threadOpts(p) {
+  const can = writable(p.res);
+  const close = id => {
+    editors.delete(id);
+    type(p.root, p.n, `edit\n${id}`, null);
+    redraw(p.root);
+  };
   const drafts = {
-    where: c => (wroteHere(root, n, c) ? '' : `· written on ${forgeWords(res).name}`),
-    body: c => editors.get(key(c.id)) || null,
-    acts: c => (!can || editors.has(key(c.id)) ? [] : [
-      iconButton(ICON.edit, 'Edit', () => {
-        const close = () => {
-          editors.delete(key(c.id));
-          redraw();
-        };
-        const box = textBox('Your draft', c.body, 'Save', async body => {
-          await send(root, n, 'comment/edit', { id: c.id, body });
+    where: c => (p.mine(c) ? '' : `· written on ${forgeWords(p.res).name}`),
+    body: c => {
+      if (!editors.has(c.id)) return null;
+      const focus = opening === c.id;
+      if (focus) opening = '';
+      return textBox(p, `edit\n${c.id}`, { label: 'Your draft', text: c.body, okText: 'Save', focus }, body =>
+        write(p.root, p.n, 'edit', `edit\n${c.id}`, { id: c.id, body }).then(() => {
           hooks.announce?.('Draft saved');
-          close();
-        }, close);
-        editors.set(key(c.id), box);
-        redraw();
-        box.focus();
+          close(c.id);
+        }), () => close(c.id));
+    },
+    acts: c => (!can || editors.has(c.id) ? [] : [
+      iconButton(ICON.edit, 'Edit', () => {
+        editors.add(c.id);
+        opening = c.id;
+        redraw(p.root);
       }),
-      iconButton(ICON.trash, 'Delete', () => tried(root, n, c.id, redraw, async () => {
-        await send(root, n, 'comment/delete', { id: c.id });
-        hooks.announce?.('Draft deleted');
-      }).catch(() => {})), // the thread shows why
+      iconButton(ICON.trash, 'Delete', () => write(p.root, p.n, 'delete', c.id, { id: c.id }).then(() => hooks.announce?.('Draft deleted'), told)),
     ]),
   };
   // A refusal shows in the thread, under its header.
-  const error = t => [t.id, ...t.comments.map(c => c.id)].map(id => failed.get(key(id))?.why).find(Boolean) || '';
+  const error = t => [t.id, ...t.comments.map(c => c.id)].map(p.refused).find(Boolean) || '';
   if (!can) return { drafts, error };
   return {
     drafts,
     error,
-    reply: t => replyStrip(root, n, res, t),
-    resolve: (t, on) => tried(root, n, t.id, redraw, async () => {
-      await send(root, n, 'resolve', { thread: t.id, resolved: on });
-      hooks.announce?.(on ? 'Thread resolved' : 'Thread open again');
+    busy: p.busy,
+    reply: t => replyStrip(p, t),
+    resolve: (t, on) => write(p.root, p.n, 'resolve', t.id, { thread: t.id, resolved: on }).then(() => hooks.announce?.(on ? 'Thread resolved' : 'Thread open again'), err => {
+      told(err);
+      throw err;
     }),
   };
 }
 
-watch(root => {
-  for (const [k, f] of failed) {
-    if (f.root !== root || pull(root, f.n).res === f.res) continue;
-    failed.delete(k);
-    f.redraw();
-  }
-});
-
-// tried runs a write about id; when the forge refuses it, its reason is kept and drawn.
-async function tried(root, n, id, redraw, write) {
-  const k = `${root}\n${n}\n${id}`;
-  const had = failed.delete(k);
-  try {
-    await write();
-    if (had) redraw();
-  } catch (err) {
-    failed.set(k, { why: err.message, redraw, root, n, res: pull(root, n).res });
-    hooks.announce?.(err.message);
-    redraw();
-    throw err;
-  }
-}
-
 // replyStrip is an open thread's reply box in forge mode: Enter adds the reply to your review.
-function replyStrip(root, n, res, t) {
-  const k = `${root}\n${n}\n${t.id}`;
-  let s = strips.get(k);
-  if (!s) {
-    const foot = el('div', 'foot');
-    const input = el('input');
-    input.placeholder = 'Reply…';
-    const error = el('span', 'error');
-    foot.append(avatar(res.me || 'you'), input, error);
-    s = { foot, input, error };
-    strips.set(k, s);
-    input.onkeydown = async e => {
-      if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        const body = input.value.trim();
-        if (!body || input.readOnly) return;
-        input.readOnly = true;
-        error.textContent = '';
-        try {
-          await addComment(root, n, res.at, { thread: t.id, body });
-          if (input.value.trim() === body) input.value = '';
-          hooks.announce?.('Reply added to your review');
-        } catch (err) {
-          error.textContent = err.message;
-          hooks.announce?.(err.message);
-        } finally {
-          input.readOnly = false;
+function replyStrip(p, t) {
+  const k = `reply\n${t.id}`;
+  return h('div', { key: 'foot', class: 'foot' }, avatar(p.res.me || 'you'),
+    h('input', {
+      key: 'reply', placeholder: 'Reply…', value: p.text(k)?.text || '', readOnly: p.busy(k), attrs: { 'aria-label': `Reply to ${t.comments[0]?.author}` },
+      oninput: e => type(p.root, p.n, k, e.currentTarget.value),
+      onkeydown: e => {
+        const body = e.currentTarget.value.trim();
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          if (body && !p.busy(k)) write(p.root, p.n, 'comment', k, { thread: t.id, body }).then(() => hooks.announce?.('Reply added to your review'), told);
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          e.stopPropagation();
+          type(p.root, p.n, k, '');
+          e.currentTarget.blur();
         }
-      } else if (e.key === 'Escape') {
-        e.preventDefault();
-        e.stopPropagation();
-        input.value = '';
-        input.blur();
-      }
-    };
-  }
-  s.input.setAttribute('aria-label', `Reply to ${t.comments[0]?.author}`);
-  return s.foot;
+      },
+    }),
+    h('span', 'error', p.refused(k)));
 }
 
-// ----- The verdict, kept in the browser; the summary is a draft on the forge like the rest -----
-
-const reviewKey = (root, n) => `kijk.review:${storeKey(root)}:${n}`;
-
-function review(root, n) {
-  const none = { verdict: 'comment' };
-  try { return { ...none, ...JSON.parse(localStorage.getItem(reviewKey(root, n))) }; } catch { return none; }
-}
-
-// The review box and the Overview's summary that show, per folder and pull request, so a change in
-// one shows in the other without drawing either again.
-const live = new Map();
-
-function liveParts(root, n) {
-  const k = `${root}\n${n}`;
-  if (!live.has(k)) live.set(k, {});
-  return live.get(k);
-}
-
-function setReview(root, n, patch) {
-  const r = { ...review(root, n), ...patch };
-  try {
-    if (r.verdict === 'comment') localStorage.removeItem(reviewKey(root, n));
-    else localStorage.setItem(reviewKey(root, n), JSON.stringify({ verdict: r.verdict }));
-  } catch { /* storage blocked */ }
-  for (const part of Object.values(liveParts(root, n))) if (part.isConnected) part.sync();
-}
-
-// saveSummary sets the summary on the forge: GitHub's pending review body, GitLab's draft note.
-async function saveSummary(root, n, at, body) {
-  await shown(root, n, at, 'pr/summary', { body });
-  await read(root, n, true);
-  hooks.announce?.('Summary saved');
-}
+// ----- The review box; the verdict is kept in the browser, the summary is a draft on the forge -----
 
 // tally sorts your drafts: comments on lines, replies with whom and where they answer, and
 // comments not on a line; web(list) counts those written somewhere else.
-function tally(root, n, res) {
+function tally(p) {
+  const res = p.res;
   const lines = [];
   const replies = [];
   const conv = [];
@@ -342,185 +194,103 @@ function tally(root, n, res) {
     if (c.replyTo) replies.push({ c, to: `${c.replyTo} on the ${forgeWords(res).kind}` });
     else conv.push(c);
   }
-  const web = list => list.filter(d => !wroteHere(root, n, d.c || d)).length;
+  const web = list => list.filter(d => !p.mine(d.c || d)).length;
   return { lines, replies, conv, web, all: lines.length + replies.length + conv.length };
 }
 
 const VERDICTS = [['comment', 'Comment'], ['approve', 'Approve'], ['changes', 'Request changes']];
-const allowed = (res, v) => v === 'comment' || (v === 'approve' ? res.write.approve : res.write.changes);
 
-// verdict is the verdict picked, or Comment when the one picked is not allowed here.
-function verdict(root, n, res) {
-  const v = review(root, n).verdict;
-  return allowed(res, v) ? v : 'comment';
-}
+const nothing = p => p.verdict === 'comment' && !tally(p).all && !p.res.summary?.trim();
 
-const nothing = (root, n, res) => verdict(root, n, res) === 'comment' && !tally(root, n, res).all && !res.summary?.trim();
+// saveSummary sets the summary on the forge: GitHub's pending review body, GitLab's draft note.
+const saveSummary = (p, body) => write(p.root, p.n, 'summary', 'summary', { body }).then(() => hooks.announce?.('Summary saved'), err => {
+  told(err);
+  throw err;
+});
 
 // reviewBox is the box at the bottom of the sidebar: your drafts, the verdict, the summary and
-// Submit review…; or why kijk cannot write here. The box stays one element, so what is typed stays.
-export function reviewBox(root, n, res) {
+// Submit review…; or why kijk cannot write here.
+export function reviewBox(p) {
+  const res = p.res;
   if (!writable(res)) {
     if (!res?.write?.note || ['merged', 'closed'].includes(res.state)) return null; // the sidebar says it already
-    const box = el('div', 'reviewbox');
-    box.append(el('p', 'hint', res.write.note));
-    return box;
+    return h('div', { key: 'review', class: 'reviewbox' }, h('p', 'hint', res.write.note));
   }
-  const parts = liveParts(root, n);
-  let box = parts.box;
-  if (!box) {
-    box = el('div', 'reviewbox');
-    const head = el('div', 'head');
-    const count = el('span', 'muted');
-    head.append(el('b', null, 'Your review'), count);
-    const mode = el('div', 'mode');
-    mode.setAttribute('role', 'group');
-    mode.setAttribute('aria-label', 'Verdict');
-    const why = el('div', 'why');
-    const area = el('textarea');
-    area.rows = 2;
-    area.placeholder = 'Summary (optional)';
-    area.setAttribute('aria-label', 'Summary');
-    // The summary goes to the forge when it is saved, not on every key.
-    const saved = el('div', 'saved', `Not saved · ${mac ? '⌘' : 'Ctrl'} Enter saves it`);
-    const error = el('div', 'error');
-    let known = ''; // the summary the forge had when the box last showed it
-    const dirty = () => area.value.trim() !== (box.res.summary || '').trim();
-    const save = async () => {
-      error.textContent = '';
-      try {
-        await saveSummary(root, n, box.res.at, area.value);
-      } catch (err) {
-        error.textContent = err.message;
-        hooks.announce?.(err.message);
-        throw err;
-      }
-    };
-    area.oninput = () => box.sync();
-    area.onkeydown = e => {
-      if (ctrlEnter(e)) {
+  const t = tally(p), web = t.web([...t.lines, ...t.replies, ...t.conv]);
+  const forge = res.summary || '', value = p.text('summary')?.text ?? forge;
+  // The summary goes to the forge when it is saved, not on every key.
+  const dirty = area => area.value.trim() !== forge.trim();
+  const off = nothing(p) && !value.trim();
+  return h('div', { key: 'review', class: 'reviewbox' },
+    h('div', 'head', h('b', null, 'Your review'), h('span', 'muted', t.all ? `${plural(t.all, 'draft')}${web ? ` · ${web} from ${forgeWords(res).name}` : ''}` : 'no drafts yet')),
+    h('div', { class: 'mode', attrs: { role: 'group', 'aria-label': 'Verdict' } }, VERDICTS.map(([v, text]) => h('button', {
+      key: v, disabled: !allowed(res, v), attrs: { 'aria-pressed': String(v === p.verdict) }, data: allowed(res, v) ? {} : { tip: res.write.why },
+      onclick: () => pick(p.root, p.n, v),
+    }, text))),
+    h('div', { class: 'why', hidden: !res.write.why }, res.write.why || ''),
+    h('textarea', {
+      key: 'summary', rows: 2, placeholder: 'Summary (optional)', value, attrs: { 'aria-label': 'Summary' },
+      oninput: e => type(p.root, p.n, 'summary', e.currentTarget.value, forge),
+      onkeydown: e => {
+        if (!ctrlEnter(e)) return;
         e.preventDefault();
-        if (dirty()) save().catch(() => {});
-      }
-    };
-    const submit = el('button', 'primary', 'Submit review…');
-    box.append(head, mode, why, area, saved, error, submit);
-    box.sync = () => {
-      const r = box.res;
-      const t = tally(root, n, r);
-      const web = t.web([...t.lines, ...t.replies, ...t.conv]);
-      count.textContent = t.all ? `${plural(t.all, 'draft')}${web ? ` · ${web} from ${forgeWords(r).name}` : ''}` : 'no drafts yet';
-      const picked = verdict(root, n, r);
-      keepFocus(mode, () => mode.replaceChildren(...VERDICTS.map(([v, text]) => {
-        const b = el('button', null, text);
-        b.setAttribute('aria-pressed', v === picked);
-        b.disabled = !allowed(r, v);
-        if (b.disabled) b.dataset.tip = r.write.why;
-        b.onclick = () => setReview(root, n, { verdict: v });
-        return b;
-      })));
-      why.textContent = r.write.why || '';
-      why.hidden = !r.write.why;
-      // A new summary from the forge shows. Text of the box's own not saved yet stays after it, so
-      // Submit, which saves it first, cannot drop what was added in the Overview or on the website.
-      const forge = r.summary || '';
-      const mine = area.value;
-      if (forge !== known) {
-        if (mine.trim() === known.trim() || mine.trim() === forge.trim()) area.value = forge;
-        else if (known && mine.startsWith(known)) area.value = forge + mine.slice(known.length);
-        else if (forge.trim()) area.value = `${forge}\n\n${mine}`;
-      }
-      known = forge;
-      saved.hidden = !dirty();
-      submit.disabled = nothing(root, n, r) && !area.value.trim();
-      submit.title = submit.disabled ? 'Nothing to post yet' : '';
-    };
-    submit.onclick = async () => {
-      if (dirty()) {
-        try { await save(); } catch { return; }
-      }
-      openCheck(root, n, box.res);
-    };
-    parts.box = box;
-  }
-  box.res = res;
-  box.sync();
-  return box;
+        if (dirty(e.currentTarget)) saveSummary(p, e.currentTarget.value).catch(() => {});
+      },
+    }),
+    h('div', { class: 'saved', hidden: value.trim() === forge.trim() }, `Not saved · ${mac ? '⌘' : 'Ctrl'} Enter saves it`),
+    h('div', 'error', p.refused('summary')),
+    h('button', {
+      class: 'primary', disabled: off, title: off ? 'Nothing to post yet' : '',
+      onclick: e => {
+        const area = e.currentTarget.parentNode.querySelector('textarea');
+        if (!dirty(area)) return openCheck(p.root, p.n);
+        saveSummary(p, area.value).then(() => openCheck(p.root, p.n), () => {});
+      },
+    }, 'Submit review…'));
 }
 
 // summarySlot is your summary at the end of the Overview's conversation, as a draft.
-export function summarySlot(root, n, res) {
-  const parts = liveParts(root, n);
-  const slot = el('div', 'c mine summary');
-  slot.res = res;
-  slot.sync = () => {
-    const text = (slot.res.summary || '').trim();
-    slot.hidden = !text;
-    const who = el('div', 'who');
-    who.append(avatar(res.me || 'you'), el('b', null, res.me || 'you'), el('span', 'chip draft', 'Draft'), el('span', 'muted', '· sent with your review'));
-    const body = el('div', 'cbody', text);
-    slot.replaceChildren(who, body);
-  };
-  slot.sync();
-  parts.slot = slot;
-  return slot;
+export function summarySlot(p) {
+  const text = (p.res.summary || '').trim();
+  return h('div', { key: 'summary', class: 'c mine summary', hidden: !text },
+    h('div', 'who', avatar(p.res.me || 'you'), h('b', null, p.res.me || 'you'), h('span', 'chip draft', 'Draft'), h('span', 'muted', '· sent with your review')),
+    h('div', 'cbody', text));
 }
 
 // commentFoot is the box "Comment on the pull request…" under the conversation: its text goes into
 // the summary, since GitHub holds a comment not on a line only as the body of a review.
-export function commentFoot(root, n, res) {
-  const parts = liveParts(root, n);
-  if (parts.foot) {
-    parts.foot.res = res;
-    return parts.foot; // kept, so what is typed stays when the Overview draws again
-  }
-  const w = forgeWords(res);
-  const foot = el('div', 'foot');
-  parts.foot = foot;
-  foot.res = res;
-  foot.sync = () => {};
-  const input = el('input');
-  input.placeholder = `Comment on the ${w.kind}…`;
-  input.setAttribute('aria-label', `Comment on the ${w.kind}`);
-  const add = el('button', 'tool', 'Add to review');
-  add.dataset.tip = 'Add it to the summary of your review\nSent with Submit review';
-  const error = el('span', 'error');
-  const take = async () => {
-    const text = input.value.trim();
-    if (!text || add.disabled) return;
-    const summary = (foot.res.summary || '').trim();
-    add.disabled = true;
-    error.textContent = '';
-    try {
-      await saveSummary(root, n, foot.res.at, summary ? `${summary}\n\n${text}` : text);
-      if (input.value.trim() === text) input.value = '';
-      hooks.announce?.('Added to the summary of your review');
-    } catch (err) {
-      error.textContent = err.message;
-      hooks.announce?.(err.message);
-    } finally {
-      add.disabled = false;
-    }
+export function commentFoot(p) {
+  const w = forgeWords(p.res);
+  const take = input => {
+    const text = input.value.trim(), summary = (p.res.summary || '').trim();
+    if (!text || p.busy('foot')) return;
+    write(p.root, p.n, 'summary', 'foot', { body: summary ? `${summary}\n\n${text}` : text }, text)
+      .then(() => hooks.announce?.('Added to the summary of your review'), told);
   };
-  add.onclick = take;
-  input.onkeydown = e => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      take();
-    }
-  };
-  foot.append(avatar(res.me || 'you'), input, error, add);
-  return foot;
+  return h('div', { key: 'foot', class: 'foot' }, avatar(p.res.me || 'you'),
+    h('input', {
+      key: 'text', value: p.text('foot')?.text || '', placeholder: `Comment on the ${w.kind}…`, attrs: { 'aria-label': `Comment on the ${w.kind}` },
+      oninput: e => type(p.root, p.n, 'foot', e.currentTarget.value),
+      onkeydown: e => {
+        if (e.key !== 'Enter') return;
+        e.preventDefault();
+        take(e.currentTarget);
+      },
+    }),
+    h('span', 'error', p.refused('foot')),
+    h('button', {
+      class: 'tool', disabled: p.busy('foot'), data: { tip: 'Add it to the summary of your review\nSent with Submit review' },
+      onclick: e => take(e.currentTarget.parentNode.querySelector('input')),
+    }, 'Add to review'));
 }
 
 // ----- The check before anything is posted -----
 
-function checkRows(root, n, res) {
-  const w = forgeWords(res);
-  const t = tally(root, n, res);
+function checkRows(p) {
+  const res = p.res, w = forgeWords(res);
+  const t = tally(p);
   const rows = [];
-  const v = verdict(root, n, res);
-  const said = { comment: ['', 'Comment'], approve: ['ok', '✓ Approve'], changes: ['bad', '✗ Request changes'] }[v];
+  const said = { comment: ['', 'Comment'], approve: ['ok', '✓ Approve'], changes: ['bad', '✗ Request changes'] }[p.verdict];
   rows.push(['Verdict', el('span', `v verdict ${said[0]}`, said[1])]);
   const where = [];
   if (t.lines.length) where.push(t.lines.length === 1 ? '1 on a line' : `${t.lines.length} on lines`);
@@ -544,8 +314,9 @@ function checkRows(root, n, res) {
   });
 }
 
-function openCheck(root, n, res) {
-  if (document.querySelector('.confirm') || nothing(root, n, res)) return;
+function openCheck(root, n) {
+  const p = pull(root, n), res = p.res;
+  if (document.querySelector('.confirm') || nothing(p)) return;
   const w = forgeWords(res);
   const back = document.activeElement;
   const shade = el('div', 'backdrop');
@@ -553,11 +324,11 @@ function openCheck(root, n, res) {
   box.setAttribute('role', 'dialog');
   box.setAttribute('aria-modal', 'true');
   box.setAttribute('aria-labelledby', 'confirm-title');
-  const h = el('h2');
-  h.id = 'confirm-title';
-  h.append(forgeMark(res.forge?.kind || 'github'), `Post your review on ${w.num}${n}?`);
+  const title = el('h2');
+  title.id = 'confirm-title';
+  title.append(forgeMark(res.forge?.kind || 'github'), `Post your review on ${w.num}${n}?`);
   const list = el('ul');
-  list.append(...checkRows(root, n, res));
+  list.append(...checkRows(p));
   const error = el('p', 'error');
   error.hidden = true;
   const acts = el('div', 'acts');
@@ -565,7 +336,7 @@ function openCheck(root, n, res) {
   const cancel = el('button', 'tool', 'Cancel');
   const ok = el('button', 'primary', 'Post review');
   acts.append(note, cancel, ok);
-  box.append(h, el('p', 'sub', `${res.title} · ${res.author}`), list, error, acts);
+  box.append(title, el('p', 'sub', `${res.title} · ${res.author}`), list, error, acts);
   const close = () => {
     shade.remove();
     box.remove();
@@ -577,24 +348,20 @@ function openCheck(root, n, res) {
     error.hidden = true;
     note.textContent = 'Posting…';
     try {
-      await shown(root, n, res.at, 'pr/submit', { verdict: verdict(root, n, res) });
+      await submit(root, n);
     } catch (err) {
       error.textContent = err.message;
       error.hidden = false;
       note.textContent = `Everyone on the ${w.kind} sees it at once.`;
       ok.disabled = cancel.disabled = false;
-      hooks.announce?.(err.message);
-      read(root, n, true);
+      told(err);
       return;
     }
-    setReview(root, n, { verdict: 'comment' });
-    setReviewed(root, n, res);
     close();
     const said = `Posted your review on ${w.num}${n}`;
     hooks.say?.(said);
     hooks.announce?.(said);
     fetch('/api/count?name=review', { method: 'POST' }).catch(() => {}); // the local kijk counts, also for a remote folder
-    await read(root, n, true);
     hooks.reviewed?.(root, n);
   };
   ok.onclick = postIt;

@@ -2,7 +2,7 @@ import { el, get } from './api.js';
 import { isCurrent } from './view.js';
 import { boxView, showBoxes, noBoxes, goToBox, redraw, drawBox, marksChanged, oldLineOf, plural } from './boxes.js';
 import { pull, read, watch, mark, setSince } from './prstore.js';
-import { placeForge, threadCount, threadsChanged } from './threads.js';
+import { placeForge, threadCount } from './threads.js';
 import { lineEditor, moveEditor, threadOpts, writable } from './drafts.js';
 import { keyLabel } from './keys.js';
 
@@ -48,7 +48,6 @@ async function forgeRow(v, f, row) {
 
 function source(v) {
   const { root, n } = v;
-  const redrawFile = path => () => redraw(v, [path]);
   return {
     files: () => v.files || [],
     basis: () => `${v.res?.split} ${v.res?.at} ${v.from}`,
@@ -57,19 +56,19 @@ function source(v) {
     openFile: f => hooks.openFile?.(n, f.path),
     openTip: `Open the whole file\nat ${v.num}${n}`,
     decorate: (v2, b, rows) => {
-      const again = redrawFile(b.f.path);
+      const p = pull(root, n);
       let threads = threadsOn(v, b.f.path);
       if (v.from) {
         // The left side is the head of your last review: only threads on a shown line of the head now.
         const lines = new Set(rows.filter(r => r.k !== '-').map(r => r.n));
         threads = threads.filter(t => t.outdated || (!t.old && lines.has(t.line)));
       }
-      const placed = placeForge(`${n}:${b.f.path}`, rows, threads, { redraw: again, ...threadOpts(root, n, v.res, again) });
+      const placed = placeForge(`${n}:${b.f.path}`, rows, threads, { redraw: () => redraw(v, [b.f.path]), ...threadOpts(p) });
       const e = v.editor;
       if (e?.path === b.f.path) {
         moveEditor(e, rows, v.res.at);
-        if (e.row) placed.under.set(e.key, [...(placed.under.get(e.key) || []), e.el]);
-        else placed.top.push(e.el); // its line is gone: the text stays, at the top of the box
+        if (e.row) placed.under.set(e.key, [...(placed.under.get(e.key) || []), e.draw(p)]);
+        else placed.top.push(e.draw(p)); // its line is gone: the text stays, at the top of the box
       }
       return placed;
     },
@@ -105,12 +104,16 @@ export async function openChanges(viewer, root, tab, keep, save) {
 watch(root => {
   const v = view, p = v && isCurrent(v) && v.root === root && pull(root, v.n);
   if (!p?.res) return;
-  if (p.res !== v.res || p.since?.answer !== v.answer || shownKey(p) !== v.shownKey) show(v);
-  else if (p.marks.seq !== v.marks.seq) {
+  if (p.res !== v.res || p.since?.answer !== v.answer || shownKey(p) !== v.shownKey) return show(v);
+  if (p.marks.seq !== v.marks.seq) {
     v.marks = p.marks;
     marksChanged(v);
   }
+  redraw(v, drawn(v)); // what is busy, refused or typed
 });
+
+// drawn are the boxes drawn from the diff they show now; one on its way to a new diff draws with it.
+const drawn = v => [...v.boxes.values()].filter(b => b.loaded && !b.loading && b.basis === v.src.basis()).map(b => b.f.path);
 
 const shownKey = p => [p.from, p.since?.on, (p.files || []).map(f => f.path + f.blobs).join()].join('\n');
 
@@ -138,7 +141,7 @@ async function show(v) {
   await showBoxes(v);
   if (moved && v.scroll && isCurrent(v)) v.scroll.scrollTop = 0;
   // A new thread or draft leaves the diff as it was, so its box would not draw again by itself.
-  if (before && isCurrent(v)) redraw(v, threadsChanged(before, res, v.files.map(f => f.path)));
+  if (before && isCurrent(v)) redraw(v, drawn(v));
 }
 
 // sinceBar is the bar at the top of Changes in Since your review.
@@ -155,7 +158,7 @@ function openEditor(v, path, l) {
   closeEditor(v);
   const f = prFile(v, { path });
   if (!f) return;
-  v.editor = lineEditor(v.root, v.n, v.res, f, l, () => closeEditor(v, true), row => (v.from ? forgeRow(v, f, row) : null));
+  v.editor = lineEditor(pull(v.root, v.n), f, l, () => closeEditor(v, true), row => (v.from ? forgeRow(v, f, row) : null));
   v.editor.path = path;
   const b = v.boxes.get(path);
   if (b?.loaded) drawBox(v, b);

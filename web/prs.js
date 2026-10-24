@@ -1,4 +1,4 @@
-import { el, svg, keepFocus } from './api.js';
+import { el, svg, keepFocus, patch } from './api.js';
 import { lineCount, fileRow } from './git.js';
 import { forgeMark, forgeWords, prChips } from './pr.js';
 import { onKey, keyLabel } from './keys.js';
@@ -459,10 +459,19 @@ function sinceParts(p, pick) {
   return s.on && a?.note ? [wrap, el('p', 'since-note', a.note)] : [wrap];
 }
 
-// The review box is a kept element that the draw moves, so keepFocus wraps all of it.
+// The review box draws in place in its own element, which the draw does not move, so typing in it
+// goes on; keepFocus keeps the focus in the rest.
+const reviewEl = el('div');
+reviewEl.style.display = 'contents';
+
 function drawPR(n, mine) {
-  const top = prEl.querySelector('.prs-scroll')?.scrollTop;
-  keepFocus(prEl, () => prEl.replaceChildren(...prParts(n, mine)));
+  const top = prEl.querySelector('.prs-scroll')?.scrollTop, p = pull(folder, n);
+  patch(reviewEl, p.res && reviewBox(p));
+  keepFocus(prEl, () => {
+    for (const c of [...prEl.childNodes]) if (c !== reviewEl) c.remove();
+    prEl.prepend(...prParts(n, mine));
+    if (!reviewEl.isConnected) prEl.append(reviewEl);
+  });
   if (top) prEl.querySelector('.prs-scroll').scrollTop = top;
 }
 
@@ -525,8 +534,6 @@ function prParts(n, mine) {
   wrap.append(h, ul);
   if (!res && !why) wrap.append(el('p', 'note', `Fetching ${words().num}${n}…`));
   parts.push(wrap);
-  const box = res && reviewBox(folder, n, res);
-  if (box) parts.push(box);
   return parts;
 }
 
