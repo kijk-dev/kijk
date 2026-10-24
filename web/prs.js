@@ -3,7 +3,7 @@ import { lineCount, fileRow } from './git.js';
 import { forgeMark, forgeWords, prChips } from './pr.js';
 import { onKey, keyLabel } from './keys.js';
 import { pull, read, line, own, list, askList, watch, redraw, mark, setSince, rowCounts } from './prstore.js';
-import { iconButton, plural, markCurrent } from './boxes.js';
+import { plural, markCurrent } from './boxes.js';
 import { avatar, threadCount, age } from './threads.js';
 import { goToChange, setupChanges } from './changes.js';
 import { setupOverview } from './overview.js';
@@ -352,12 +352,14 @@ function drawList() {
 }
 
 function backButton() {
-  const b = iconButton(ICON.back, `Back to ${words().short}s`, () => {
+  const b = svg(ICON.back, 'icon-btn back', 'button');
+  b.setAttribute('aria-label', `Back to ${words().short}s`);
+  b.dataset.tip = `Back to ${words().short}s\n${keyLabel('prsBack')}`;
+  b.onclick = e => {
+    e.stopPropagation();
     open('list');
     focusPrs();
-  });
-  b.classList.add('back');
-  b.dataset.tip = `Back to ${words().short}s\n${keyLabel('prsBack')}`;
+  };
   return b;
 }
 

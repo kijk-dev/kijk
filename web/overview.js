@@ -1,4 +1,4 @@
-import { el, get, svg, keepFocus } from './api.js';
+import { el, get, svg, patch, keepFocus } from './api.js';
 import { setView, isCurrent } from './view.js';
 import { pull, read, watch } from './prstore.js';
 import { avatar, comment, age } from './threads.js';
@@ -126,8 +126,7 @@ function content(v, res) {
   if (res.comments.length || write) {
     const box = el('div', 'thr conv');
     const drafts = threadOpts(v.root, res.number, res, () => isCurrent(v) && draw(v, v.res)).drafts;
-    box.append(...res.comments.map(c => comment(c, drafts)));
-    if (write) box.append(summarySlot(v.root, res.number, res), commentFoot(v.root, res.number, res));
+    patch(box, res.comments.map(c => comment(c, drafts)), write && [summarySlot(v.root, res.number, res), commentFoot(v.root, res.number, res)]);
     parts.push(box);
   }
   return parts;

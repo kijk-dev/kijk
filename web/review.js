@@ -1,4 +1,4 @@
-import { el, get, storeKey, keepFocus } from './api.js';
+import { el, h, patch, get, storeKey, keepFocus } from './api.js';
 import { isCurrent } from './view.js';
 import { lineCount, ago, fileRow } from './git.js';
 import { forgeMark, forgeWords, ownPR } from './pr.js';
@@ -337,8 +337,7 @@ function notesBox() {
     const ul = el('ul', 'gone');
     for (const n of gone) {
       const li = el('li');
-      li.append(el('span', 'where', `${n.path}:${n.line} · file no longer changed`), el('span', 'body', n.body));
-      li.append(iconButton(ICON.trash, 'Delete', () => {
+      patch(li, h('span', 'where', `${n.path}:${n.line} · file no longer changed`), h('span', 'body', n.body), iconButton(ICON.trash, 'Delete', () => {
         notes = notes.filter(x => x !== n);
         notesChanged([n.path]);
       }));
@@ -606,29 +605,16 @@ async function placeAll() {
 
 function noteEl(v, n) {
   if (v.editor?.id === n.id) return v.editor.el;
-  const box = el('div', `thr note${n.copiedAt ? ' copied' : ''}`);
-  box.dataset.id = n.id;
-  const c = el('div', 'c');
-  const who = el('div', 'who');
-  who.append(agentMark(), el('b', null, 'Agent note'), el('span', 'muted', ago(n.at)));
-  if (n.copiedAt) who.append(el('span', 'chip', 'Copied'));
-  if (n.outdated) who.append(el('span', 'chip', 'Outdated'));
-  if (!n.copiedAt && !n.outdated) who.append(el('span', 'muted', '· only in kijk'));
-  const end = el('span', 'end');
-  end.append(
-    iconButton(ICON.edit, 'Edit', () => openEditor(v, n.path, n.line, n.text, n)),
-    iconButton(ICON.trash, 'Delete', () => {
-      notes = notes.filter(x => x !== n);
-      notesChanged([n.path]);
-      page.announce('Note deleted');
-    }),
-  );
-  who.append(end);
-  c.append(who);
-  if (n.outdated) c.append(el('span', 'was', n.text));
-  c.append(el('p', null, n.body));
-  box.append(c);
-  return box;
+  const del = () => {
+    notes = notes.filter(x => x !== n);
+    notesChanged([n.path]);
+    page.announce('Note deleted');
+  };
+  return h('div', { key: `note:${n.id}`, class: `thr note${n.copiedAt ? ' copied' : ''}`, data: { id: n.id } }, h('div', 'c',
+    h('div', 'who', agentMark(), h('b', null, 'Agent note'), h('span', 'muted', ago(n.at)), !!n.copiedAt && h('span', 'chip', 'Copied'),
+      !!n.outdated && h('span', 'chip', 'Outdated'), !n.copiedAt && !n.outdated && h('span', 'muted', '· only in kijk'),
+      h('span', 'end', iconButton(ICON.edit, 'Edit', () => openEditor(v, n.path, n.line, n.text, n)), iconButton(ICON.trash, 'Delete', del))),
+    !!n.outdated && h('span', 'was', n.text), h('p', null, n.body)));
 }
 
 function agentMark() {
