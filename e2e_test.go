@@ -345,6 +345,21 @@ func TestBrowser(t *testing.T) {
 		b.key("Escape", kb.Escape)
 		b.waitFor("the editor closed", `!document.querySelector('.thr.editing')`)
 
+		// A note not added comes back on its line, also after another tab showed.
+		b.click("a line of redirect.go", redirect+`.querySelector('.tx')`)
+		b.press("addNote")
+		b.waitFor("the note back", `document.activeElement?.matches('.thr.editing textarea') && document.activeElement.value === 'Half a note'`)
+		b.typeText(" more")
+		b.click("Overview", prsRow("Overview"))
+		b.waitFor("the Overview", `document.querySelector('.md.ov')`)
+		b.click("redirect.go in the list", prsRow("redirect.go"))
+		b.waitFor("Branch changes again", redirect)
+		b.click("a line of redirect.go", redirect+`.querySelector('.tx')`)
+		b.press("addNote")
+		b.waitFor("all of the note back", `document.activeElement?.matches('.thr.editing textarea') && document.activeElement.value === 'Half a note more'`)
+		b.key("Escape", kb.Escape)
+		b.waitFor("the editor closed", `!document.querySelector('.thr.editing')`)
+
 		// Lines added above a note: it stays under its line, also when its box is not on screen.
 		redirectGo := filepath.Join(repo, "internal", "auth", "redirect.go")
 		src, err := os.ReadFile(redirectGo)
@@ -841,6 +856,15 @@ func TestBrowser(t *testing.T) {
 		b.hover("the line again", half)
 		b.click("+", half+`.querySelector('.addc')`)
 		b.waitFor("the text back", `document.activeElement?.matches('.thr.editing textarea') && document.activeElement.value === 'Half a thought'`)
+		// What is typed stays also when another tab shows.
+		b.typeText(" More.")
+		b.click("Overview", prsRow("Overview"))
+		b.waitFor("the Overview", `document.querySelector('.md.ov')`)
+		b.click("retry.go in the list", prsRow("retry.go"))
+		b.waitFor("the Changes again", half)
+		b.hover("the line again", half)
+		b.click("+", half+`.querySelector('.addc')`)
+		b.waitFor("all of the text back", `document.activeElement?.matches('.thr.editing textarea') && document.activeElement.value === 'Half a thought More.'`)
 		b.key("Escape", kb.Escape)
 		shots(b, "prs-drafts")
 
@@ -957,6 +981,9 @@ func TestBrowser(t *testing.T) {
 		b.click("+", other+`.querySelector('.addc')`)
 		b.waitFor("the editor", `document.activeElement?.matches('.thr.editing textarea')`)
 		b.typeText("Wrap it.")
+		b.key("Escape", kb.Escape)
+		b.click("+", other+`.querySelector('.addc')`)
+		b.waitFor("the text back", `document.activeElement?.matches('.thr.editing textarea') && document.activeElement.value === 'Wrap it.'`)
 		before := len(forge.calls())
 		b.press("submitNote")
 		b.waitFor("the reason, on the line's new place", `(e => e && e.querySelector('.error')?.textContent === '#477 has new commits. kijk shows them now; add your comment there.' && e.querySelector('textarea').value === 'Wrap it.' && `+
@@ -972,6 +999,12 @@ func TestBrowser(t *testing.T) {
 			t.Fatalf("the new review is not on the new head:\n%s", calls)
 		}
 		b.waitFor("the editor closed", `!document.querySelector('.thr.editing')`)
+		// The comment is sent: its old line offers its text no more.
+		was := boxRow(retry, "\t// Every attempt failed.")
+		b.hover("the line it was on", was)
+		b.click("+", was+`.querySelector('.addc')`)
+		b.waitFor("an empty editor", `document.activeElement?.matches('.thr.editing textarea') && document.activeElement.value === ''`)
+		b.key("Escape", kb.Escape)
 
 		// kijk cannot fetch a newer head: it shows the head it has and says why.
 		run(t, origin, "update-ref", "-d", "refs/pull/477/head")
