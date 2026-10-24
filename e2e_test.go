@@ -1104,6 +1104,8 @@ func TestBrowser(t *testing.T) {
 			b.press("prsTab")
 			b.click("!12", prRow(12))
 			b.waitFor("!12", `document.querySelector('#prs-pr .pr-num')?.textContent === '!12' && document.querySelectorAll('#viewer .fbox').length >= 3`)
+			b.waitFor("the Changes named with !", `document.querySelector('#viewer .allfiles').getAttribute('aria-label') === 'Changes of !12' && `+
+				fileBox("README.md")+`.querySelector('[aria-label="Open the whole file"]').dataset.tip === 'Open the whole file\nat !12'`)
 			return b
 		}
 
