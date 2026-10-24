@@ -612,7 +612,7 @@ type gitlabDraft struct {
 	ID           int    `json:"id"`
 	Note         string `json:"note"`
 	DiscussionID string `json:"discussion_id"`
-	Position     *struct {
+	Position     struct {
 		OldPath string `json:"old_path"`
 		NewPath string `json:"new_path"`
 		OldLine int    `json:"old_line"`
@@ -624,7 +624,7 @@ type gitlabDraft struct {
 // general is a draft not on a line, not on a file and not a reply.
 func (d gitlabDraft) general() bool {
 	p := d.Position
-	return d.DiscussionID == "" && (p == nil || p.NewLine == 0 && p.OldLine == 0 && p.NewPath == "" && p.OldPath == "")
+	return d.DiscussionID == "" && p.NewLine == 0 && p.OldLine == 0 && p.NewPath == "" && p.OldPath == ""
 }
 
 // summaryDraft is the id of the summary of your review: your oldest general draft; 0 for none.
@@ -655,24 +655,34 @@ func addGitlabDrafts(pr *PR, ds []gitlabDraft) {
 			}
 			continue
 		}
-		p := d.Position
 		if d.ID == summary {
 			pr.Drafts--
 			pr.Summary = c.Body
 			continue
 		}
-		if p == nil || p.NewLine == 0 && p.OldLine == 0 {
-			pr.Comments = append(pr.Comments, c) // also a comment on a whole file, which has no line to show under
+		p := d.Position
+		th, ok := gitlabThread(p.NewPath, p.OldPath, p.NewLine, p.OldLine, p.HeadSha, pr.HeadOid)
+		if !ok {
+			pr.Comments = append(pr.Comments, c)
 			continue
 		}
-		th := Thread{ID: "draft-" + c.ID, Path: cmp.Or(p.NewPath, p.OldPath), Line: p.NewLine, Draft: true, Comments: []Comment{c}}
-		if p.NewLine == 0 {
-			th.Path, th.Line, th.Old = cmp.Or(p.OldPath, p.NewPath), p.OldLine, true
-		}
-		th.OrigLine = th.Line
-		th.Outdated = p.HeadSha != "" && p.HeadSha != pr.HeadOid
+		th.ID, th.Draft, th.Comments = "draft-"+c.ID, true, []Comment{c}
 		pr.Threads = append(pr.Threads, th)
 	}
+}
+
+// gitlabThread places a note on its new line, else on the old line of a removed row; a note on a
+// whole file has no line (false). A note written on another head is outdated, as GitLab has no flag.
+func gitlabThread(newPath, oldPath string, newLine, oldLine int, noteHead, head string) (Thread, bool) {
+	if newLine == 0 && oldLine == 0 {
+		return Thread{}, false
+	}
+	t := Thread{Path: cmp.Or(newPath, oldPath), Line: newLine, Outdated: noteHead != "" && noteHead != head}
+	if newLine == 0 {
+		t.Path, t.Line, t.Old = cmp.Or(oldPath, newPath), oldLine, true
+	}
+	t.OrigLine = t.Line
+	return t, true
 }
 
 // gitlabDrafts are your draft notes on merge request n.
@@ -949,7 +959,7 @@ func parseGitlabPR(data []byte, pr *PR) error {
 								Position  *struct {
 									FilePath, NewPath, OldPath string
 									NewLine, OldLine           int
-									DiffRefs                   *struct{ HeadSha string }
+									DiffRefs                   struct{ HeadSha string }
 								}
 							}
 						}
@@ -1018,17 +1028,11 @@ func parseGitlabPR(data []byte, pr *PR) error {
 			if n.Author != nil {
 				c.Author = n.Author.Username
 			}
-			if th == nil && n.Position != nil {
-				p := n.Position
-				th = &Thread{ID: d.ID, Path: cmp.Or(p.NewPath, p.FilePath), Line: p.NewLine, Resolved: d.Resolved, Comments: []Comment{},
-					CanReply: true, CanResolve: d.Resolvable && !d.Resolved, CanUnresolve: d.Resolvable && d.Resolved}
-				if p.NewLine == 0 {
-					th.Path, th.Line, th.Old = cmp.Or(p.OldPath, p.FilePath), p.OldLine, true
-				}
-				th.OrigLine = th.Line
-				// GitLab has no outdated flag: a note written on another head may sit on lines that changed.
-				if p.DiffRefs != nil && p.DiffRefs.HeadSha != pr.HeadOid {
-					th.Outdated = true
+			if p := n.Position; th == nil && p != nil {
+				if t, ok := gitlabThread(cmp.Or(p.NewPath, p.FilePath), cmp.Or(p.OldPath, p.FilePath), p.NewLine, p.OldLine, p.DiffRefs.HeadSha, pr.HeadOid); ok {
+					t.ID, t.Resolved, t.Comments = d.ID, d.Resolved, []Comment{}
+					t.CanReply, t.CanResolve, t.CanUnresolve = true, d.Resolvable && !d.Resolved, d.Resolvable && d.Resolved
+					th = &t
 				}
 			}
 			if th != nil {
