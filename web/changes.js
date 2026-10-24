@@ -1,10 +1,11 @@
 import { el, get } from './api.js';
 import { isCurrent } from './view.js';
-import { boxView, showBoxes, noBoxes, goToBox, redraw, drawBox } from './boxes.js';
+import { boxView, showBoxes, noBoxes, goToBox, redraw, drawBox, marksChanged } from './boxes.js';
 import { cachedView, loadView, onView } from './prdata.js';
 import { placeForge, threadCount } from './threads.js';
 import { lineEditor, moveEditor, threadOpts, writable } from './drafts.js';
 import { keyLabel } from './keys.js';
+import { marksOf, setViewed, onViewed } from './viewed.js';
 
 // The Changes tab of a pull request: its forge diff in file boxes, with its threads under their
 // lines, and a + on each line that starts a comment for your review.
@@ -54,6 +55,9 @@ function source(v) {
     addTip: `Comment on this line\n${keyLabel('addNote')}`,
     onTop: path => hooks.onTop?.(n, path),
     marked: f => threadsOn(v, f.path).length > 0,
+    viewed: f => v.marks?.state(f) || '',
+    viewedAt: f => v.marks?.at(f) || 0,
+    setViewed: (f, on) => setViewed(root, n, v.res, f, on),
   };
 }
 
@@ -79,9 +83,16 @@ onView((root, n, res) => {
   if (view && isCurrent(view) && view.root === root && view.n === n) show(view, res);
 });
 
+onViewed((root, n) => {
+  if (!view || !isCurrent(view) || (root && (view.root !== root || view.n !== n))) return;
+  view.marks = marksOf(view.root, view.n, view.res);
+  marksChanged(view);
+});
+
 async function show(v, res) {
   const before = v.res;
   v.res = res;
+  v.marks = marksOf(v.root, v.n, res);
   v.src.onAdd = writable(res) ? (v2, path, l) => openEditor(v, path, l) : null;
   // GitHub takes a comment only on a line of its own diff, which shows 3 lines around a change.
   v.src.addNear = res.forge?.kind === 'github' ? 3 : 0;

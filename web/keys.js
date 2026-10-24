@@ -23,6 +23,7 @@ const KEYS = {
   prevNote: { mac: ['Alt+ArrowUp'], other: ['Alt+ArrowUp'] },
   refreshPrs: { mac: ['Meta+Alt+Y'], other: ['Ctrl+Alt+Y'] }, // IntelliJ's Synchronize
   prsBack: { mac: ['Alt+ArrowLeft'], other: ['Alt+ArrowLeft'] },
+  markViewed: { mac: ['V'], other: ['V'] },
   commit: { mac: ['Meta+K'], other: ['Ctrl+K'] },
   push: { mac: ['Meta+Shift+K'], other: ['Ctrl+Shift+K'] },
   closeTab: { mac: ['Meta+W'], other: ['Ctrl+F4'], fallback: { mac: 'Alt+W', other: 'Alt+W' } },

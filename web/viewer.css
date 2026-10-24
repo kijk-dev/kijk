@@ -571,6 +571,10 @@ button.pill:hover { background: color-mix(in srgb, var(--modified) 22%, var(--se
 .prfiles .item.ov { gap: 7px; }
 .prfiles .item.ov svg { width: 13px; height: 13px; color: var(--muted); flex: none; }
 .prfiles .item.ov .dir { margin-left: auto; }
+.prfiles .item .viewedbox { flex: none; margin: 0 0 0 4px; accent-color: var(--modified); cursor: pointer; }
+.prfiles .item.viewed .name { color: var(--muted); }
+.prfiles .item .again { flex: none; font-size: 11px; font-style: italic; color: var(--modified); }
+.viewedcount { margin-left: auto; font-weight: 400; text-transform: none; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
 
 /* The agent notes box at the bottom of the tab. */
 .reviewbox { flex: none; display: flex; flex-direction: column; gap: 6px; padding: 8px 12px; border-top: 1px solid var(--border); }
@@ -644,6 +648,10 @@ button.pill:hover { background: color-mix(in srgb, var(--modified) 22%, var(--se
 .fhead .lc { margin-left: 0; padding-left: 0; font-size: 11.5px; }
 .fhead .np svg { width: 13px; height: 13px; }
 .fhead .grow { flex: 1; }
+/* A viewed file folds and its name turns muted; one that changed since says so. */
+.fhead .check { color: var(--text); }
+.fhead .again { font-size: 11.5px; font-style: italic; color: var(--modified); }
+.fbox.viewed .fpath b { font-weight: 400; color: var(--muted); }
 .fnote { display: flex; align-items: center; gap: 4px; padding: 4px 12px; border-top: 1px solid var(--border); background: var(--sep-bg); font-size: 12px; color: var(--muted); }
 .fnote .more { font: inherit; padding: 0; position: static; }
 .fbody { overflow-x: auto; container-type: inline-size; font: var(--code-size)/18px var(--code-font); padding: 0 0 6px; }
