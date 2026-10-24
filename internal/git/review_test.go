@@ -83,6 +83,23 @@ func TestGithubComment(t *testing.T) {
 	}
 }
 
+// Windows caps a command line at 32,767 characters, and a comment may hold 64 KiB: its text goes to
+// gh on stdin.
+func TestGithubLongComment(t *testing.T) {
+	repo := forgeRepo(t, "git@github.com:acme/shop.git")
+	calls := gittest.FakeToolCalls(t, "gh",
+		gittest.Rule{Has: "addPullRequestReviewThread(input", Out: `{"data":{"addPullRequestReviewThread":{"thread":{"id":"T9","comments":{"nodes":[{"id":"C9"}]}}}}}`},
+		ghTarget("aaa", "PRR_9"))
+	body := strings.Repeat("x", 64<<10)
+	if _, err := AddComment(repo, 7, "aaa", NewComment{Path: "retry.go", Line: 36, Body: body}); err != nil {
+		t.Fatal(err)
+	}
+	c := calls()[1]
+	if n := len(strings.Join(c.Args, " ")); n > 1000 || !strings.Contains(c.Stdin, body) {
+		t.Fatalf("command line of %d characters, stdin of %d", n, len(c.Stdin))
+	}
+}
+
 func TestGithubReply(t *testing.T) {
 	repo := forgeRepo(t, "git@github.com:acme/shop.git")
 	calls := gittest.FakeToolCalls(t, "gh",
