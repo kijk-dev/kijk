@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kijk-dev/kijk/internal/git"
 	"github.com/kijk-dev/kijk/internal/gittest"
 )
 
@@ -79,7 +80,7 @@ func TestReviewRoutes(t *testing.T) {
 	if w := post("/api/pr/comment", comment); w.Code != 200 || w.Body.String() != "{\"id\":\"C9\"}\n" {
 		t.Fatalf("comment %d %s", w.Code, w.Body.String())
 	}
-	if last := calls()[len(calls())-1]; !strings.Contains(strings.Join(last.Args, " "), "-f path=retry.go -f review=PRR_9 -f side=RIGHT") {
+	if last := calls()[len(calls())-1]; !strings.Contains(strings.Join(last.Args, " "), "-f body=Why 3? -F line=4 -f path=retry.go -f review=PRR_9 -f side=RIGHT") {
 		t.Fatalf("call %q", last.Args)
 	}
 	for _, c := range []struct {
@@ -122,6 +123,48 @@ func TestReviewRoutes(t *testing.T) {
 		if w := post(c.route, c.body); w.Code != c.code {
 			t.Errorf("%s %.60s: %d %s, want %d", c.route, c.body, w.Code, w.Body.String(), c.code)
 		}
+	}
+}
+
+// A page shows the head it loaded. When another page loaded a newer one, a write from the first
+// page would land on lines it never showed, so it is refused before any call.
+func TestReviewWriteOldHead(t *testing.T) {
+	clone, head, base := prRepo(t)
+	js := func(v any) string { b, _ := json.Marshal(v); return string(b) }
+	thread := gittest.Rule{Has: "addPullRequestReviewThread(input", Out: `{"data":{"addPullRequestReviewThread":{"thread":{"id":"T9","comments":{"nodes":[{"id":"C9"}]}}}}}`}
+	gittest.FakeToolCalls(t, "gh", gittest.Rule{Has: "pullRequest(number", Out: prAnswer("OPEN", head, base)})
+	get, post := reviewServer(t, clone)
+	if w := get("/api/pr/view", url.Values{"n": {"7"}}); w.Code != 200 {
+		t.Fatalf("view %d %s", w.Code, w.Body.String())
+	}
+
+	newer, err := git.Run(clone, "commit-tree", head+"^{tree}", "-p", head, "-m", "More")
+	if err != nil {
+		t.Fatal(err)
+	}
+	gittest.Run(t, clone, "push", "-q", "origin", newer+":refs/pull/7/head")
+	calls := gittest.FakeToolCalls(t, "gh", thread, ghTarget(newer), gittest.Rule{Has: "pullRequest(number", Out: prAnswer("OPEN", newer, base)})
+	if w := get("/api/pr/view", url.Values{"n": {"7"}}); w.Code != 200 || !strings.Contains(w.Body.String(), `"at":"`+newer+`"`) {
+		t.Fatalf("second view %d %s", w.Code, w.Body.String())
+	}
+
+	n := len(calls())
+	for _, c := range []struct{ route, body string }{
+		{"/api/pr/comment", js(map[string]any{"root": clone, "n": 7, "at": head, "path": "retry.go", "line": 4, "body": "Why 3?"})},
+		{"/api/pr/comment", js(map[string]any{"root": clone, "n": 7, "at": head, "thread": "T1", "body": "Agreed."})},
+		{"/api/pr/summary", js(map[string]any{"root": clone, "n": 7, "at": head, "body": "Fine."})},
+		{"/api/pr/submit", js(map[string]any{"root": clone, "n": 7, "at": head, "verdict": "approve"})},
+	} {
+		if w := post(c.route, c.body); w.Code != http.StatusConflict || strings.TrimSpace(w.Body.String()) != "#7 has new commits. kijk shows them now; add your comment there." {
+			t.Errorf("%s %.80s: %d %s", c.route, c.body, w.Code, w.Body.String())
+		}
+	}
+	if len(calls()) != n {
+		t.Fatalf("kijk called the forge for a head it did not show: %q", calls()[n:])
+	}
+	// The page with the newer head writes on it.
+	if w := post("/api/pr/comment", js(map[string]any{"root": clone, "n": 7, "at": newer, "path": "retry.go", "line": 4, "body": "Why 3?"})); w.Code != 200 {
+		t.Fatalf("comment on the newer head: %d %s", w.Code, w.Body.String())
 	}
 }
 
