@@ -101,6 +101,8 @@ async function build(v) {
   scroll.addEventListener('scroll', () => {
     cancelAnimationFrame(frame);
     frame = requestAnimationFrame(() => {
+      if (scroll.scrollTop === v.placed) return;
+      v.placed = null;
       const a = anchor(v);
       if (a) v.src.onTop?.(a.b.f.path);
     });
@@ -547,9 +549,14 @@ function currentBox(v) {
   return anchor(v)?.b;
 }
 
-// goToBox scrolls to a file's box.
+// goToBox scrolls to a file's box. Near the end the view can stop short of it, with another file at
+// the top: the box's file stays the one at the top until the view moves.
 export function goToBox(v, path, focus) {
   const b = v.boxes.get(path);
-  if (b) v.scroll.scrollTop = b.el.offsetTop - 12;
+  if (b) {
+    v.scroll.scrollTop = b.el.offsetTop - 12;
+    v.placed = v.scroll.scrollTop;
+    v.src.onTop?.(path);
+  }
   if (focus) v.scroll.focus({ preventScroll: true });
 }
