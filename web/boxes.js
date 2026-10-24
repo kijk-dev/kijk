@@ -197,7 +197,6 @@ const startsOpen = b => b.state === 'changed' || !(b.state === 'viewed' || heavy
 // keptOpen is the user's own fold or open of a box, while its viewed mark is as it was then.
 function keptOpen(v, b) {
   const k = v.tab.folds?.[b.f.path];
-  if (typeof k === 'boolean') return b.state ? undefined : k;
   return k?.state === b.state && (k.at || 0) === b.at ? k.open : undefined;
 }
 
@@ -246,7 +245,7 @@ export function marksChanged(v) {
 
 function fold(v, b, open) {
   b.open = open;
-  v.tab.folds = { ...v.tab.folds, [b.f.path]: v.src.viewed ? { open, state: b.state, at: b.at } : open };
+  v.tab.folds = { ...v.tab.folds, [b.f.path]: { open, state: b.state, at: b.at } };
   v.save();
   drawHead(v, b);
   showOpen(v, b);
