@@ -154,15 +154,11 @@ func gitlabSummary(f *forge, n int, body string) error {
 	if _, err := gitlabCanWrite(f); err != nil {
 		return err
 	}
-	mr := gitlabMR(f, n)
-	out, err := gitlabREST(f, "GET", mr+"/draft_notes", nil)
+	ds, err := gitlabDrafts(f, n)
 	if err != nil {
 		return err
 	}
-	var ds []gitlabDraft
-	if err := json.Unmarshal(out, &ds); err != nil {
-		return err
-	}
+	mr := gitlabMR(f, n)
 	id := summaryDraft(ds)
 	switch {
 	case id != 0 && body == "":
@@ -185,15 +181,11 @@ func gitlabSubmit(f *forge, n int, head, verdict string) error {
 	if verdict == "changes" && !w.Changes {
 		return sayErr(w.Why)
 	}
-	mr := gitlabMR(f, n)
-	out, err := gitlabREST(f, "GET", mr+"/draft_notes", nil)
+	drafts, err := gitlabDrafts(f, n)
 	if err != nil {
 		return err
 	}
-	var drafts []struct{}
-	if err := json.Unmarshal(out, &drafts); err != nil {
-		return err
-	}
+	mr := gitlabMR(f, n)
 	if len(drafts) > 0 {
 		if _, err := gitlabREST(f, "POST", mr+"/draft_notes/bulk_publish", nil); err != nil {
 			return err

@@ -262,9 +262,11 @@ func TestGitlabDrafts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := addGitlabDrafts(&pr, b); err != nil {
+	var ds []gitlabDraft
+	if err := json.Unmarshal(b, &ds); err != nil {
 		t.Fatal(err)
 	}
+	addGitlabDrafts(&pr, ds)
 	want := `gid://gitlab/Discussion/a retry.go:27 old=false orig=27 resolved=false outdated=false was="" [reply resolve] [tim: Should a 429 count? | sanne: Yes. | draft 51 you: Cap it at MaxDelay.]
 gid://gitlab/Discussion/b retry.go:40 old=false orig=40 resolved=false outdated=true was="" [reply resolve] [tim: Name this delay.]
 gid://gitlab/Discussion/c legacy.go:3 old=true orig=3 resolved=true outdated=false was="" [reply unresolve] [tim: Was anyone calling this?]
@@ -282,9 +284,11 @@ draft-54 legacy.go:3 old=true orig=3 resolved=false outdated=true was="" [draft]
 	}
 	// A comment on a whole file is no summary, even when it is the oldest draft not on a line.
 	var file PR
-	if err := addGitlabDrafts(&file, []byte(`[{"id":53,"note":"Fine.","position":null},{"id":40,"note":"About a.go","position":{"position_type":"file","new_path":"a.go"}}]`)); err != nil {
+	var ds2 []gitlabDraft
+	if err := json.Unmarshal([]byte(`[{"id":53,"note":"Fine.","position":null},{"id":40,"note":"About a.go","position":{"position_type":"file","new_path":"a.go"}}]`), &ds2); err != nil {
 		t.Fatal(err)
 	}
+	addGitlabDrafts(&file, ds2)
 	if file.Summary != "Fine." {
 		t.Errorf("summary %q", file.Summary)
 	}

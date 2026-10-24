@@ -537,10 +537,10 @@ func ViewPR(root string, n int) (*PR, *forge, error) {
 		pr.Write = gitlabWrite(gitlabVersion(f.Host))
 		if pr.Write.OK {
 			// Submit publishes every draft, so kijk writes only when it can show them all.
-			if out, err := runTool("glab", "api", "--hostname", f.Host, gitlabMR(f, n)+"/draft_notes"); err != nil {
+			if ds, err := gitlabDrafts(f, n); err != nil {
 				pr.Write = Write{Note: "Cannot read your drafts: " + toolNote(tool, err)}
-			} else if err := addGitlabDrafts(&pr, out); err != nil {
-				pr.Write = Write{Note: "Cannot read your drafts: " + err.Error()}
+			} else {
+				addGitlabDrafts(&pr, ds)
 			}
 		}
 	}
@@ -640,11 +640,7 @@ func summaryDraft(ds []gitlabDraft) int {
 
 // addGitlabDrafts adds your draft notes: a reply goes into its thread, a draft on a line is a new
 // comment, any other is part of the conversation.
-func addGitlabDrafts(pr *PR, out []byte) error {
-	var ds []gitlabDraft
-	if err := json.Unmarshal(out, &ds); err != nil {
-		return err
-	}
+func addGitlabDrafts(pr *PR, ds []gitlabDraft) {
 	summary := summaryDraft(ds)
 	for _, d := range ds {
 		c := Comment{ID: strconv.Itoa(d.ID), Author: pr.Me, Body: d.Note, Draft: true}
@@ -677,7 +673,16 @@ func addGitlabDrafts(pr *PR, out []byte) error {
 		th.Outdated = p.HeadSha != "" && p.HeadSha != pr.HeadOid
 		pr.Threads = append(pr.Threads, th)
 	}
-	return nil
+}
+
+// gitlabDrafts are your draft notes on merge request n.
+func gitlabDrafts(f *forge, n int) ([]gitlabDraft, error) {
+	out, err := gitlabREST(f, "GET", gitlabMR(f, n)+"/draft_notes", nil)
+	if err != nil {
+		return nil, err
+	}
+	var ds []gitlabDraft
+	return ds, json.Unmarshal(out, &ds)
 }
 
 const githubPRQuery = `query($owner: String!, $name: String!, $n: Int!) {
