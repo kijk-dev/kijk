@@ -1,7 +1,7 @@
 import { el, get, storeKey, keepFocus } from './api.js';
 import { isCurrent } from './view.js';
 import { lineCount, ago, fileRow } from './git.js';
-import { forgeMark, ownPR, FORGE } from './pr.js';
+import { forgeMark, forgeWords, ownPR } from './pr.js';
 import { keyLabel, mac } from './keys.js';
 import { textBox, unsentKey } from './drafts.js';
 import { boxView, showBoxes, noBoxes, redraw, drawBox, iconButton, goToBox, plural } from './boxes.js';
@@ -203,7 +203,7 @@ function header() {
   const top = el('div', 'pr-top');
   const f = prStatus?.forge;
   const p = prStatus?.pr || data.pr;
-  const words = FORGE[f?.kind || 'github'];
+  const words = forgeWords(prStatus);
   if (f) top.append(forgeMark(f.kind));
   if (p) {
     const title = el(p.url ? 'a' : 'span', 'pr-title', p.title);
@@ -571,7 +571,7 @@ function replyStrip(t, path, line, text) {
     };
   }
   Object.assign(s, { path, line, text });
-  const words = FORGE[prStatus?.forge?.kind] || FORGE.github;
+  const words = forgeWords(prStatus);
   s.input.setAttribute('aria-label', `Note for the agent on line ${line}`);
   s.hint.textContent = `Reply to ${t.comments[0]?.author} in “As on ${words.name}”`;
   return s.foot;
@@ -709,9 +709,8 @@ async function placeThreadsAll() {
 
 // prompt is the text the agent gets: two fixed lines, then each note under its file and line.
 function prompt(picked, threads = []) {
-  const f = prStatus?.forge;
   const p = prStatus?.pr || data.pr;
-  const words = FORGE[f?.kind || 'github'];
+  const words = forgeWords(prStatus);
   const pr = p ? ` (${words.short} ${words.num}${p.number})` : '';
   const out = [`Review notes for branch ${data.branch}${pr}.`, 'Fix each one, then say what you changed.'];
   for (const n of picked) {
@@ -760,7 +759,7 @@ function openCopy(button) {
     list.append(li);
     return { n, check };
   });
-  const words = FORGE[prStatus?.forge?.kind] || FORGE.github;
+  const words = forgeWords(prStatus);
   const threadList = el('ul');
   const tpicks = openThreads().sort((a, b) => a.path.localeCompare(b.path) || a.line - b.line).map(t => {
     const used = copiedThreads.has(t.id);

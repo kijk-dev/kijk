@@ -1,6 +1,6 @@
 import { el, get, svg, keepFocus } from './api.js';
 import { lineCount, fileRow } from './git.js';
-import { FORGE, forgeMark, prChips, ownPR } from './pr.js';
+import { forgeMark, forgeWords, prChips, ownPR } from './pr.js';
 import { onKey, keyLabel } from './keys.js';
 import { cachedView, loadView, onView, age } from './prdata.js';
 import { iconButton, plural, markCurrent } from './boxes.js';
@@ -55,7 +55,7 @@ export function setupPrs(p) {
   setupChanges({ onTop: (n, path) => selectFile(path), openFile: p.openFile });
   setupDrafts({ announce: p.announce, say: p.say, reviewed: root => { if (root === folder) loadList(); } });
   setupOverview({
-    branch: () => ({ branch: st?.branch, base: st?.total?.base?.replace(/^origin\//, ''), ahead: st?.ahead, forge: line?.forge?.kind, create: line?.create }),
+    branch: () => ({ branch: st?.branch, base: st?.total?.base?.replace(/^origin\//, ''), ahead: st?.ahead, forge: line?.forge, create: line?.create }),
     own: n => n === ownNumber() && onBranch(),
     say: p.say,
     announce: p.announce,
@@ -82,7 +82,7 @@ export function setPrsFolder(key, state) {
 
 export const prsState = () => ({ open: saved.open, mode: saved.mode });
 
-const words = () => FORGE[line?.forge?.kind || list?.forge?.kind] || FORGE.github;
+const words = () => forgeWords(line?.forge ? line : list);
 const forgeKind = () => line?.forge?.kind || list?.forge?.kind || '';
 const ownNumber = () => ownPR(line)?.number || 0;
 // A list needs the forge and its tool; a note on the PR line without a PR says the tool is missing.

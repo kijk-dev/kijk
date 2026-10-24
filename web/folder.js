@@ -2,7 +2,7 @@ import { el, get, post, base, splitKey, storeKey } from './api.js';
 import { showTree, paint, refreshTree, openFolders, selectFile } from './tree.js';
 import { refreshView, jumpChange, showMessage } from './view.js';
 import { setTabs, tabState, openTab, activeTab, recentFiles, closeActive, goPlace } from './tabs.js';
-import { showPR, ownPR, FORGE } from './pr.js';
+import { showPR, ownPR, forgeWords, FORGE } from './pr.js';
 import { setupReview, setBranchFolder, refreshBranch, focusBranchList } from './review.js';
 import { setupPrs, setPrsFolder, prsState, prsStatus, prsShown, showPrsItem, focusPrs, branchHead, overviewRow, openPR } from './prs.js';
 import { marks, showChanges, showGraph, revealHead, reviewKey, ago, lineCount } from './git.js';
@@ -81,11 +81,11 @@ export function setupFolder(p) {
   setupPrs({
     announce: p.announce,
     say: p.say,
-    openTab: (t, pin) => { if (!offline) openTab({ ...t, num: FORGE[pr?.forge?.kind]?.num }, pin); },
+    openTab: (t, pin) => { if (!offline) openTab({ ...t, num: forgeWords(pr).num }, pin); },
     save: saveState,
     setCount: showCount,
     openBranch: () => { if (!offline) openBranch(); },
-    openFile: (n, path) => { if (!offline) openTab({ kind: 'file', path, pr: n, num: FORGE[pr?.forge?.kind]?.num }, true); },
+    openFile: (n, path) => { if (!offline) openTab({ kind: 'file', path, pr: n, num: forgeWords(pr).num }, true); },
     focusBranch: focusBranchList,
   });
 }

@@ -2,7 +2,7 @@ import { el, post, storeKey, keepFocus } from './api.js';
 import { freshView } from './prdata.js';
 import { avatar } from './threads.js';
 import { iconButton, plural } from './boxes.js';
-import { FORGE, forgeMark } from './pr.js';
+import { forgeMark, forgeWords } from './pr.js';
 import { mac } from './keys.js';
 import { setReviewed } from './viewed.js';
 
@@ -19,8 +19,6 @@ let hooks = {}; // announce(text), say(text), reviewed(root, n)
 export function setupDrafts(h) {
   hooks = h;
 }
-
-export const words = res => FORGE[res?.forge?.kind] || FORGE.github;
 
 // writable says whether kijk may write to the pull request of answer res.
 export const writable = res => !!res?.write?.ok;
@@ -59,7 +57,7 @@ async function shown(root, n, at, route, body) {
     if (err.status !== 409 && err.status !== 428) throw err;
     const fresh = await freshView(root, n); // shows the new head
     if (err.status === 409) throw err;
-    if (fresh.at !== at) throw new Error(`${words(fresh).num}${n} has new commits. kijk shows them now; look again first.`);
+    if (fresh.at !== at) throw new Error(`${forgeWords(fresh).num}${n} has new commits. kijk shows them now; look again first.`);
     return post(route, { root, n, at, ...body });
   }
 }
@@ -188,7 +186,7 @@ export function threadOpts(root, n, res, redraw) {
   const can = writable(res);
   const key = id => `${root}\n${n}\n${id}`;
   const drafts = {
-    where: c => (wroteHere(root, n, c) ? '' : `· written on ${words(res).name}`),
+    where: c => (wroteHere(root, n, c) ? '' : `· written on ${forgeWords(res).name}`),
     body: c => editors.get(key(c.id)) || null,
     acts: c => (!can || editors.has(key(c.id)) ? [] : [
       iconButton(ICON.edit, 'Edit', () => {
@@ -331,7 +329,7 @@ function tally(root, n, res) {
   }
   for (const c of res?.comments || []) {
     if (!c.draft) continue;
-    if (c.replyTo) replies.push({ c, to: `${c.replyTo} on the ${words(res).kind}` });
+    if (c.replyTo) replies.push({ c, to: `${c.replyTo} on the ${forgeWords(res).kind}` });
     else conv.push(c);
   }
   const web = list => list.filter(d => !wroteHere(root, n, d.c || d)).length;
@@ -401,7 +399,7 @@ export function reviewBox(root, n, res) {
       const r = box.res;
       const t = tally(root, n, r);
       const web = t.web([...t.lines, ...t.replies, ...t.conv]);
-      count.textContent = t.all ? `${plural(t.all, 'draft')}${web ? ` · ${web} from ${words(r).name}` : ''}` : 'no drafts yet';
+      count.textContent = t.all ? `${plural(t.all, 'draft')}${web ? ` · ${web} from ${forgeWords(r).name}` : ''}` : 'no drafts yet';
       const picked = verdict(root, n, r);
       keepFocus(mode, () => mode.replaceChildren(...VERDICTS.map(([v, text]) => {
         const b = el('button', null, text);
@@ -466,7 +464,7 @@ export function commentFoot(root, n, res) {
     parts.foot.res = res;
     return parts.foot; // kept, so what is typed stays when the Overview draws again
   }
-  const w = words(res);
+  const w = forgeWords(res);
   const foot = el('div', 'foot');
   parts.foot = foot;
   foot.res = res;
@@ -508,7 +506,7 @@ export function commentFoot(root, n, res) {
 // ----- The check before anything is posted -----
 
 function checkRows(root, n, res) {
-  const w = words(res);
+  const w = forgeWords(res);
   const t = tally(root, n, res);
   const rows = [];
   const v = verdict(root, n, res);
@@ -538,7 +536,7 @@ function checkRows(root, n, res) {
 
 function openCheck(root, n, res) {
   if (document.querySelector('.confirm') || nothing(root, n, res)) return;
-  const w = words(res);
+  const w = forgeWords(res);
   const back = document.activeElement;
   const shade = el('div', 'backdrop');
   const box = el('div', 'confirm');

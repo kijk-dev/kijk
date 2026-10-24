@@ -57,7 +57,7 @@ function source(v) {
     fetch: (f, context) => diffOf(v, f, context, v.from),
     headParts: f => [threadCount(threadsOn(v, f.path))],
     openFile: f => hooks.openFile?.(n, f.path),
-    openTip: `Open the whole file\nat #${n}`,
+    openTip: `Open the whole file\nat ${v.num}${n}`,
     decorate: (v2, b, rows) => {
       const again = redrawFile(b.f.path);
       let threads = threadsOn(v, b.f.path);
@@ -92,14 +92,15 @@ function source(v) {
 export async function openChanges(viewer, root, tab, keep, save) {
   const v = boxView(viewer, root, tab, keep, save, {});
   v.n = tab.n;
-  v.label = `Changes of #${tab.n}`;
+  v.num = tab.num || '#';
+  v.label = `Changes of ${v.num}${tab.n}`;
   v.from = '';
   Object.assign(v.src, source(v));
   v.reload = () => {}; // the forge diff does not follow the files on disk
   view = v;
   const known = cachedView(root, tab.n);
   if (known) await show(v, known);
-  else viewer.replaceChildren(el('p', 'empty', `Fetching #${tab.n}…`));
+  else viewer.replaceChildren(el('p', 'empty', `Fetching ${v.num}${tab.n}…`));
   try {
     await loadView(root, tab.n);
   } catch (err) {
@@ -139,7 +140,7 @@ async function show(v, res) {
   v.files = sh.files;
   v.from = sh.from;
   v.bar = sh.since?.answer ? sinceBar(v.root, v.n, sh.since, sh.files) : null;
-  v.scroll?.setAttribute('aria-label', v.from ? `Changes of #${v.n} since your review` : v.label);
+  v.scroll?.setAttribute('aria-label', v.from ? `${v.label} since your review` : v.label);
   v.src.onAdd = writable(res) ? (v2, path, l) => openEditor(v, path, l) : null;
   // The forge knows no line of the head of your last review.
   v.src.addOld = !v.from;

@@ -2,7 +2,7 @@ import { el, get } from './api.js';
 import { loadView, freshView, onView, age } from './prdata.js';
 import { plural } from './boxes.js';
 import { reviewOf } from './viewed.js';
-import { FORGE } from './pr.js';
+import { forgeWords } from './pr.js';
 
 // Since your review: what changed in a pull request from the head of your last review to the head
 // now. The switch is kept per window and pull request, and starts at All changes.
@@ -112,7 +112,7 @@ export function sinceParts(root, n, res, pick) {
   const a = s.answer;
   const ago = s.time ? `\nReviewed ${age(new Date(s.time).toISOString())} ago` : '';
   const count = a && !why(a) ? `${ago ? ' · ' : '\n'}${plural(a.commits, 'new commit')}` : '';
-  const kind = (FORGE[res.forge?.kind] || FORGE.github).kind;
+  const kind = forgeWords(res).kind;
   for (const [yes, text, tip] of [[false, 'All changes', `All changes\nEvery file of the ${kind}`], [true, 'Since your review', `Only what changed since your review${ago}${count}`]]) {
     const b = el('button', null, text);
     b.setAttribute('aria-pressed', yes === s.on);
