@@ -600,18 +600,20 @@ function relocate(n, texts) {
   return changed;
 }
 
-// placeAll puts every note on its line, also notes whose box is not drawn, so the prompt has their
-// lines as they are now.
+// placeAll puts every note and open thread on its line on disk, also those whose box is not drawn,
+// so the prompt has their lines as they are now. False when another folder opened meanwhile.
 async function placeAll() {
   const key = folder;
-  const paths = [...new Set(notes.map(n => n.path))];
-  const files = await Promise.all(paths.map(path => fileLines(folder, path)));
+  const ts = openThreads().filter(t => !t.old && t.text != null);
+  const paths = [...new Set([...notes, ...ts].map(x => x.path))];
+  const files = new Map(await Promise.all(paths.map(async path => [path, await fileLines(folder, path)])));
   if (key !== folder) return false;
   const moved = new Set();
-  paths.forEach((path, i) => {
-    if (!files[i]) return;
-    for (const n of notes) if (n.path === path && relocate(n, files[i].texts)) moved.add(path);
-  });
+  for (const n of notes) if (files.get(n.path) && relocate(n, files.get(n.path).texts)) moved.add(n.path);
+  for (const t of ts) {
+    const line = files.get(t.path) && nearest(files.get(t.path).texts, t.text, threadLines.get(t.id) || t.line);
+    if (line) threadLines.set(t.id, line);
+  }
   if (moved.size) notesChanged(moved);
   return true;
 }
@@ -688,23 +690,6 @@ function closeEditor(v) {
   if (b?.loaded) drawBox(v, b);
 }
 
-
-// placeThreadsAll finds the line on disk of every open thread, also of those whose box is not
-// drawn, so the prompt has the line the thread is on now.
-async function placeThreadsAll() {
-  const key = folder;
-  const ts = openThreads().filter(t => !t.old && t.text != null);
-  const paths = [...new Set(ts.map(t => t.path))];
-  const files = await Promise.all(paths.map(path => fileLines(folder, path)));
-  if (key !== folder) return false;
-  for (const t of ts) {
-    const file = files[paths.indexOf(t.path)];
-    const line = file && nearest(file.texts, t.text, threadLines.get(t.id) || t.line);
-    if (line) threadLines.set(t.id, line);
-  }
-  return true;
-}
-
 // ----- Copy for agent -----
 
 // prompt is the text the agent gets: two fixed lines, then each note under its file and line.
@@ -732,7 +717,7 @@ function closeCopy() {
 }
 
 async function startCopy() {
-  if (!(await placeAll()) || !(await placeThreadsAll())) return;
+  if (!(await placeAll())) return;
   const button = panel.querySelector('[data-k=copy]');
   if (button) openCopy(button);
 }
