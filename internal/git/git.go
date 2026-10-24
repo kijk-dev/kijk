@@ -473,6 +473,12 @@ func ValidHash(s string) bool {
 	return hashRe.MatchString(s)
 }
 
+// FullHash reports whether s is a whole commit id (SHA-1 or SHA-256): a short one may also name a
+// branch or tag.
+func FullHash(s string) bool {
+	return (len(s) == 40 || len(s) == 64) && hashRe.MatchString(s)
+}
+
 // CommitFiles lists the files a commit changed, compared with its first parent.
 func CommitFiles(root, hash string) ([]change, error) {
 	if !ValidHash(hash) {

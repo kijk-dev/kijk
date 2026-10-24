@@ -346,3 +346,59 @@ func TestPRFilePrunes(t *testing.T) {
 		t.Error("the old file is still kept")
 	}
 }
+
+// What changed since a reviewed head: only files of the pull request, and nothing to compare after a
+// rebase.
+func TestPRSince(t *testing.T) {
+	_, _, work := prOrigin(t)
+	split, reviewed := rev(t, work, "main~1"), rev(t, work, "retry")
+	gittest.Run(t, work, "checkout", "-q", "retry")
+	gittest.Write(t, filepath.Join(work, "retry.go"), "package shop\n\nfunc retry() {\n\tfor i := 0; i < 5; i++ {\n\t}\n}\n")
+	gittest.Run(t, work, "commit", "-qam", "Retry five times")
+	head := rev(t, work, "retry")
+	s, err := PRSince(work, split, reviewed, head)
+	if err != nil || s.Rebased || s.Commits != 1 || paths(s.Files) != "M retry.go" {
+		t.Fatalf("one commit: %+v %v", s, err)
+	}
+	if f := s.Files[0]; f.Add != 1 || f.Del != 1 || !strings.Contains(f.Blobs, "..") {
+		t.Errorf("retry.go: %+v", f)
+	}
+
+	// main comes in with a merge; its readme is not part of the pull request. old.go, deleted by the
+	// pull request at the review, is back as on main, so it changed since.
+	gittest.Run(t, work, "merge", "-q", "--no-edit", "main")
+	gittest.Run(t, work, "checkout", "-q", "main", "--", "old.go")
+	gittest.Run(t, work, "commit", "-qm", "Keep old.go")
+	head = rev(t, work, "retry")
+	newSplit := rev(t, work, "main")
+	s, err = PRSince(work, newSplit, reviewed, head)
+	if err != nil || s.Rebased || s.Commits != 3 || paths(s.Files) != "A old.go, M retry.go" {
+		t.Fatalf("after a merge: %s %+v %v", paths(s.Files), s, err)
+	}
+
+	s, err = PRSince(work, newSplit, head, head)
+	if err != nil || s.Rebased || s.Commits != 0 || len(s.Files) != 0 {
+		t.Errorf("same head: %+v %v", s, err)
+	}
+
+	// A force push: the reviewed head is not in the history of the head now.
+	gittest.Run(t, work, "checkout", "-qb", "rebased", "main")
+	gittest.Write(t, filepath.Join(work, "retry.go"), "package shop\n\nfunc retry() { /* again */ }\n")
+	gittest.Run(t, work, "commit", "-qam", "Retry, rebased")
+	s, err = PRSince(work, newSplit, reviewed, rev(t, work, "rebased"))
+	if err != nil || !s.Rebased || len(s.Files) != 0 {
+		t.Errorf("rebased: %+v %v", s, err)
+	}
+	// A head reviewed in another clone may not be here: that is not a rebase.
+	s, err = PRSince(work, newSplit, strings.Repeat("ab", 20), head)
+	if err != nil || !s.Missing || s.Rebased {
+		t.Errorf("missing commit: %+v %v", s, err)
+	}
+	// Only a full commit id: a short one may name a branch.
+	gittest.Run(t, work, "branch", "cafe", "main")
+	for _, bad := range []string{"main", "cafe", reviewed[:12]} {
+		if _, err := PRSince(work, newSplit, bad, head); err != ErrBadHash {
+			t.Errorf("from %q: %v, want ErrBadHash", bad, err)
+		}
+	}
+}

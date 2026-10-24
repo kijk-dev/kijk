@@ -1018,7 +1018,7 @@ func TestBrowser(t *testing.T) {
 			b.waitFor("the MRs tab", prsTab+`.querySelector('.tabcount')?.textContent === '1'`)
 			b.press("prsTab")
 			b.click("!12", prRow(12))
-			b.waitFor("!12", `document.querySelector('#prs-pr .pr-num')?.textContent === '!12' && document.querySelectorAll('#viewer .fbox').length === 3`)
+			b.waitFor("!12", `document.querySelector('#prs-pr .pr-num')?.textContent === '!12' && document.querySelectorAll('#viewer .fbox').length >= 3`)
 			return b
 		}
 
@@ -1048,6 +1048,47 @@ func TestBrowser(t *testing.T) {
 		b.click("Add to review", byText(".md.ov .thr.conv .foot button", "Add to review"))
 		forge.waitFor(t, n, "--method PUT projects/acme%2Freview/merge_requests/12/draft_notes/61")
 		b.waitFor("both kept", box+`.querySelector('textarea').value === 'Thanks for this.\n\nFix the retry. More.' && !`+box+`.querySelector('.saved').hidden`)
+		b.noErrors()
+
+		// Since your review, a comment on a line far from every change of the merge request goes
+		// with its line in the target: 10 lines above it are new.
+		const session = "internal/auth/session.go"
+		work := filepath.Join(t.TempDir(), "sanne")
+		run(t, t.TempDir(), "clone", "-q", origin, work)
+		run(t, work, "fetch", "-q", "origin", "refs/merge-requests/12/head")
+		run(t, work, "checkout", "-qb", "sanne", "FETCH_HEAD")
+		onMain := sessionGo("sess, ok := s.byID[c.Value]", "")
+		pushMR := func(text string) string {
+			write(t, filepath.Join(work, filepath.FromSlash(session)), text)
+			run(t, work, "commit", "-qam", "Note the session store")
+			run(t, work, "push", "-q", "origin", "HEAD:refs/merge-requests/12/head")
+			head := gitOut(t, work, "rev-parse", "HEAD")
+			mr["diffHeadSha"], mr["diffRefs"] = head, obj{"baseSha": main, "headSha": head, "startSha": main}
+			forge.set(t, "glab-pr-12.json", ghData(obj{"currentUser": obj{"username": "you"}, "project": obj{"mergeRequest": mr}}))
+			return head
+		}
+		top := strings.Repeat("// The store.\n", 10)
+		reviewed := pushMR(top + strings.Replace(onMain, "return 16 > 0", "return 16 > 1", 1))
+		b.press("refreshPrs")
+		b.click("Overview", prsRow("Overview"))
+		b.waitFor("four files", `document.querySelectorAll('#prs-pr .prfiles input.viewedbox').length === 4`)
+		for _, name := range []string{"ci.yml", "README.md", "session.go", "retry.go"} {
+			b.click("the box of "+name+"'s row", prsRow(name)+`?.querySelector('input.viewedbox')`)
+		}
+		b.waitFor("every file viewed: the last review", `Object.entries(localStorage).some(([k, v]) => k.startsWith('kijk.viewed:') && k.endsWith(':12') && JSON.parse(v).review?.head === `+jsString(reviewed)+`)`)
+		pushMR(top + onMain) // sanne puts check16 back as on main
+		b.press("refreshPrs")
+		b.click("Since your review", byText("#prs-pr .prmode.since .mode button", "Since your review"))
+		near := boxRow(session, "func check16() bool {")
+		b.waitFor("only the line put back", `document.querySelectorAll('#viewer .fbox').length === 1 && `+near)
+		b.evalJS(`window.e2ePosts = []; { const f = window.fetch; window.fetch = (u, o) => (String(u).includes('/api/pr/comment') && e2ePosts.push(JSON.parse(o.body)), f(u, o)); }`)
+		b.hover("a line", near)
+		b.click("+", near+`.querySelector('.addc')`)
+		b.waitFor("the editor", `document.activeElement?.matches('#viewer textarea')`)
+		b.typeText("Why 16?")
+		b.press("submitNote")
+		at := lineOf(onMain, "func check16() bool {")
+		b.waitFor("the comment with its line in the target", fmt.Sprintf(`window.e2ePosts.length === 1 && e2ePosts[0].path === %s && e2ePosts[0].line === %d && e2ePosts[0].oldLine === %d`, jsString(session), at+10, at))
 		b.noErrors()
 
 		// Below 16.3 the merge request is read only, and the box's place says why.
@@ -1294,6 +1335,210 @@ func TestBrowser(t *testing.T) {
 		b.press("refreshPrs")
 		b.waitFor("#477 gone from the list", `document.querySelector('#prs-list .section-toggle:last-of-type')?.textContent === 'All open 1' && !`+prRow(477))
 		b.waitFor("its marks dropped", `!`+marks477)
+		b.noErrors()
+	})
+
+	t.Run("since last review", func(t *testing.T) {
+		repo, origin := reviewRepo(t)
+		forge := newFakeForge(t)
+		reviewForge(t, forge, repo, origin, false)
+		theirs := gitOut(t, origin, "rev-parse", "refs/pull/477/head")
+		target := func(head string) {
+			forge.set(t, "gh-target.json", ghData(obj{"repository": obj{"pullRequest": obj{"id": "PR_477", "headRefOid": head, "reviews": obj{"nodes": []obj{}}}}}))
+		}
+		target(theirs)
+		forge.set(t, "gh-review.json", ghData(obj{"addPullRequestReview": obj{"pullRequestReview": obj{"id": "PRR_1"}}}))
+		forge.set(t, "gh-thread.json", ghData(obj{"addPullRequestReviewThread": obj{"thread": obj{"id": "T8", "comments": obj{"nodes": []obj{{"id": "C50"}}}}}}))
+		claude := t.TempDir()
+		claudeAgent(t, claude, repo, "Fix the login", "idle")
+		k := startKijkIn(t, exe, t.TempDir(), "CLAUDE_CONFIG_DIR="+claude, forge.env())
+		b := openPage(t, newTab(t, tab), k, "/")
+		b.selectAgent("Fix the login", "review")
+		b.waitFor("the count on the tab", prsTab+`.querySelector('.tabcount')?.textContent === '2'`)
+		b.press("prsTab")
+		b.click("#477", prRow(477))
+		b.waitFor("three boxes", `document.querySelectorAll('#viewer .fbox').length === 3`)
+
+		const ci, readme, retry = ".github/workflows/ci.yml", "README.md", "internal/webhook/retry.go"
+		sw := `document.querySelector('#prs-pr .prmode.since')`
+		bar := `document.querySelector('#viewer .allfiles > .sincebar')`
+		boxes := `[...document.querySelectorAll('#viewer .fbox')].map(f => f.dataset.path).join(' ')`
+		rows := `[...document.querySelectorAll('#prs-pr .prfiles li[data-path]:not(.ov)')].map(r => r.dataset.path).join(' ')`
+		rowCheck := func(name string) string { return prsRow(name) + `?.querySelector('input.viewedbox')` }
+		reviewed := func(head string) string {
+			return `Object.entries(localStorage).some(([k, v]) => k.startsWith('kijk.viewed:') && k.endsWith(':477') && JSON.parse(v).review?.head === ` + jsString(head) + `)`
+		}
+		b.waitFor("no switch before a review", `document.querySelector('#prs-pr .prfiles h3') && !`+sw)
+
+		// Two of three files viewed: not every file, so no reviewed head yet.
+		b.click("the box of ci.yml's row", rowCheck("ci.yml"))
+		b.click("the box of README.md's row", rowCheck("README.md"))
+		b.waitFor("two viewed", `document.querySelector('#prs-pr .prfiles h3 .viewedcount')?.textContent === '2 of 3 viewed' && !`+reviewed(theirs))
+
+		// Posting a review keeps the head; it is the head now, so still no switch.
+		box := `document.querySelector('#prs-pr .reviewbox')`
+		b.click("Approve", byText("#prs-pr .reviewbox .mode button", "Approve"))
+		b.click("Submit review…", box+`.querySelector('button.primary')`)
+		b.waitFor("the check", `document.querySelector('.confirm[role=dialog]')`)
+		b.key("Enter", "\r")
+		b.waitFor("posted, the head kept", `!document.querySelector('.confirm') && document.querySelector('#statusbar').textContent.includes('Posted your review on #477') && `+reviewed(theirs))
+		b.waitFor("no switch on the reviewed head", `!`+sw)
+
+		// Sanne pushes a fix to retry.go.
+		work := filepath.Join(t.TempDir(), "sanne")
+		run(t, t.TempDir(), "clone", "-q", origin, work)
+		run(t, work, "fetch", "-q", "origin", "refs/pull/477/head")
+		run(t, work, "checkout", "-qb", "sanne", "FETCH_HEAD")
+		main := gitOut(t, repo, "rev-parse", "origin/main")
+		push := func(force bool) string {
+			args := []string{"push", "-q", "origin", "HEAD:refs/pull/477/head"}
+			if force {
+				args = append(args, "--force")
+			}
+			run(t, work, args...)
+			head := gitOut(t, work, "rev-parse", "HEAD")
+			forge.set(t, "gh-pr-477.json", pr477(head, main, func(ts []obj) []obj { return ts }))
+			target(head)
+			return head
+		}
+		commit := func(path, text, msg string) {
+			write(t, filepath.Join(work, filepath.FromSlash(path)), text)
+			run(t, work, "add", "-A")
+			run(t, work, "commit", "-qm", msg)
+		}
+		commit(retry, retryGo+"\n// backoff grows with each attempt.\n", "Say how backoff grows")
+		push(false)
+		// The first question about what changed fails; the next answer about #477 asks again.
+		b.evalJS(`window.e2eFail = 1; { const f = window.fetch; window.fetch = (u, o) => String(u).includes('/api/pr/since') && window.e2eFail-- > 0 ? Promise.resolve(new Response('git failed', {status: 500})) : f(u, o); }`)
+		b.press("refreshPrs")
+		since := byText("#prs-pr .prmode.since .mode button", "Since your review")
+		all := byText("#prs-pr .prmode.since .mode button", "All changes")
+		b.waitFor("the switch, with no count", since+` && window.e2eFail === 0 && !`+since+`.dataset.tip.includes('new commit')`)
+		b.press("refreshPrs")
+		b.waitFor("the switch after a push", sw+` && `+sw+`.querySelector('.mode').getAttribute('aria-label') === 'Which changes' && `+all+`?.getAttribute('aria-pressed') === 'true' && `+
+			since+`?.getAttribute('aria-pressed') === 'false' && `+since+`.dataset.tip.startsWith('Only what changed since your review\nReviewed ') && `+since+`.dataset.tip.endsWith(' ago · 1 new commit')`)
+
+		// Since your review: only the new line of retry.go, the bar, and the file list.
+		b.click("Overview", prsRow("Overview"))
+		b.waitFor("the Overview in front", `document.querySelector('.md.ov')`)
+		b.click("Since your review", since)
+		b.waitFor("Changes with only retry.go", `document.querySelector('#filetabs .filetab.active')?.firstChild.textContent === 'Changes' && `+boxes+` === `+jsString(retry))
+		b.waitFor("only the new line", boxHas(retry, "add", "// backoff grows with each attempt.")+` && !`+boxRow(retry, "\t\tif !retryable(err) {"))
+		b.waitFor("the bar", bar+`?.firstChild.textContent === 'Since your review · 1 commit · 1 file' && `+bar+`.querySelector('button')?.textContent === 'Show all changes'`)
+		b.waitFor("the file list since", rows+` === `+jsString(retry)+` && document.querySelector('#prs-pr .prfiles h3').firstChild.textContent === 'Files 1' && document.querySelector('#prs-pr .prfiles h3 .viewedcount')?.textContent === '0 of 1 viewed' && `+since+`.getAttribute('aria-pressed') === 'true'`)
+		b.waitFor("no + on the reviewed side", `!`+fileBox(retry)+`.querySelector('.ln.del .addc')`)
+		b.hover("the status bar", `document.querySelector('#statusbar')`) // no tooltip in the shot
+		shots(b, "since-review")
+
+		// A comment goes on the line of the forge diff, where retry.go is new: it has no old line,
+		// though the line is unchanged since the review.
+		b.evalJS(`window.e2ePosts = []; { const f = window.fetch; window.fetch = (u, o) => (String(u).includes('/api/pr/comment') && e2ePosts.push(JSON.parse(o.body)), f(u, o)); }`)
+		ret := boxRow(retry, "\treturn err")
+		b.hover("a line", ret)
+		b.click("+", ret+`.querySelector('.addc')`)
+		b.waitFor("the editor", `document.activeElement?.matches('#viewer textarea')`)
+		b.typeText("Wrap the error.")
+		b.press("submitNote")
+		b.waitFor("the comment on the forge's line", fmt.Sprintf(`window.e2ePosts.length === 1 && e2ePosts[0].path === %s && e2ePosts[0].line === %d && e2ePosts[0].oldLine === 0 && !e2ePosts[0].old && !document.querySelector('#viewer textarea')`, jsString(retry), lineOf(retryGo, "\treturn err")))
+
+		// Moving the switch closes an open comment; + on its line gives the text back.
+		b.hover("a line", ret)
+		b.click("+", ret+`.querySelector('.addc')`)
+		b.waitFor("the editor", `document.activeElement?.matches('#viewer textarea')`)
+		b.typeText("Keep me.")
+
+		// Show all changes in the bar goes back.
+		b.click("Show all changes", bar+`.querySelector('button')`)
+		b.waitFor("all changes again", boxes+` === `+jsString(ci+" "+readme+" "+retry)+` && !`+bar+` && `+all+`.getAttribute('aria-pressed') === 'true' && `+rows+` === `+jsString(ci+" "+readme+" "+retry))
+		b.waitFor("the comment closed", `!document.querySelector('#viewer textarea') && `+ret)
+		b.hover("a line", ret)
+		b.click("+", ret+`.querySelector('.addc')`)
+		b.waitFor("its text back", `document.activeElement?.matches('#viewer textarea') && document.activeElement.value === 'Keep me.'`)
+		b.key("Escape", kb.Escape)
+		b.waitFor("closed", `!document.querySelector('#viewer textarea')`)
+
+		// main moves on and sanne merges it in: main's own file does not show.
+		run(t, work, "checkout", "-qb", "mainwork", "origin/main")
+		commit("billing.go", "package billing\n", "Add billing")
+		run(t, work, "push", "-q", "origin", "HEAD:main")
+		main = gitOut(t, work, "rev-parse", "HEAD")
+		run(t, work, "checkout", "-q", "sanne")
+		run(t, work, "merge", "-q", "--no-edit", "mainwork")
+		merged := push(false)
+		b.press("refreshPrs")
+		b.waitFor("the switch says two commits", since+`?.dataset.tip.endsWith(' · 2 new commits')`)
+		b.click("Since your review", since)
+		b.waitFor("billing.go left out", bar+`?.firstChild.textContent === 'Since your review · 2 commits · 1 file' && `+boxes+` === `+jsString(retry)+` && `+rows+` === `+jsString(retry))
+
+		// Marking the last file not viewed makes every file viewed: the switch hides, all changes show.
+		check := fileBox(retry) + `?.querySelector('.fhead .check input')`
+		b.waitFor("the Viewed box of retry.go in place", `(r => { const y = Math.round(r.top); const same = window.e2eY === y; window.e2eY = y; return same })(`+check+`.getBoundingClientRect())`)
+		b.click("Viewed of retry.go", check)
+		b.waitFor("the switch gone", `!`+sw+` && `+reviewed(merged)+` && !`+bar+` && `+boxes+` === `+jsString(ci+" "+readme+" "+retry)+` && [...document.querySelectorAll('#viewer .fbox')].every(f => f.matches('.viewed.shut'))`)
+
+		// Sanne only merges main in again: no file of #477 changed, so there is nothing to show
+		// since your review. The switch hides; the head of your last review stays.
+		run(t, work, "checkout", "-q", "mainwork")
+		commit("billing_test.go", "package billing\n", "Test billing")
+		run(t, work, "push", "-q", "origin", "HEAD:main")
+		main = gitOut(t, work, "rev-parse", "HEAD")
+		run(t, work, "checkout", "-q", "sanne")
+		run(t, work, "merge", "-q", "--no-edit", "mainwork")
+		push(false)
+		b.press("refreshPrs")
+		b.waitFor("the new head", `document.querySelector('#viewer .fbox')`)
+		forge.settle()
+		b.waitFor("the last review kept", reviewed(merged))
+		b.waitFor("no switch", `document.querySelector('#prs-pr .prfiles h3') && !`+sw+` && `+boxes+` === `+jsString(ci+" "+readme+" "+retry))
+
+		// After a force push there is nothing to compare: all changes show, with a note.
+		run(t, work, "checkout", "-qb", "rebased", "mainwork")
+		run(t, work, "merge", "-q", "--squash", "sanne")
+		commit(retry, retryGo+"\n// rebased.\n", "Retry, rebased")
+		push(true)
+		b.press("refreshPrs")
+		b.waitFor("the switch after a force push", since)
+		b.click("Since your review", since)
+		const note = "Rebased or force-pushed since your review. All changes show."
+		b.waitFor("all changes, with the note", bar+`?.firstChild.textContent === `+jsString(note)+` && `+bar+`.querySelector('button')?.textContent === 'Show all changes' && document.querySelector('#prs-pr .since-note')?.textContent === `+jsString(note)+` && `+boxes+` === `+jsString(ci+" "+readme+" "+retry)+` && document.querySelector('.allfiles').scrollTop === 0`)
+		b.hover("the status bar", `document.querySelector('#statusbar')`) // no tooltip in the shot
+		shots(b, "since-rebased")
+
+		// A head reviewed in another clone may not be in this one: that is not a force push.
+		b.evalJS(`for (const k of Object.keys(localStorage)) if (k.startsWith('kijk.viewed:') && k.endsWith(':477')) localStorage.setItem(k, JSON.stringify({...JSON.parse(localStorage.getItem(k)), review: {head: 'ab'.repeat(20)}}))`)
+		b.act("reload", chromedp.Reload())
+		b.waitFor("no age without a time", since+`?.dataset.tip === 'Only what changed since your review'`)
+		b.click("Since your review", since)
+		const missing = "kijk does not have the commit of your last review in this clone. All changes show."
+		b.waitFor("all changes, with why", bar+`?.firstChild.textContent === `+jsString(missing)+` && document.querySelector('#prs-pr .since-note')?.textContent === `+jsString(missing)+` && `+boxes+` === `+jsString(ci+" "+readme+" "+retry))
+
+		// GitHub takes a comment only near a change of the pull request: a line that changed since
+		// the review, but is far from every change of #477, says so.
+		const session = "internal/auth/session.go"
+		onMain := sessionGo("sess, ok := s.byID[c.Value]", "")
+		top := strings.Repeat("// The store.\n", 10)
+		commit(session, top+strings.Replace(onMain, "return 16 > 0", "return 16 > 1", 1), "Note the session store")
+		last := push(false)
+		commit(session, top+onMain, "Put check16 back")
+		push(false)
+		b.evalJS(`for (const k of Object.keys(localStorage)) if (k.startsWith('kijk.viewed:') && k.endsWith(':477')) localStorage.setItem(k, JSON.stringify({...JSON.parse(localStorage.getItem(k)), review: {head: ` + jsString(last) + `}}))`)
+		b.act("reload", chromedp.Reload())
+		b.click("Since your review", since)
+		far := boxRow(session, "func check16() bool {")
+		b.waitFor("only the line put back", boxes+` === `+jsString(session)+` && `+far)
+		b.hover("a line", far)
+		b.click("+", far+`.querySelector('.addc')`)
+		b.waitFor("the editor", `document.activeElement?.matches('#viewer textarea')`)
+		b.typeText("Why 16?")
+		b.press("submitNote")
+		b.waitFor("why GitHub refuses it", `document.querySelector('#viewer .thr.editing .error')?.textContent === 'GitHub takes a comment only within 3 lines of a change of the pull request.'`)
+		b.key("Escape", kb.Escape)
+
+		// Local mode on your own branch has no switch.
+		b.click("back", `document.querySelector('#prs-pr .back')`)
+		b.click("this branch", prRow(482))
+		b.waitFor("Branch changes", `document.querySelector('#filetabs .filetab.active')?.textContent.startsWith('Branch changes')`)
+		b.waitFor("no switch in Local mode", `!document.querySelector('#prs > :not([hidden]) .prmode.since')`)
 		b.noErrors()
 	})
 

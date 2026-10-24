@@ -170,6 +170,36 @@ func (a *api) prView(w http.ResponseWriter, r *http.Request) {
 	reply(w, out)
 }
 
+type sinceReply struct {
+	git.Since
+	At string `json:"at"` // the head it was diffed with
+}
+
+// prSince answers what changed in a pull request since from, the head of your last review, up to
+// the head kijk keeps for it.
+func (a *api) prSince(w http.ResponseWriter, r *http.Request) {
+	root, _, ok := a.target(w, r)
+	if !ok {
+		return
+	}
+	n, ok := prNumber(w, r.URL.Query().Get("n"))
+	if !ok {
+		return
+	}
+	rg, ok := a.ranges.get(root, n)
+	if !ok {
+		http.Error(w, "Open the pull request again", http.StatusConflict)
+		return
+	}
+	from := r.URL.Query().Get("from")
+	s, err := git.PRSince(root, rg[0], from, rg[1])
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	reply(w, sinceReply{Since: s, At: rg[1]})
+}
+
 // threadTexts adds each thread's line as it is at the head, so a thread can find its line on disk.
 func threadTexts(root, head string, ts []git.Thread) {
 	files := map[string][]string{}
