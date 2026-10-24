@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"net"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -28,7 +29,11 @@ func parsePRLink(s string) (prLink, bool) {
 	if err != nil || n <= 0 {
 		return prLink{}, false
 	}
-	return prLink{Host: m[1], Path: m[2], Number: n}, true
+	host := m[1]
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h // as a clone's origin is matched, by its host name alone
+	}
+	return prLink{Host: host, Path: m[2], Number: n}, true
 }
 
 // prClone finds the main clone of the pull request's repo among the saved folders, else among the
