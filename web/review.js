@@ -5,7 +5,7 @@ import { forgeMark, forgeWords, ownPR } from './pr.js';
 import { keyLabel, mac } from './keys.js';
 import { textBox, unsentKey } from './drafts.js';
 import { boxView, showBoxes, noBoxes, redraw, drawBox, iconButton, goToBox, plural } from './boxes.js';
-import { threadEl, outdatedBar, threadCount, avatar, sent } from './threads.js';
+import { threadEl, outdatedBar, threadCount, avatar, sent, threadsChanged } from './threads.js';
 
 // The PRs tab for the folder's own branch: the panel in the sidebar, the Branch changes view, agent
 // notes and Copy for agent. Its pull request's threads come from prs.js.
@@ -94,10 +94,11 @@ export function redrawBranchPanel() {
 // setBranchThreads takes the answer about the branch's own pull request, for its threads in Local
 // mode, or null when it has none.
 export function setBranchThreads(res) {
+  const before = branchPR;
   branchPR = res;
   if (data) drawPanel();
   const v = openView();
-  if (v) redraw(v, [...new Set((res?.threads || []).map(t => t.path))]);
+  if (v) redraw(v, threadsChanged(before, res, [...v.boxes.keys()]));
 }
 
 export function focusBranchList() {

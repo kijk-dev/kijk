@@ -173,6 +173,13 @@ export function placeForge(key, rows, threads, opts) {
   return { under, top: bar.length ? outdatedBar(key, bar, opts) : [] };
 }
 
+// threadsChanged are the paths whose threads differ between two answers about a pull request, so
+// a box draws again also when its last thread went.
+export function threadsChanged(before, after, paths) {
+  const on = (r, path) => JSON.stringify((r?.threads || []).filter(t => t.path === path));
+  return paths.filter(path => on(before, path) !== on(after, path));
+}
+
 // sent is the threads without your drafts, for Local mode, where only agent notes are written.
 export function sent(threads) {
   return threads.filter(t => !t.draft).map(t => (t.comments.some(c => c.draft) ? { ...t, comments: t.comments.filter(c => !c.draft) } : t));

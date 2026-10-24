@@ -2,7 +2,7 @@ import { el, get } from './api.js';
 import { isCurrent } from './view.js';
 import { boxView, showBoxes, noBoxes, goToBox, redraw, drawBox, marksChanged, oldLineOf } from './boxes.js';
 import { cachedView, loadView, onView } from './prdata.js';
-import { placeForge, threadCount } from './threads.js';
+import { placeForge, threadCount, threadsChanged } from './threads.js';
 import { lineEditor, moveEditor, threadOpts, writable } from './drafts.js';
 import { keyLabel } from './keys.js';
 import { marksOf, setViewed, onViewed } from './viewed.js';
@@ -152,11 +152,7 @@ async function show(v, res) {
   await showBoxes(v);
   if (moved && v.scroll && isCurrent(v)) v.scroll.scrollTop = 0;
   // A new thread or draft leaves the diff as it was, so its box would not draw again by itself.
-  if (before && isCurrent(v)) {
-    const on = (r, path) => JSON.stringify((r.threads || []).filter(t => t.path === path));
-    const changed = v.files.map(f => f.path).filter(path => on(before, path) !== on(res, path));
-    if (changed.length) redraw(v, changed);
-  }
+  if (before && isCurrent(v)) redraw(v, threadsChanged(before, res, v.files.map(f => f.path)));
 }
 
 // openEditor opens the box for a new comment under row l of a file.

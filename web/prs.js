@@ -185,7 +185,6 @@ async function load(n) {
   const key = folder;
   try {
     await loadView(folder, n);
-    failed.delete(n);
   } catch (err) {
     if (key !== folder) return;
     failed.set(n, err.message);
@@ -195,6 +194,7 @@ async function load(n) {
 
 onView((root, n, res) => {
   if (root !== folder) return;
+  failed.delete(n);
   if (n === ownNumber()) setBranchThreads(res);
   draw();
 });
