@@ -445,9 +445,9 @@ type PR struct {
 	PRRow
 	State     string     `json:"state"` // "open", "draft", "merged" or "closed"
 	Body      string     `json:"body"`  // markdown; the viewer renders it
-	HeadOid   string     `json:"headOid"`
-	BaseOid   string     `json:"baseOid,omitempty"`   // GitHub: the target's tip; GitLab: the merge base
-	MergeBase string     `json:"mergeBase,omitempty"` // when the forge gives it
+	HeadOid   string     `json:"-"`
+	BaseOid   string     `json:"-"` // GitHub: the target's tip; GitLab: the merge base
+	MergeBase string     `json:"-"` // when the forge gives it
 	Commits   int        `json:"commits"`
 	Reviewers []Reviewer `json:"reviewers"`
 	Approvals int        `json:"approvals"`

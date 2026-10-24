@@ -101,7 +101,6 @@ type prReply struct {
 	BodyHTML string `json:"bodyHtml"`
 	Split    string `json:"split,omitempty"` // where the forge diff starts
 	At       string `json:"at,omitempty"`    // the head commit kijk has
-	Fetched  bool   `json:"fetched,omitempty"`
 	Error    string `json:"error,omitempty"` // why there are no files
 	Files    any    `json:"files"`
 }
@@ -143,7 +142,7 @@ func (a *api) prView(w http.ResponseWriter, r *http.Request) {
 		reply(w, out)
 		return
 	}
-	out.Fetched, err = git.FetchPR(root, f.Kind, n, pr.HeadOid, pr.BaseOid, pr.Base)
+	_, err = git.FetchPR(root, f.Kind, n, pr.HeadOid, pr.BaseOid, pr.Base)
 	head := git.PRHead(root, n)
 	if head == "" {
 		out.Error = "Cannot fetch " + ref + " from origin"
