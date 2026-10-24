@@ -75,9 +75,6 @@ function source(v) {
       }
       return placed;
     },
-    addOld: true,
-    addLabel: 'Comment on line',
-    addTip: `Comment on this line\n${keyLabel('addNote')}`,
     onTop: path => hooks.onTop?.(n, path),
     marked: f => threadsOn(v, f.path).length > 0,
     viewed: f => (prFile(v, f) && v.marks?.state(prFile(v, f))) || '',
@@ -141,11 +138,12 @@ async function show(v, res) {
   v.from = sh.from;
   v.bar = sh.since?.answer ? sinceBar(v.root, v.n, sh.since, sh.files) : null;
   v.scroll?.setAttribute('aria-label', v.from ? `${v.label} since your review` : v.label);
-  v.src.onAdd = writable(res) ? (v2, path, l) => openEditor(v, path, l) : null;
-  // The forge knows no line of the head of your last review.
-  v.src.addOld = !v.from;
-  // GitHub takes a comment only on a line of its own diff, which shows 3 lines around a change.
-  v.src.addNear = res.forge?.kind === 'github' ? 3 : 0;
+  // The forge knows no line of the head of your last review, and GitHub takes a comment only on a
+  // line of its own diff, which shows 3 lines around a change.
+  v.src.add = writable(res) && {
+    on: (v2, path, l) => openEditor(v, path, l), label: 'Comment on line', tip: `Comment on this line\n${keyLabel('addNote')}`,
+    old: !v.from, near: res.forge?.kind === 'github' ? 3 : 0,
+  };
   if (!res.files.length) return noBoxes(v, res.error || 'No changes');
   if (!v.scroll) v.goal = goals.get(`${v.root}\n${v.n}`) || '';
   goals.delete(`${v.root}\n${v.n}`);

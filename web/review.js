@@ -428,8 +428,7 @@ const branchSource = {
     if (v.editor?.path === b.f.path && !v.editor.id) put(`n:${v.editor.n}`, v.editor.el);
     return { extra, under, end, top: th.bar.length ? outdatedBar(`local:${b.f.path}`, th.bar, { redraw: redrawBox }) : [] };
   },
-  onAdd: (v, path, l) => openEditor(v, path, l.n, l.t),
-  addTip: `Note for the agent\n${keyLabel('addNote')}`,
+  add: { on: (v, path, l) => openEditor(v, path, l.n, l.t), tip: `Note for the agent\n${keyLabel('addNote')}` },
   onTop: path => selectRow(path),
   drawn: (v, b) => {
     if (v.editor?.path === b.f.path) v.editor.el.querySelector('textarea')?.focus({ preventScroll: true });

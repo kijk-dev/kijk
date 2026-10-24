@@ -13,9 +13,9 @@ import { onKey, keyLabel } from './keys.js';
 //   marks(res)             {line(l) → extra class, hunk(h) → a tag or null}, optional
 //   decorate(v, b, rows)   {extra, under, end}: rows needed outside the hunks, the elements under
 //                          a row by its key ('n:12' new side, 'o:7' old side), and those at the end
-//   onAdd(v, path, row) and addTip: the + on a line, optional; row is {k, o, n, t}. With addOld
-//                          removed lines get one too; addLabel names it ("Add a note on line").
-//                          With addNear, an unchanged line gets one only that near a change
+//   add                    the + on a line, or none: {on(v, path, row), tip, label, old, near}; row
+//                          is {k, o, n, t}. label names it ("Add a note on line"); old gives removed
+//                          lines one too; near gives an unchanged line one only that near a change
 //   onTop(path)            the file at the top of the view changed
 //   drawn(v, b)            a box was drawn, optional
 //   marked(f)              the file has threads or notes, for Alt+↓ and Alt+↑
@@ -410,7 +410,8 @@ export async function drawBox(v, b) {
     sep.append(tx);
     out.push(sep);
     const changes = h.lines.flatMap((l, j) => (l.k === ' ' ? [] : [j]));
-    const near = j => !v.src.addNear || changes.some(c => Math.abs(c - j) <= v.src.addNear);
+    const add = v.src.add;
+    const near = j => !add.near || changes.some(c => Math.abs(c - j) <= add.near);
     h.lines.forEach((l, j) => {
       const row = line([l.o, l.n], l.x || l.t, `${l.k === '+' ? 'add ch-add' : l.k === '-' ? 'del' : ''}${marks.line?.(l) || ''}`);
       if (l.k !== ' ' && (j === 0 || h.lines[j - 1].k === ' ')) starts.push(row);
@@ -420,14 +421,14 @@ export async function drawBox(v, b) {
         row.dataset.n = l.n;
         row.dataset.t = l.t;
       }
-      if (v.src.onAdd && (l.k !== '-' || v.src.addOld) && (l.k !== ' ' || near(j))) {
-        const add = el('button', 'addc');
-        add.innerHTML = ICON.plus;
-        add.tabIndex = -1;
-        add.setAttribute('aria-label', `${v.src.addLabel || 'Add a note on line'} ${l.k === '-' ? l.o : l.n}`);
-        add.dataset.tip = v.src.addTip;
-        add.onclick = () => v.src.onAdd(v, b.f.path, l);
-        row.insertBefore(add, row.lastChild);
+      if (add && (l.k !== '-' || add.old) && (l.k !== ' ' || near(j))) {
+        const plus = el('button', 'addc');
+        plus.innerHTML = ICON.plus;
+        plus.tabIndex = -1;
+        plus.setAttribute('aria-label', `${add.label || 'Add a note on line'} ${l.k === '-' ? l.o : l.n}`);
+        plus.dataset.tip = add.tip;
+        plus.onclick = () => add.on(v, b.f.path, l);
+        row.insertBefore(plus, row.lastChild);
       }
       if (v.cur?.path === b.f.path && v.cur.n === l.n && l.k !== '-') row.classList.add('cur');
       out.push(row);
@@ -512,11 +513,11 @@ onKey('prevNote', markKey(-1));
 // The note key opens the view's editor on the current line: an agent note, or a comment.
 onKey('addNote', () => {
   const v = last && isCurrent(last) ? last : null;
-  if (!v?.scroll || !v.src.onAdd || document.activeElement?.closest('textarea, input')) return false;
+  if (!v?.scroll || !v.src.add || document.activeElement?.closest('textarea, input')) return false;
   const row = curRow(v);
   if (!row?.querySelector('.addc')) return; // a line the forge takes no comment on
   setCur(v, row);
-  v.src.onAdd(v, row.closest('.fbox').dataset.path, { k: row.dataset.k, o: Number(row.dataset.o) || 0, n: Number(row.dataset.n), t: row.dataset.t });
+  v.src.add.on(v, row.closest('.fbox').dataset.path, { k: row.dataset.k, o: Number(row.dataset.o) || 0, n: Number(row.dataset.n), t: row.dataset.t });
 });
 
 // markCurrent is the key V in the open box view: it marks the current file viewed and goes to the
