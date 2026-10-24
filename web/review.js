@@ -193,7 +193,9 @@ function notesChanged(paths) {
 function drawPanel() {
   if (!folder) return;
   if (!data) return panel.replaceChildren(el('p', 'note', error || 'Loading…'));
+  const top = panel.querySelector('.prs-scroll')?.scrollTop;
   keepFocus(panel, () => panel.replaceChildren(header(), ...(error ? [el('p', 'note error', error)] : []), ...unpushedBar(), fileList(), notesBox()));
+  if (top) panel.querySelector('.prs-scroll').scrollTop = top;
 }
 
 function header() {

@@ -488,7 +488,9 @@ function prHead(n, mine, res, row) {
 
 // The review box is a kept element that the draw moves, so keepFocus wraps all of it.
 function drawPR(n, mine) {
+  const top = prEl.querySelector('.prs-scroll')?.scrollTop;
   keepFocus(prEl, () => prEl.replaceChildren(...prParts(n, mine)));
+  if (top) prEl.querySelector('.prs-scroll').scrollTop = top;
 }
 
 function prParts(n, mine) {
