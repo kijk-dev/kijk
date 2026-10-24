@@ -12,44 +12,36 @@ import (
 	"github.com/kijk-dev/kijk/internal/render"
 )
 
-// prRanges keeps the forge diff of each pull request a page opened, so its files are diffed by
-// number: the page never sends a revision.
-type prRanges struct {
+// openedPR is what kijk keeps of a pull request a page opened: its forge diff, so its files are
+// diffed by number (the page never sends a revision), and what the forge last said kijk may write.
+type openedPR struct {
+	split, head string // empty while kijk has no diff of it
+	write       git.Write
+}
+
+type openedPRs struct {
 	sync.Mutex
-	m      map[string][2]string // root and number: split point and head
-	writes map[string]git.Write // root and number: what kijk may write, as the forge last said
+	m map[string]openedPR
 }
 
-func (p *prRanges) setWrite(root string, n int, w git.Write) {
-	p.Lock()
-	defer p.Unlock()
-	if len(p.writes) > 200 {
-		clear(p.writes)
+func prKey(root string, n int) string { return root + "\n" + strconv.Itoa(n) }
+
+func (o *openedPRs) get(root string, n int) (openedPR, bool) {
+	o.Lock()
+	defer o.Unlock()
+	p, ok := o.m[prKey(root, n)]
+	return p, ok
+}
+
+func (o *openedPRs) set(root string, n int, change func(*openedPR)) {
+	o.Lock()
+	defer o.Unlock()
+	if len(o.m) > 200 {
+		clear(o.m)
 	}
-	p.writes[root+"\n"+strconv.Itoa(n)] = w
-}
-
-func (p *prRanges) rules(root string, n int) (git.Write, bool) {
-	p.Lock()
-	defer p.Unlock()
-	w, ok := p.writes[root+"\n"+strconv.Itoa(n)]
-	return w, ok
-}
-
-func (p *prRanges) set(root string, n int, split, head string) {
-	p.Lock()
-	defer p.Unlock()
-	if len(p.m) > 200 {
-		clear(p.m)
-	}
-	p.m[root+"\n"+strconv.Itoa(n)] = [2]string{split, head}
-}
-
-func (p *prRanges) get(root string, n int) ([2]string, bool) {
-	p.Lock()
-	defer p.Unlock()
-	r, ok := p.m[root+"\n"+strconv.Itoa(n)]
-	return r, ok
+	p := o.m[prKey(root, n)]
+	change(&p)
+	o.m[prKey(root, n)] = p
 }
 
 // prFiles is where files at a pull request's head are kept, to read them as files on disk.
@@ -117,7 +109,7 @@ func (a *api) prView(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
-	a.ranges.setWrite(root, n, pr.Write)
+	a.opened.set(root, n, func(p *openedPR) { p.write = pr.Write })
 	out := prReply{PR: pr, Forge: f, Files: []any{}}
 	out.BodyHTML = markdownHTML(pr.Body)
 	for i := range pr.Comments {
@@ -164,7 +156,7 @@ func (a *api) prView(w http.ResponseWriter, r *http.Request) {
 		reply(w, out)
 		return
 	}
-	a.ranges.set(root, n, split, head)
+	a.opened.set(root, n, func(p *openedPR) { p.split, p.head = split, head })
 	out.Split, out.At, out.Files = split, head, files
 	threadTexts(root, head, pr.Threads)
 	reply(w, out)
@@ -186,18 +178,18 @@ func (a *api) prSince(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	rg, ok := a.ranges.get(root, n)
-	if !ok {
+	p, _ := a.opened.get(root, n)
+	if p.head == "" {
 		http.Error(w, "Open the pull request again", http.StatusConflict)
 		return
 	}
 	from := r.URL.Query().Get("from")
-	s, err := git.PRSince(root, rg[0], from, rg[1])
+	s, err := git.PRSince(root, p.split, from, p.head)
 	if err != nil {
 		fail(w, err)
 		return
 	}
-	reply(w, sinceReply{Since: s, At: rg[1]})
+	reply(w, sinceReply{Since: s, At: p.head})
 }
 
 // threadTexts adds each thread's line as it is at the head, so a thread can find its line on disk.

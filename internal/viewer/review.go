@@ -39,7 +39,7 @@ func (a *api) write(run func(req writeRequest) (any, error)) http.HandlerFunc {
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
-		if why := refused(a.ranges, req); why != "" {
+		if why := refused(a.opened, req); why != "" {
 			http.Error(w, why, http.StatusConflict) // the forge would refuse it, so kijk does not ask
 			return
 		}
@@ -60,8 +60,9 @@ func (a *api) write(run func(req writeRequest) (any, error)) http.HandlerFunc {
 }
 
 // refused says why the forge would refuse a write, by what it last said kijk may write.
-func refused(p *prRanges, req writeRequest) string {
-	can, known := p.rules(req.Root, req.N)
+func refused(o *openedPRs, req writeRequest) string {
+	p, known := o.get(req.Root, req.N)
+	can := p.write
 	switch {
 	case !known:
 		return ""
@@ -79,11 +80,11 @@ var errNotShown = errors.New("Open the pull request again")
 func (a *api) prComment(req writeRequest) (any, error) {
 	head := ""
 	if req.Thread == "" {
-		r, ok := a.ranges.get(req.Root, req.N)
-		if !ok {
+		p, _ := a.opened.get(req.Root, req.N)
+		if p.head == "" {
 			return nil, errNotShown
 		}
-		head = r[1]
+		head = p.head
 	}
 	id, err := git.AddComment(req.Root, req.N, head, req.NewComment)
 	return map[string]string{"id": id}, err
@@ -103,18 +104,18 @@ func (a *api) prResolve(req writeRequest) (any, error) {
 
 // prSummary sets the summary of your review on the forge.
 func (a *api) prSummary(req writeRequest) (any, error) {
-	r, ok := a.ranges.get(req.Root, req.N)
-	if !ok {
+	p, _ := a.opened.get(req.Root, req.N)
+	if p.head == "" {
 		return nil, errNotShown // a new pending review would start on a head not on screen
 	}
-	return struct{}{}, git.SetSummary(req.Root, req.N, r[1], req.Body)
+	return struct{}{}, git.SetSummary(req.Root, req.N, p.head, req.Body)
 }
 
 func (a *api) prSubmit(req writeRequest) (any, error) {
-	r, ok := a.ranges.get(req.Root, req.N)
+	p, _ := a.opened.get(req.Root, req.N)
 	// A verdict is for the head on screen, so kijk must know which one that is.
-	if !ok && req.Verdict != "comment" {
+	if p.head == "" && req.Verdict != "comment" {
 		return nil, errNotShown
 	}
-	return struct{}{}, git.SubmitReview(req.Root, req.N, r[1], req.Verdict)
+	return struct{}{}, git.SubmitReview(req.Root, req.N, p.head, req.Verdict)
 }

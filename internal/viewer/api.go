@@ -24,7 +24,7 @@ type Options struct {
 
 // Register adds the routes of one folder's views to mux. The caller guards mux.
 func Register(mux *http.ServeMux, rts *Roots, o Options) {
-	a := &api{roots: rts, index: newIndexCache(), hl: newHlCache(), cacheDir: o.CacheDir, ranges: &prRanges{m: map[string][2]string{}, writes: map[string]git.Write{}}}
+	a := &api{roots: rts, index: newIndexCache(), hl: newHlCache(), cacheDir: o.CacheDir, opened: &openedPRs{m: map[string]openedPR{}}}
 	if o.Web != nil {
 		ec := newEngineCache(o.CacheDir, o.Version)
 		mux.HandleFunc("GET /diagram", serveFrame(o.Web, ec))
@@ -68,7 +68,7 @@ type api struct {
 	index    *indexCache
 	hl       *hlCache
 	cacheDir func() (string, error)
-	ranges   *prRanges
+	opened   *openedPRs
 }
 
 // target resolves the root and path query parameters, or writes the error.
@@ -381,18 +381,18 @@ func (a *api) diff(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			return
 		}
-		r, ok := a.ranges.get(root, n)
-		if !ok {
+		p, _ := a.opened.get(root, n)
+		if p.head == "" {
 			http.Error(w, "Open the pull request again", http.StatusConflict)
 			return
 		}
-		hash = r[0] + ".." + r[1]
+		hash = p.split + ".." + p.head
 		if from := q.Get("from"); from != "" {
 			if !git.FullHash(from) {
 				fail(w, git.ErrBadHash)
 				return
 			}
-			hash = from + ".." + r[1] // since the head of your last review
+			hash = from + ".." + p.head // since the head of your last review
 		}
 	}
 	res, err := diff(root, q.Get("path"), q.Get("orig"), mode, hash, context)
