@@ -1373,6 +1373,8 @@ func TestBrowser(t *testing.T) {
 		b.waitFor("ci.yml not viewed", notViewed(ci)+` && !`+rowViewed("ci.yml")+` && `+count("1 of 3 viewed")+` && document.activeElement === `+prsRow("ci.yml"))
 		b.press("markViewed")
 		b.waitFor("ci.yml viewed, README.md next", viewed(ci)+` && `+rowViewed("ci.yml")+` && document.activeElement === `+prsRow("README.md")+` && `+prsRow("README.md")+`.matches('.selected')`)
+		b.settle()
+		b.waitFor("README.md still selected", prsRow("README.md")+`.matches('.selected') && !`+prsRow("ci.yml")+`.matches('.selected')`)
 		// A click on a row's box marks the file and does not open it.
 		before := evalJS[float64](b, `document.querySelector('.allfiles').scrollTop`)
 		b.click("the box of README.md's row", rowCheck("README.md"))

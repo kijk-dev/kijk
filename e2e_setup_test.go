@@ -24,6 +24,7 @@ import (
 	"github.com/chromedp/cdproto/emulation"
 	"github.com/chromedp/cdproto/input"
 	cdppage "github.com/chromedp/cdproto/page"
+	cdpruntime "github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
 	"github.com/chromedp/chromedp/kb"
 
@@ -194,6 +195,17 @@ func (p page) waitLong(d time.Duration, what, js string) {
 		p.fail("waiting for %s: %v", what, last)
 	}
 	p.fail("waiting for %s: timeout", what)
+}
+
+// settle waits two frames, so the page has run what it put off to the next frame, as a scroll event.
+func (p page) settle() {
+	p.t.Helper()
+	ctx, cancel := context.WithTimeout(p.ctx, stepTimeout)
+	defer cancel()
+	await := func(e *cdpruntime.EvaluateParams) { e.AwaitPromise = new(true) }
+	if _, err := chromedp.Run(ctx, chromedp.Evaluate[bool](`new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => r(true))))`, await)); err != nil {
+		p.fail("waiting two frames: %v", err)
+	}
 }
 
 func evalJS[T any](p page, js string) T {
