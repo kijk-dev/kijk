@@ -30,17 +30,6 @@ func ghTargetAt(head, review, commit, body string) gittest.Rule {
 	return gittest.Rule{Has: "headRefOid reviews(states: PENDING", Out: fmt.Sprintf(`{"data":{"repository":{"pullRequest":{"id":"PR_7","headRefOid":%q,"reviews":{"nodes":%s}}}}}`, head, nodes)}
 }
 
-// has says whether a call holds each of the arguments, in any order.
-func has(c gittest.Call, args ...string) bool {
-	all := "\x00" + strings.Join(c.Args, "\x00") + "\x00"
-	for _, a := range args {
-		if !strings.Contains(all, "\x00"+a+"\x00") {
-			return false
-		}
-	}
-	return true
-}
-
 func TestGithubComment(t *testing.T) {
 	repo := forgeRepo(t, "git@github.com:acme/shop.git")
 	thread := gittest.Rule{Has: "addPullRequestReviewThread(input", Out: `{"data":{"addPullRequestReviewThread":{"thread":{"id":"T9","comments":{"nodes":[{"id":"C9"}]}}}}}`}
@@ -53,9 +42,9 @@ func TestGithubComment(t *testing.T) {
 		t.Fatalf("id %q, err %v", id, err)
 	}
 	c := calls()
-	if len(c) != 3 || !has(c[0], "-F", "n=7", "-f", "owner=acme", "name=shop") ||
-		!has(c[1], "pr=PR_7", "commit=aaa") || strings.Contains(strings.Join(c[1].Args, " "), "event") ||
-		!has(c[2], "review=PRR_new", "path=retry.go", "line=36", "side=RIGHT", "body=Add the event type.") {
+	if len(c) != 3 || !c[0].Has("n=7", "owner=acme", "name=shop") ||
+		!c[1].Has("pr=PR_7", "commit=aaa") || strings.Contains(c[1].Stdin, "event") ||
+		!c[2].Has("review=PRR_new", "path=retry.go", "line=36", "side=RIGHT", "body=Add the event type.") {
 		t.Fatalf("calls %q", c)
 	}
 
@@ -64,7 +53,7 @@ func TestGithubComment(t *testing.T) {
 	if _, err := AddComment(repo, 7, "aaa", NewComment{Path: "legacy.go", Line: 3, Old: true, Body: "Why?"}); err != nil {
 		t.Fatal(err)
 	}
-	if c := calls(); len(c) != 2 || !has(c[1], "review=PRR_9", "line=3", "side=LEFT") {
+	if c := calls(); len(c) != 2 || !c[1].Has("review=PRR_9", "line=3", "side=LEFT") {
 		t.Fatalf("calls %q", c)
 	}
 
@@ -83,6 +72,23 @@ func TestGithubComment(t *testing.T) {
 	}
 }
 
+// Windows caps a command line at 32,767 characters, and a comment may hold 64 KiB: its text goes to
+// gh on stdin.
+func TestGithubLongComment(t *testing.T) {
+	repo := forgeRepo(t, "git@github.com:acme/shop.git")
+	calls := gittest.FakeToolCalls(t, "gh",
+		gittest.Rule{Has: "addPullRequestReviewThread(input", Out: `{"data":{"addPullRequestReviewThread":{"thread":{"id":"T9","comments":{"nodes":[{"id":"C9"}]}}}}}`},
+		ghTarget("aaa", "PRR_9"))
+	body := strings.Repeat("x", 64<<10)
+	if _, err := AddComment(repo, 7, "aaa", NewComment{Path: "retry.go", Line: 36, Body: body}); err != nil {
+		t.Fatal(err)
+	}
+	c := calls()[1]
+	if n := len(strings.Join(c.Args, " ")); n > 1000 || !strings.Contains(c.Stdin, body) {
+		t.Fatalf("command line of %d characters, stdin of %d", n, len(c.Stdin))
+	}
+}
+
 func TestGithubReply(t *testing.T) {
 	repo := forgeRepo(t, "git@github.com:acme/shop.git")
 	calls := gittest.FakeToolCalls(t, "gh",
@@ -94,7 +100,22 @@ func TestGithubReply(t *testing.T) {
 	if err != nil || id != "C10" {
 		t.Fatalf("id %q, err %v", id, err)
 	}
-	if c := calls(); len(c) != 2 || !has(c[1], "review=PRR_9", "thread=PRRT_1", "body=Cap it at MaxDelay.") {
+	if c := calls(); len(c) != 2 || !c[1].Has("review=PRR_9", "thread=PRRT_1", "body=Cap it at MaxDelay.") {
+		t.Fatalf("calls %q", c)
+	}
+
+	// A reply with no pending review starts one, at the head on screen, so not when that moved.
+	reply := gittest.Rule{Has: "addPullRequestReviewThreadReply(input", Out: `{"data":{"addPullRequestReviewThreadReply":{"comment":{"id":"C10"}}}}`}
+	review := gittest.Rule{Has: "addPullRequestReview(input", Out: `{"data":{"addPullRequestReview":{"pullRequestReview":{"id":"PRR_new"}}}}`}
+	calls = gittest.FakeToolCalls(t, "gh", reply, review, ghTarget("bbb", ""))
+	if _, err := AddComment(repo, 7, "aaa", NewComment{Thread: "PRRT_1", Body: "Cap it."}); !errors.Is(err, ErrHeadMoved) || len(calls()) != 1 {
+		t.Fatalf("head moved: %v, calls %q", err, calls())
+	}
+	calls = gittest.FakeToolCalls(t, "gh", reply, review, ghTarget("aaa", ""))
+	if _, err := AddComment(repo, 7, "aaa", NewComment{Thread: "PRRT_1", Body: "Cap it."}); err != nil {
+		t.Fatal(err)
+	}
+	if c := calls(); len(c) != 3 || !c[1].Has("pr=PR_7", "commit=aaa") || !c[2].Has("review=PRR_new", "thread=PRRT_1") {
 		t.Fatalf("calls %q", c)
 	}
 }
@@ -119,9 +140,9 @@ func TestGithubEditDeleteResolve(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := calls()
-	q := func(i int) string { return strings.Join(c[i].Args, " ") }
-	if len(c) != 4 || !has(c[0], "id=C9", "body=Better words.") || !has(c[1], "id=C9") ||
-		!strings.Contains(q(2), " resolveReviewThread(") || !has(c[2], "thread=T1") || !strings.Contains(q(3), "unresolveReviewThread(") {
+	q := func(i int) string { return c[i].Stdin }
+	if len(c) != 4 || !c[0].Has("id=C9", "body=Better words.") || !c[1].Has("id=C9") ||
+		!strings.Contains(q(2), " resolveReviewThread(") || !c[2].Has("thread=T1") || !strings.Contains(q(3), "unresolveReviewThread(") {
 		t.Fatalf("calls %q", c)
 	}
 	// An id kijk did not get from the forge is refused before any call.
@@ -140,7 +161,7 @@ func TestGithubSubmit(t *testing.T) {
 	if err := SubmitReview(repo, 7, "aaa", "approve"); err != nil {
 		t.Fatal(err)
 	}
-	if c := calls(); len(c) != 2 || !has(c[1], "review=PRR_9", "event=APPROVE", "body=Looks good.") {
+	if c := calls(); len(c) != 2 || !c[1].Has("review=PRR_9", "event=APPROVE", "body=Looks good.") {
 		t.Fatalf("calls %q", c)
 	}
 
@@ -149,7 +170,7 @@ func TestGithubSubmit(t *testing.T) {
 	if err := SubmitReview(repo, 7, "aaa", "changes"); err != nil {
 		t.Fatal(err)
 	}
-	if c := calls(); len(c) != 2 || !has(c[1], "pr=PR_7", "commit=aaa", "event=REQUEST_CHANGES", "body=") {
+	if c := calls(); len(c) != 2 || !c[1].Has("pr=PR_7", "commit=aaa", "event=REQUEST_CHANGES", "body=") {
 		t.Fatalf("calls %q", c)
 	}
 
@@ -169,7 +190,7 @@ func TestGithubSubmit(t *testing.T) {
 	if err := SubmitReview(repo, 7, "aaa", "comment"); err != nil {
 		t.Fatal(err)
 	}
-	if c := calls(); !has(c[1], "event=COMMENT", "body=") {
+	if c := calls(); !c[1].Has("event=COMMENT", "body=") {
 		t.Fatalf("calls %q", c)
 	}
 	if err := SubmitReview(repo, 7, "aaa", "merge"); err == nil || len(calls()) != 2 {
@@ -203,14 +224,14 @@ func TestGithubSummary(t *testing.T) {
 	if err := SetSummary(repo, 7, "aaa", "Looks good."); err != nil {
 		t.Fatal(err)
 	}
-	if c := calls(); len(c) != 2 || !has(c[1], "pr=PR_7", "commit=aaa", "body=Looks good.") || strings.Contains(strings.Join(c[1].Args, " "), "event") {
+	if c := calls(); len(c) != 2 || !c[1].Has("pr=PR_7", "commit=aaa", "body=Looks good.") || strings.Contains(c[1].Stdin, "event") {
 		t.Fatalf("calls %q", c)
 	}
 	calls = gittest.FakeToolCalls(t, "gh", add, update, ghTarget("aaa", "PRR_9"))
 	if err := SetSummary(repo, 7, "aaa", "Looks good, one question."); err != nil {
 		t.Fatal(err)
 	}
-	if c := calls(); len(c) != 2 || !has(c[1], "review=PRR_9", "body=Looks good, one question.") {
+	if c := calls(); len(c) != 2 || !c[1].Has("review=PRR_9", "body=Looks good, one question.") {
 		t.Fatalf("calls %q", c)
 	}
 	// No summary and no review: nothing to write.

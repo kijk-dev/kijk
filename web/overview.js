@@ -1,16 +1,16 @@
-import { el, get, svg } from './api.js';
+import { el, get, svg, keepFocus } from './api.js';
 import { setView, isCurrent } from './view.js';
 import { cachedView, loadView, onView, age } from './prdata.js';
 import { avatar, comment } from './threads.js';
-import { FORGE } from './pr.js';
+import { forgeWords } from './pr.js';
 import { mac } from './keys.js';
 import { threadOpts, writable, summarySlot, commentFoot } from './drafts.js';
 
 // The Overview tab of a pull request: title, reviewers, description, checks as graphs and the
 // conversation. Tab n 0 is the folder's own branch before it has a pull request.
 
-// hooks: branch(): {branch, base, ahead, forge, create}; own(n), whether n is the branch's pull
-// request; say(text) and announce(text).
+// hooks: branch(): {branch, base, ahead, forge, create}, with forge as in the PR line's answer;
+// own(n), whether n is the branch's pull request; say(text) and announce(text).
 let hooks = {};
 let view = null;
 let asList = false; // the checks show as a list, not graphs
@@ -47,7 +47,7 @@ export async function openOverview(viewer, root, tab) {
   if (!tab.n) return drawBranch(v);
   const known = cachedView(root, tab.n);
   if (known) draw(v, known);
-  else viewer.replaceChildren(el('p', 'empty', `Fetching #${tab.n}…`));
+  else viewer.replaceChildren(el('p', 'empty', `Fetching ${tab.num || '#'}${tab.n}…`));
   try {
     await loadView(root, tab.n);
   } catch (err) {
@@ -79,12 +79,15 @@ function column(v, ...parts) {
   return doc;
 }
 
+// Building the page moves the kept comment box and draft editors, so keepFocus wraps all of it.
 function draw(v, res) {
-  // The comment box is one element that moves into the new page, and the move takes its focus.
-  const typing = v.viewer.contains(document.activeElement) && document.activeElement.matches('input, textarea') ? document.activeElement : null;
-  const at = typing && [typing.selectionStart, typing.selectionEnd];
   v.res = res;
-  const words = FORGE[res.forge?.kind] || FORGE.github;
+  keepFocus(v.viewer, () => column(v, ...content(v, res)));
+  requestAnimationFrame(() => drawEdges(v));
+}
+
+function content(v, res) {
+  const words = forgeWords(res);
   const h1 = el('h1', null, res.title);
   h1.append(' ', el('span', 'muted', `${words.num}${res.number}`));
   const meta = el('div', 'meta');
@@ -130,12 +133,7 @@ function draw(v, res) {
     if (write) box.append(summarySlot(v.root, res.number, res), commentFoot(v.root, res.number, res));
     parts.push(box);
   }
-  column(v, ...parts);
-  if (typing?.isConnected) {
-    typing.focus({ preventScroll: true });
-    if (at[0] != null) typing.setSelectionRange(...at);
-  }
-  requestAnimationFrame(() => drawEdges(v));
+  return parts;
 }
 
 // checks are the CI of the head: a graph per workflow run or pipeline, the end of each failed
@@ -329,7 +327,7 @@ async function copyFailure(res, j, lines, pre, words) {
 
 function drawBranch(v) {
   const b = hooks.branch?.() || {};
-  const words = FORGE[b.forge] || FORGE.github;
+  const words = forgeWords(b);
   const meta = el('div', 'meta');
   meta.append(avatar('you'), el('span', null, 'Your branch, against'), ref(b.base || 'main', 'lane-main'));
   if (b.ahead) meta.append(el('span', null, `· ${b.ahead} not pushed`));

@@ -204,6 +204,20 @@ gid://gitlab/Discussion/c legacy.go:3 old=true orig=3 resolved=true outdated=fal
 	}
 }
 
+// A note on a whole file has no line to show under: it is part of the conversation, as a draft on a
+// whole file is.
+func TestParseGitlabFileNote(t *testing.T) {
+	var pr PR
+	data := `{"project":{"mergeRequest":{"iid":"12","diffHeadSha":"3333","discussions":{"nodes":[{"id":"gid://gitlab/Discussion/f","resolvable":true,"notes":{"nodes":[
+{"author":{"username":"tim"},"body":"Split this file?","position":{"filePath":"retry.go","newPath":"retry.go","oldPath":"retry.go","newLine":null,"oldLine":null,"diffRefs":{"headSha":"3333"}}}]}}]}}}}`
+	if err := parseGitlabPR([]byte(data), &pr); err != nil {
+		t.Fatal(err)
+	}
+	if len(pr.Threads) != 0 || comments(pr.Comments) != "tim: Split this file?" {
+		t.Errorf("threads %s, conversation %s", threads(pr.Threads), comments(pr.Comments))
+	}
+}
+
 // fakeTool puts a gh or glab on PATH that prints answer, and gives the arguments of its last call.
 func fakeTool(t *testing.T, tool, answer string) (args func() []string) {
 	t.Helper()
@@ -215,15 +229,13 @@ func TestListPRsSearch(t *testing.T) {
 	repo := gittest.Repo(t)
 	gittest.Run(t, repo, "remote", "add", "origin", "git@github.com:acme/shop.git")
 	b, _ := os.ReadFile(filepath.Join("testdata", "forge", "github-search.json"))
-	args := fakeTool(t, "gh", string(b))
+	calls := gittest.FakeToolCalls(t, "gh", gittest.Rule{Out: string(b)})
 	res := ListPRs(repo, "webhook")
 	if res.Note != "" || len(res.PRs) != 3 || res.PRs[0].Number != 301 {
 		t.Fatalf("res = %+v", res)
 	}
-	a := strings.Join(args(), " ")
-	if !strings.Contains(a, "-f text=repo:acme/shop is:pr is:open webhook") || !strings.Contains(a, "-f author=repo:acme/shop is:pr is:open author:webhook") ||
-		!strings.Contains(a, "-f branch=repo:acme/shop is:pr is:open head:webhook") || !strings.Contains(a, "--hostname github.com") {
-		t.Errorf("gh was called with %s", a)
+	if c := calls()[0]; !c.Has("--hostname", "github.com", "text=repo:acme/shop is:pr is:open webhook", "author=repo:acme/shop is:pr is:open author:webhook", "branch=repo:acme/shop is:pr is:open head:webhook") {
+		t.Errorf("gh was called with %q", c)
 	}
 }
 
@@ -262,9 +274,11 @@ func TestGitlabDrafts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := addGitlabDrafts(&pr, b); err != nil {
+	var ds []gitlabDraft
+	if err := json.Unmarshal(b, &ds); err != nil {
 		t.Fatal(err)
 	}
+	addGitlabDrafts(&pr, ds)
 	want := `gid://gitlab/Discussion/a retry.go:27 old=false orig=27 resolved=false outdated=false was="" [reply resolve] [tim: Should a 429 count? | sanne: Yes. | draft 51 you: Cap it at MaxDelay.]
 gid://gitlab/Discussion/b retry.go:40 old=false orig=40 resolved=false outdated=true was="" [reply resolve] [tim: Name this delay.]
 gid://gitlab/Discussion/c legacy.go:3 old=true orig=3 resolved=true outdated=false was="" [reply unresolve] [tim: Was anyone calling this?]
@@ -282,9 +296,11 @@ draft-54 legacy.go:3 old=true orig=3 resolved=false outdated=true was="" [draft]
 	}
 	// A comment on a whole file is no summary, even when it is the oldest draft not on a line.
 	var file PR
-	if err := addGitlabDrafts(&file, []byte(`[{"id":53,"note":"Fine.","position":null},{"id":40,"note":"About a.go","position":{"position_type":"file","new_path":"a.go"}}]`)); err != nil {
+	var ds2 []gitlabDraft
+	if err := json.Unmarshal([]byte(`[{"id":53,"note":"Fine.","position":null},{"id":40,"note":"About a.go","position":{"position_type":"file","new_path":"a.go"}}]`), &ds2); err != nil {
 		t.Fatal(err)
 	}
+	addGitlabDrafts(&file, ds2)
 	if file.Summary != "Fine." {
 		t.Errorf("summary %q", file.Summary)
 	}

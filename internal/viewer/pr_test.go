@@ -253,6 +253,45 @@ func TestPRFileIncludes(t *testing.T) {
 	}
 }
 
+// Worktrees share kijk's ref of a pull request's head. A file at the head reads the head this
+// folder showed, not one another worktree fetched since.
+func TestPRFileKeptHead(t *testing.T) {
+	clone, head, base := prRepo(t)
+	wt := filepath.Join(t.TempDir(), "wt")
+	gittest.Run(t, clone, "worktree", "add", "-q", "--detach", wt)
+	rts := &Roots{}
+	rts.SetFolders([]string{clone, wt})
+	srv := http.NewServeMux()
+	cache := t.TempDir()
+	Register(srv, rts, Options{CacheDir: func() (string, error) { return cache, nil }})
+	get := func(root, route string, q url.Values) *httptest.ResponseRecorder {
+		q.Set("root", root)
+		w := httptest.NewRecorder()
+		srv.ServeHTTP(w, httptest.NewRequest("GET", route+"?"+q.Encode(), nil))
+		return w
+	}
+	fakeGh(t, listAnswer, prAnswer("OPEN", head, base), "")
+	if w := get(clone, "/api/pr/view", url.Values{"n": {"7"}}); w.Code != 200 {
+		t.Fatalf("view %d %s", w.Code, w.Body.String())
+	}
+
+	gittest.Run(t, clone, "checkout", "-q", "--detach", head)
+	gittest.Write(t, filepath.Join(clone, "retry.go"), "package shop\n\n// Newer.\n")
+	gittest.Run(t, clone, "commit", "-qam", "Newer")
+	newer := revParse(t, clone, "HEAD")
+	gittest.Run(t, clone, "push", "-q", "origin", "HEAD:refs/pull/7/head")
+	fakeGh(t, listAnswer, prAnswer("OPEN", newer, base), "")
+	if w := get(wt, "/api/pr/view", url.Values{"n": {"7"}}); w.Code != 200 || !strings.Contains(w.Body.String(), `"at":"`+newer+`"`) {
+		t.Fatalf("view in the worktree %d %s", w.Code, w.Body.String())
+	}
+	if w := get(clone, "/api/text", url.Values{"path": {"retry.go"}, "pr": {"7"}}); w.Code != 200 || !strings.Contains(w.Body.String(), "for i := 0;") {
+		t.Errorf("the file at the head the clone showed: %d %s", w.Code, w.Body.String())
+	}
+	if w := get(wt, "/api/text", url.Values{"path": {"retry.go"}, "pr": {"7"}}); w.Code != 200 || !strings.Contains(w.Body.String(), "// Newer.") {
+		t.Errorf("the file at the head the worktree showed: %d %s", w.Code, w.Body.String())
+	}
+}
+
 // When the head cannot be fetched, the pull request still has the checks the forge sent.
 func TestPRViewChecksWithoutHead(t *testing.T) {
 	clone, head, base := prRepo(t)
@@ -265,16 +304,6 @@ func TestPRViewChecksWithoutHead(t *testing.T) {
 	}
 	if !strings.HasPrefix(v.Error, "Cannot fetch #9") || v.Checks == nil {
 		t.Errorf("error %q, checks %v", v.Error, v.Checks)
-	}
-}
-
-// GitLab's words name a merge request with "!", GitHub's a pull request with "#".
-func TestForgeWords(t *testing.T) {
-	if w, s := prWords("gitlab"); w+" "+s != "merge request !" {
-		t.Errorf("gitlab: %q %q", w, s)
-	}
-	if w, s := prWords("github"); w+" "+s != "pull request #" {
-		t.Errorf("github: %q %q", w, s)
 	}
 }
 

@@ -24,7 +24,7 @@ type Options struct {
 
 // Register adds the routes of one folder's views to mux. The caller guards mux.
 func Register(mux *http.ServeMux, rts *Roots, o Options) {
-	a := &api{roots: rts, index: newIndexCache(), hl: newHlCache(), cacheDir: o.CacheDir, ranges: &prRanges{m: map[string][2]string{}, writes: map[string]git.Write{}}}
+	a := &api{roots: rts, index: newIndexCache(), hl: newHlCache(), cacheDir: o.CacheDir, opened: &openedPRs{m: map[string]openedPR{}}}
 	if o.Web != nil {
 		ec := newEngineCache(o.CacheDir, o.Version)
 		mux.HandleFunc("GET /diagram", serveFrame(o.Web, ec))
@@ -51,12 +51,12 @@ func Register(mux *http.ServeMux, rts *Roots, o Options) {
 	mux.HandleFunc("GET /api/pr/view", a.prView)
 	mux.HandleFunc("GET /api/pr/log", a.prLog)
 	mux.HandleFunc("GET /api/pr/since", a.prSince)
-	mux.HandleFunc("POST /api/pr/comment", a.write(a.prComment))
-	mux.HandleFunc("POST /api/pr/comment/edit", a.write(a.prEdit))
-	mux.HandleFunc("POST /api/pr/comment/delete", a.write(a.prDelete))
-	mux.HandleFunc("POST /api/pr/resolve", a.write(a.prResolve))
-	mux.HandleFunc("POST /api/pr/summary", a.write(a.prSummary))
-	mux.HandleFunc("POST /api/pr/submit", a.write(a.prSubmit))
+	mux.HandleFunc("POST /api/pr/comment", a.write(prComment))
+	mux.HandleFunc("POST /api/pr/comment/edit", a.write(prEdit))
+	mux.HandleFunc("POST /api/pr/comment/delete", a.write(prDelete))
+	mux.HandleFunc("POST /api/pr/resolve", a.write(prResolve))
+	mux.HandleFunc("POST /api/pr/summary", a.write(prSummary))
+	mux.HandleFunc("POST /api/pr/submit", a.write(prSubmit))
 	mux.HandleFunc("GET /api/commit-files", a.commitFiles)
 	mux.HandleFunc("POST /api/fetch", a.gitAction(func(req actionRequest) (string, error) { return git.Fetch(req.Root) }))
 	mux.HandleFunc("POST /api/push", a.gitAction(func(req actionRequest) (string, error) { return git.Push(req.Root) }))
@@ -68,7 +68,7 @@ type api struct {
 	index    *indexCache
 	hl       *hlCache
 	cacheDir func() (string, error)
-	ranges   *prRanges
+	opened   *openedPRs
 }
 
 // target resolves the root and path query parameters, or writes the error.
@@ -84,7 +84,7 @@ func (a *api) target(w http.ResponseWriter, r *http.Request) (root, path string,
 		if !ok {
 			return "", "", false
 		}
-		p, err := git.PRFile(root, n, r.URL.Query().Get("path"), a.prFiles())
+		p, err := a.prFile(root, n, r.URL.Query().Get("path"))
 		if err != nil {
 			fail(w, err)
 			return "", "", false
@@ -143,9 +143,11 @@ func (a *api) file(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rel := r.URL.Query().Get("path")
-	changes, err := git.LineChanges(root, rel)
-	if err != nil || r.URL.Query().Get("pr") != "" {
-		changes = []git.LineChange{} // no marks outside git or before the first commit
+	changes := []git.LineChange{} // no marks at a pull request's head, outside git or before the first commit
+	if r.URL.Query().Get("pr") == "" {
+		if c, err := git.LineChanges(root, rel); err == nil {
+			changes = c
+		}
 	}
 	var lfs int64
 	if imageType(rel) != "" {
@@ -264,7 +266,7 @@ type rendered struct {
 
 // readAtPR reads a file an AsciiDoc file at a pull request's head includes, at that head.
 func (a *api) readAtPR(root string, n int, rel string) ([]byte, error) {
-	p, err := git.PRFile(root, n, rel, a.prFiles())
+	p, err := a.prFile(root, n, rel)
 	if err != nil {
 		return nil, err
 	}
@@ -381,18 +383,18 @@ func (a *api) diff(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			return
 		}
-		r, ok := a.ranges.get(root, n)
-		if !ok {
+		p, _ := a.opened.get(root, n)
+		if p.head == "" {
 			http.Error(w, "Open the pull request again", http.StatusConflict)
 			return
 		}
-		hash = r[0] + ".." + r[1]
+		hash = p.split + ".." + p.head
 		if from := q.Get("from"); from != "" {
 			if !git.FullHash(from) {
 				fail(w, git.ErrBadHash)
 				return
 			}
-			hash = from + ".." + r[1] // since the head of your last review
+			hash = from + ".." + p.head // since the head of your last review
 		}
 	}
 	res, err := diff(root, q.Get("path"), q.Get("orig"), mode, hash, context)

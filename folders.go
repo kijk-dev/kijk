@@ -231,11 +231,9 @@ func (l *folderList) wakeLocked() {
 	}
 }
 
-// add adds the folders and asks the folders window to open the last one.
-func (l *folderList) add(fs []savedFolder) (added []bool, err error) { return l.addFor(fs, 0) }
-
-// addFor is add, and opens pull request pr of the last folder when it is not 0.
-func (l *folderList) addFor(fs []savedFolder, pr int) (added []bool, err error) {
+// add adds the folders and asks the folders window to open the last one, at its pull request pr
+// when pr is not 0.
+func (l *folderList) add(fs []savedFolder, pr int) (added []bool, err error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	for _, f := range fs {

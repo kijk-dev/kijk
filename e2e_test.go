@@ -214,6 +214,8 @@ func TestBrowser(t *testing.T) {
 		fold := fileBox("README.md") + `.querySelector('.fold')`
 		b.click("the README.md chevron", fold)
 		b.waitFor("README.md folded", fileBox("README.md")+`.classList.contains('shut')`)
+		b.act("reload", chromedp.Reload())
+		b.waitFor("README.md still folded", fileBox("README.md")+`?.classList.contains('shut') && !`+fileBox(session)+`.classList.contains('shut')`)
 		b.click("the README.md chevron", fold)
 		b.waitFor("README.md open", `!`+fileBox("README.md")+`.classList.contains('shut')`)
 
@@ -342,6 +344,21 @@ func TestBrowser(t *testing.T) {
 		b.waitFor("the view and the note kept", `document.querySelector('.fbox') && document.querySelector('.thr.editing textarea')?.value === 'Half a note' && document.querySelectorAll('.thr.note:not(.editing)').length === 2`)
 		b.evalJS(`window.fetch = e2eFetch`)
 		write(t, filepath.Join(repo, "README.md"), string(readme))
+		b.key("Escape", kb.Escape)
+		b.waitFor("the editor closed", `!document.querySelector('.thr.editing')`)
+
+		// A note not added comes back on its line, also after another tab showed.
+		b.click("a line of redirect.go", redirect+`.querySelector('.tx')`)
+		b.press("addNote")
+		b.waitFor("the note back", `document.activeElement?.matches('.thr.editing textarea') && document.activeElement.value === 'Half a note'`)
+		b.typeText(" more")
+		b.click("Overview", prsRow("Overview"))
+		b.waitFor("the Overview", `document.querySelector('.md.ov')`)
+		b.click("redirect.go in the list", prsRow("redirect.go"))
+		b.waitFor("Branch changes again", redirect)
+		b.click("a line of redirect.go", redirect+`.querySelector('.tx')`)
+		b.press("addNote")
+		b.waitFor("all of the note back", `document.activeElement?.matches('.thr.editing textarea') && document.activeElement.value === 'Half a note more'`)
 		b.key("Escape", kb.Escape)
 		b.waitFor("the editor closed", `!document.querySelector('.thr.editing')`)
 
@@ -572,10 +589,20 @@ func TestBrowser(t *testing.T) {
 		b.waitFor("the end of the failed log", `document.querySelector('.md.ov .joblog .jlhead b')?.textContent === 'test (windows)' && document.querySelector('.md.ov .joblog pre')?.textContent.endsWith('--- FAIL: TestBackoffJitter (0.00s)') && !document.querySelector('.md.ov .joblog button')`)
 		b.waitFor("the conversation", `document.querySelector('.md.ov .thr.conv .cbody')?.textContent.trim() === 'Do we want the attempt number in the delivery log?'`)
 		shots(b, "prs-overview")
-		b.click("List", byText(".md.ov .h2mode button", "List"))
+		b.evalJS(byText(".md.ov .h2mode button", "List") + `.focus()`)
+		b.key("Enter", "\r")
 		b.waitFor("the checks as a list", `!document.querySelector('.md.ov .dag') && document.querySelectorAll('.md.ov .ovlist.jobs li').length === 3`)
+		b.waitFor("the focus still on List", `document.activeElement?.matches('.md.ov .h2mode button') && document.activeElement.textContent === 'List'`)
 		b.click("Graph", byText(".md.ov .h2mode button", "Graph"))
 		b.waitFor("the graph again", `document.querySelector('.md.ov .dag')`)
+
+		// A failed ask says why until an answer comes, also one that the Changes asked for.
+		b.evalJS(`window.e2eFail = 1; { const f = window.fetch; window.fetch = (u, o) => String(u).includes('/api/pr/view') && window.e2eFail-- > 0 ? Promise.resolve(new Response('gh failed', {status: 502})) : f(u, o); }`)
+		b.press("refreshPrs")
+		b.waitFor("why", `document.querySelector('#prs-pr .note.error')?.textContent === 'gh failed'`)
+		b.click("retry.go in the list", prsRow("retry.go"))
+		b.waitFor("why gone after an answer", `document.querySelector('#filetabs .filetab.active')?.firstChild.textContent === 'Changes' && window.e2eFail < 0 && !document.querySelector('#prs-pr .note.error')`)
+		b.click("Overview", prsRow("Overview"))
 
 		// The list again, with the button and with Alt+←.
 		b.click("back", `document.querySelector('#prs-pr .back')`)
@@ -665,6 +692,57 @@ func TestBrowser(t *testing.T) {
 		before := forge.settle() // a call that runs takes in the refresh
 		b.press("refreshPrs")
 		forge.waitFor(t, before, "pullRequest(number")
+
+		// git switch to a branch with another pull request: its threads show at once, not at the next ask.
+		pr482View := `{"number":482,"title":"Fix login redirect loop","state":"OPEN","isDraft":false,"url":"https://github.com/acme/review/pull/482","baseRefName":"main","reviewDecision":"","statusCheckRollup":[],"latestReviews":[]}`
+		forge.set(t, "gh-pr-view.json", strings.NewReplacer("482", "477", "Fix login redirect loop", "Retry webhook delivery with backoff").Replace(pr482View))
+		run(t, repo, "stash", "-q", "-u")
+		run(t, repo, "fetch", "-q", "origin", "refs/pull/477/head")
+		run(t, repo, "switch", "-q", "-c", "retry-webhooks", "FETCH_HEAD")
+		b.waitFor("#477 is this branch's", `document.querySelector('#prs-branch .pr-num')?.textContent === '#477'`)
+		b.click("retry.go in the list", prsRow("retry.go"))
+		b.waitFor("its open thread in Local mode", boxRow(retry, "\t\tif !retryable(err) {")+`?.nextElementSibling?.querySelector('.cbody')?.textContent.trim() === 'Should a 429 count as retryable?'`)
+		b.waitFor("its threads counted on the Overview row", prsRow("Overview")+`?.querySelector('.dir').textContent === '1 open thread'`)
+		forge.set(t, "gh-pr-view.json", pr482View)
+		run(t, repo, "switch", "-q", "fix-login")
+		run(t, repo, "stash", "pop", "-q")
+		b.waitFor("#482 again", `document.querySelector('#prs-branch .pr-num')?.textContent === '#482'`)
+		b.click("session.go in the list", prsRow("session.go"))
+		b.waitFor("its thread again", asked+`?.nextElementSibling?.matches('.thr:not(.note)')`)
+
+		// A refresh keeps the place in a file list, of the branch and of a pull request.
+		b.act("a short window", chromedp.EmulateViewport(1400, 330))
+		for _, panel := range []string{"#prs-branch", "#prs-pr"} {
+			if panel == "#prs-pr" {
+				b.click("As on GitHub", byText("#prs-branch .prmode button", "As on GitHub"))
+			}
+			files := `document.querySelector('` + panel + ` .prs-scroll')`
+			b.waitFor("a list that scrolls", files+`?.scrollHeight > `+files+`.clientHeight + 10`)
+			b.evalJS(files + `.scrollTop = 10`)
+			n := forge.settle()
+			b.press("refreshPrs")
+			forge.waitFor(t, n, "pullRequest(number")
+			forge.settle()
+			b.waitFor("the list in its place", files+`.scrollTop === 10`)
+		}
+		b.click("Local", byText("#prs-pr .prmode button", "Local"))
+		b.act("the window as it was", chromedp.EmulateReset())
+
+		// A thread deleted on GitHub goes from Local mode too.
+		raw, err := os.ReadFile(filepath.Join(forge.dir, "gh-pr-482.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var noThreads obj
+		if err := json.Unmarshal(raw, &noThreads); err != nil {
+			t.Fatal(err)
+		}
+		noThreads["data"].(obj)["repository"].(obj)["pullRequest"].(obj)["reviewThreads"] = obj{"nodes": []obj{}}
+		forge.set(t, "gh-pr-482.json", noThreads)
+		b.waitFor("the thread in Local mode", asked+`?.nextElementSibling?.matches('.thr:not(.note)')`)
+		b.press("refreshPrs")
+		b.waitFor("the thread gone", asked+` && !`+asked+`.nextElementSibling?.matches('.thr:not(.note)') && `+prsRow("session.go")+`.querySelector('.tc')?.dataset.tip === '1 agent note'`)
+		forge.set(t, "gh-pr-482.json", raw)
 
 		// The PR line's title opens the PRs tab on its pull request; ↗ still goes to the website.
 		b.click("the Git tab", gitTab)
@@ -770,7 +848,7 @@ func TestBrowser(t *testing.T) {
 		b.press("submitNote")
 		b.waitFor("the draft under its line", editor+`?.matches('.thr.draftonly:not(.editing)') && `+editor+`.querySelector('.cbody')?.textContent.trim() === 'Name the error.' && !`+editor+`.querySelector('.who').textContent.includes('written on')`)
 		calls := strings.Join(forge.calls()[n:], "\n")
-		if !strings.Contains(calls, "-f commit="+theirs+" -f pr=PR_477") || !strings.Contains(calls, "-f body=Name the error. -F line=10 -f path="+retry+" -f review=PRR_1 -f side=RIGHT") {
+		if !strings.Contains(calls, `{"commit":"`+theirs+`","pr":"PR_477"}`) || !strings.Contains(calls, `{"body":"Name the error.","line":10,"path":"`+retry+`","review":"PRR_1","side":"RIGHT"}`) {
 			t.Fatalf("the comment's calls:\n%s", calls)
 		}
 
@@ -783,7 +861,7 @@ func TestBrowser(t *testing.T) {
 		b.click("the reply strip", open+`.querySelector('.foot input')`)
 		b.typeText("Cap Retry-After at MaxDelay too.")
 		b.key("Enter", "\r")
-		forge.waitFor(t, n, "-f review=PRR_1 -f thread=T1")
+		forge.waitFor(t, n, `"review":"PRR_1","thread":"T1"}`)
 		b.waitFor("the reply as a draft", `(c => c?.matches('.c.mine') && c.querySelector('.chip.draft') && c.querySelector('.cbody').textContent.trim() === 'Cap Retry-After at MaxDelay too.')([...`+open+`.querySelectorAll('.c')].at(-1))`)
 		b.waitFor("the strip empty", open+`.querySelector('.foot input').value === ''`)
 
@@ -795,12 +873,12 @@ func TestBrowser(t *testing.T) {
 		b.evalJS(`document.activeElement.select()`)
 		b.typeText("Name the error: ev.ID.")
 		b.press("submitNote")
-		forge.waitFor(t, n, "-f body=Name the error: ev.ID. -f id=C50")
+		forge.waitFor(t, n, `{"body":"Name the error: ev.ID.","id":"C50"}`)
 		b.waitFor("the new text", editor+`?.querySelector('.cbody')?.textContent.trim() === 'Name the error: ev.ID.' && !`+editor+`.querySelector('textarea')`)
 		forge.after(t, "delete", "gh-pr-477.json", pr477(theirs, main, func(ts []obj) []obj { return append(ts, mine("Name the error: ev.ID.")) }))
 		b.evalJS(readme + `.scrollIntoView({block: 'center'})`)
 		b.click("Delete", readme+`.querySelector('[aria-label=Delete]')`)
-		forge.waitFor(t, n, "-f id=C40")
+		forge.waitFor(t, n, `{"id":"C40"}`)
 		b.waitFor("the website's draft gone", `!`+fileBox("README.md")+`.querySelector('.thr') && document.querySelector('#prs-pr .reviewbox .head').textContent === 'Your review1 draft'`)
 
 		// Resolve and unresolve happen at once.
@@ -813,7 +891,7 @@ func TestBrowser(t *testing.T) {
 		forge.after(t, "resolve", "gh-pr-477.json", resolved(true))
 		b.evalJS(open + `.scrollIntoView({block: 'center'})`)
 		b.click("Resolve", open+`.querySelector('.thead button')`)
-		forge.waitFor(t, n, "resolveReviewThread(input: {threadId: $thread}) { thread { id } } } -f thread=T1")
+		forge.waitFor(t, n, `resolveReviewThread(input: {threadId: $thread}) { thread { id } } }","variables":{"thread":"T1"}`)
 		b.waitFor("the thread folded", open+`?.matches('.thr.folded') && `+open+`.textContent === 'Resolved · tim: Should a 429 count as retryable? · 2 replies'`)
 		b.click("the resolved thread", open)
 		forge.after(t, "unresolve", "gh-pr-477.json", resolved(false))
@@ -826,38 +904,8 @@ func TestBrowser(t *testing.T) {
 		b.click("Resolve", open+`.querySelector('.thead button')`)
 		b.waitFor("the reason", open+`?.querySelector('.thead + .error')?.textContent === 'gh: Resource not accessible by integration' && !`+open+`.matches('.folded')`)
 		forge.set(t, "gh-resolve.json", ghData(obj{}))
-
-		// Someone pushed since kijk showed the diff: kijk writes nothing, keeps the text, shows the new
-		// head, and moves the editor to its line there.
-		push := filepath.Join(t.TempDir(), "push")
-		run(t, t.TempDir(), "clone", "-q", origin, push)
-		run(t, push, "fetch", "-q", "origin", "refs/pull/477/head")
-		run(t, push, "checkout", "-q", "FETCH_HEAD")
-		write(t, filepath.Join(push, retry), strings.Replace(retryGo, "\t}\n\treturn err\n}", "\t}\n\t// Every attempt failed.\n\n\treturn err\n}", 1))
-		run(t, push, "commit", "-qam", "Say why")
-		run(t, push, "push", "-q", "origin", "HEAD:refs/pull/477/head")
-		theirs = gitOut(t, push, "rev-parse", "HEAD")
-		forge.set(t, "gh-target.json", target(theirs, ""))
-		forge.set(t, "gh-pr-477.json", resolved(false))
-		other := boxRow(retry, "\treturn err")
-		b.evalJS(other + `.scrollIntoView({block: 'center'})`)
-		b.hover("another line", other)
-		b.click("+", other+`.querySelector('.addc')`)
-		b.waitFor("the editor", `document.activeElement?.matches('.thr.editing textarea')`)
-		b.typeText("Wrap it.")
-		before := len(forge.calls())
-		b.press("submitNote")
-		b.waitFor("the reason, on the line's new place", `(e => e && e.querySelector('.error')?.textContent === '#477 has new commits. kijk shows them now; add your comment there.' && e.querySelector('textarea').value === 'Wrap it.' && `+
-			`e.querySelector('.thead').textContent === 'New comment · line 26' && e.previousElementSibling?.querySelector('.tx')?.textContent === '\treturn err')(document.querySelector('.thr.editing'))`)
-		if strings.Contains(strings.Join(forge.calls()[before:], "\n"), "addPullRequestReviewThread(") {
-			t.Fatal("kijk wrote a comment on a head it did not show")
-		}
-		b.waitFor("the new head", boxHas(retry, "add", "\t// Every attempt failed."))
-		b.evalJS(`document.querySelector('.thr.editing textarea').focus()`)
-		b.press("submitNote")
-		forge.waitFor(t, before, "-f body=Wrap it. -F line=26 -f path="+retry)
-		b.waitFor("the editor closed", `!document.querySelector('.thr.editing')`)
-		forge.set(t, "gh-target.json", target(theirs, "PRR_1"))
+		b.press("refreshPrs")
+		b.waitFor("the reason gone with the next answer", open+`?.matches('.thr:not(.folded)') && !`+open+`.querySelector('.thead + .error')`)
 
 		// Escape closes a new comment, and + on the same line gives its text back.
 		half := boxRow(retry, "\t\t\treturn ctx.Err()")
@@ -871,6 +919,15 @@ func TestBrowser(t *testing.T) {
 		b.hover("the line again", half)
 		b.click("+", half+`.querySelector('.addc')`)
 		b.waitFor("the text back", `document.activeElement?.matches('.thr.editing textarea') && document.activeElement.value === 'Half a thought'`)
+		// What is typed stays also when another tab shows.
+		b.typeText(" More.")
+		b.click("Overview", prsRow("Overview"))
+		b.waitFor("the Overview", `document.querySelector('.md.ov')`)
+		b.click("retry.go in the list", prsRow("retry.go"))
+		b.waitFor("the Changes again", half)
+		b.hover("the line again", half)
+		b.click("+", half+`.querySelector('.addc')`)
+		b.waitFor("all of the text back", `document.activeElement?.matches('.thr.editing textarea') && document.activeElement.value === 'Half a thought More.'`)
 		b.key("Escape", kb.Escape)
 		shots(b, "prs-drafts")
 
@@ -882,8 +939,16 @@ func TestBrowser(t *testing.T) {
 				return append(ts, mine("Name the error: ev.ID."))
 			})
 		}
+		// The refresh key asks again, also while an older read is on its way.
+		b.evalJS(`{ const f = window.fetch; let held = false; const go = new Promise(r => window.e2eGo = r);
+			window.fetch = (u, o) => { const p = f(u, o); if (held || !String(u).includes('/api/pr/view')) return p; held = true; return p.then(r => go.then(() => r)); }; }`)
+		n = forge.settle()
+		b.click("Overview", prsRow("Overview"))
+		forge.waitFor(t, n, "pullRequest(number")
+		forge.settle()
 		forge.set(t, "gh-pr-477.json", full())
 		b.press("refreshPrs")
+		b.evalJS(`e2eGo()`)
 		box := `document.querySelector('#prs-pr .reviewbox')`
 		b.waitFor("the review box", box+`?.querySelector('.head').textContent === 'Your review3 drafts · 1 from GitHub' && `+
 			`[...`+box+`.querySelectorAll('.mode button')].map(x => x.textContent + ':' + x.getAttribute('aria-pressed') + ':' + x.disabled).join('|') === 'Comment:true:false|Approve:false:false|Request changes:false:false' && `+
@@ -906,8 +971,12 @@ func TestBrowser(t *testing.T) {
 		b.click("the comment box", foot+`.querySelector('input')`)
 		b.typeText("Looks good, one question on Retry-After.")
 		b.waitFor("the comment typed", foot+`.querySelector('input').value === 'Looks good, one question on Retry-After.'`)
+		// A read that started before the write answers only after it: what shows is still the write.
+		b.evalJS(`{ const f = window.fetch; let wrote; const done = new Promise(r => wrote = r);
+			window.fetch = (u, o) => { const p = f(u, o); return String(u).includes('/api/pr/view') ? p.then(r => done.then(() => r)) : String(u).includes('/api/pr/summary') ? p.finally(wrote) : p; }; }`)
+		b.press("refreshPrs")
 		b.click("Add to review", byText(".md.ov .thr.conv .foot button", "Add to review"))
-		forge.waitFor(t, n, "updatePullRequestReview(input: {pullRequestReviewId: $review, body: $body}) { pullRequestReview { id } } } -f body="+said+" -f review=PRR_1")
+		forge.waitFor(t, n, `updatePullRequestReview(input: {pullRequestReviewId: $review, body: $body}) { pullRequestReview { id } } }","variables":{"body":"`+said+`","review":"PRR_1"}`)
 		b.waitFor("the summary in the box", box+`.querySelector('textarea').value === 'Looks good, one question on Retry-After.' && `+foot+`.querySelector('input').value === ''`)
 		b.waitFor("the summary as a draft", `(c => c?.querySelector('.chip.draft') && c.querySelector('.who').textContent.includes('· sent with your review') && c.querySelector('.cbody').textContent === `+jsString(said)+`)(document.querySelector('.md.ov .thr.conv .c.mine.summary'))`)
 		shots(b, "prs-overview-review")
@@ -917,15 +986,17 @@ func TestBrowser(t *testing.T) {
 		b.evalJS(`(a => { a.focus(); a.setSelectionRange(a.value.length, a.value.length) })(` + box + `.querySelector('textarea'))`)
 		n = len(forge.calls())
 		b.typeText(" Thanks.")
-		b.waitFor("not saved yet", box+`.querySelector('.saved').textContent === 'Not saved · Ctrl Enter saves it'`)
+		saveKey := map[bool]string{false: "Ctrl", true: "⌘"}[b.mac]
+		b.waitFor("not saved yet", box+`.querySelector('.saved').textContent === 'Not saved · `+saveKey+` Enter saves it'`)
 		shots(b, "prs-summary-unsaved")
+		forge.settle()
 		if strings.Contains(strings.Join(forge.calls()[n:], "\n"), "updatePullRequestReview(") {
 			t.Fatal("kijk saved the summary on a key press")
 		}
 		forge.after(t, "update", "gh-pr-477.json", withSummary(full(), summary))
 		forge.after(t, "update", "gh-target.json", targetWith(theirs, "PRR_1", summary))
 		b.press("submitNote")
-		forge.waitFor(t, n, "-f body="+summary+" -f review=PRR_1")
+		forge.waitFor(t, n, `{"body":"`+summary+`","review":"PRR_1"}`)
 		b.waitFor("saved", box+`.querySelector('.saved').hidden && `+box+`.querySelector('textarea').value === `+jsString(summary))
 
 		// The check lists what goes out; Escape goes back with nothing lost.
@@ -938,6 +1009,7 @@ func TestBrowser(t *testing.T) {
 		shots(b, "prs-check")
 		b.key("Escape", kb.Escape)
 		b.waitFor("the check closed, nothing lost", `!document.querySelector('.confirm') && !document.querySelector('.backdrop') && `+box+`.querySelector('textarea').value === `+jsString(summary)+` && `+box+`.querySelector('.mode button[aria-pressed=true]').textContent === 'Approve'`)
+		forge.settle()
 		if strings.Contains(strings.Join(forge.calls(), "\n"), "submitPullRequestReview(") {
 			t.Fatal("Escape posted the review")
 		}
@@ -957,10 +1029,64 @@ func TestBrowser(t *testing.T) {
 		forge.after(t, "submit", "gh-target.json", target(theirs, ""))
 		n = len(forge.calls())
 		b.key("Enter", "\r")
-		forge.waitFor(t, n, "-f body="+summary+" -f event=APPROVE -f review=PRR_1")
+		forge.waitFor(t, n, `{"body":"`+summary+`","event":"APPROVE","review":"PRR_1"}`)
 		b.waitFor("posted", `!document.querySelector('.confirm') && document.querySelector('#statusbar').textContent.includes('Posted your review on #477') && `+
 			box+`.querySelector('.head').textContent === 'Your reviewno drafts yet' && `+box+`.querySelector('textarea').value === '' && `+box+`.querySelector('.mode button[aria-pressed=true]').textContent === 'Comment' && `+
 			box+`.querySelector('button.primary').disabled && window.e2eCounts.some(u => u.endsWith('name=review'))`)
+
+		// Someone pushed since kijk showed the diff: kijk writes nothing, keeps the text, shows the new
+		// head, and moves the editor to its line there. The review went out, so the comment starts a new
+		// one on the new head.
+		b.click("retry.go", prsRow("retry.go"))
+		b.waitFor("retry.go in Changes", boxRow(retry, "\treturn err"))
+		forge.settle()
+		push := filepath.Join(t.TempDir(), "push")
+		run(t, t.TempDir(), "clone", "-q", origin, push)
+		run(t, push, "fetch", "-q", "origin", "refs/pull/477/head")
+		run(t, push, "checkout", "-q", "FETCH_HEAD")
+		write(t, filepath.Join(push, retry), strings.Replace(retryGo, "\t}\n\treturn err\n}", "\t}\n\t// Every attempt failed.\n\n\treturn err\n}", 1))
+		run(t, push, "commit", "-qam", "Say why")
+		run(t, push, "push", "-q", "origin", "HEAD:refs/pull/477/head")
+		theirs = gitOut(t, push, "rev-parse", "HEAD")
+		forge.set(t, "gh-target.json", target(theirs, ""))
+		forge.set(t, "gh-pr-477.json", pr477(theirs, main, same))
+		forge.set(t, "gh-review.json", ghData(obj{"addPullRequestReview": obj{"pullRequestReview": obj{"id": "PRR_2"}}}))
+		other := boxRow(retry, "\treturn err")
+		b.evalJS(other + `.scrollIntoView({block: 'center'})`)
+		b.hover("another line", other)
+		b.click("+", other+`.querySelector('.addc')`)
+		b.waitFor("the editor", `document.activeElement?.matches('.thr.editing textarea')`)
+		b.typeText("Wrap it.")
+		b.key("Escape", kb.Escape)
+		b.click("+", other+`.querySelector('.addc')`)
+		b.waitFor("the text back", `document.activeElement?.matches('.thr.editing textarea') && document.activeElement.value === 'Wrap it.'`)
+		before := len(forge.calls())
+		b.press("submitNote")
+		b.waitFor("the reason, on the line's new place", `(e => e && e.querySelector('.error')?.textContent === '#477 has new commits. kijk shows them now; add your comment there.' && e.querySelector('textarea').value === 'Wrap it.' && `+
+			`e.querySelector('.thead').textContent === 'New comment · line 26' && e.previousElementSibling?.querySelector('.tx')?.textContent === '\treturn err')(document.querySelector('.thr.editing'))`)
+		if strings.Contains(strings.Join(forge.calls()[before:], "\n"), "addPullRequestReviewThread(") {
+			t.Fatal("kijk wrote a comment on a head it did not show")
+		}
+		b.waitFor("the new head", boxHas(retry, "add", "\t// Every attempt failed."))
+		b.evalJS(`document.querySelector('.thr.editing textarea').focus()`)
+		b.press("submitNote")
+		forge.waitFor(t, before, `{"body":"Wrap it.","line":26,"path":"`+retry+`","review":"PRR_2","side":"RIGHT"}`)
+		if calls := strings.Join(forge.calls()[before:], "\n"); !strings.Contains(calls, `{"commit":"`+theirs+`","pr":"PR_477"}`) {
+			t.Fatalf("the new review is not on the new head:\n%s", calls)
+		}
+		b.waitFor("the editor closed", `!document.querySelector('.thr.editing')`)
+		// The comment is sent: its old line offers its text no more.
+		was := boxRow(retry, "\t// Every attempt failed.")
+		b.hover("the line it was on", was)
+		b.click("+", was+`.querySelector('.addc')`)
+		b.waitFor("an empty editor", `document.activeElement?.matches('.thr.editing textarea') && document.activeElement.value === ''`)
+		b.key("Escape", kb.Escape)
+
+		// kijk cannot fetch a newer head: it shows the head it has and says why.
+		run(t, origin, "update-ref", "-d", "refs/pull/477/head")
+		forge.set(t, "gh-pr-477.json", pr477(strings.Repeat("e", 40), main, same))
+		b.press("refreshPrs")
+		b.waitFor("why the head is old", `document.querySelector('#prs-pr .note.error')?.textContent.startsWith('Cannot fetch the new commits of #477 from origin: ') && `+boxHas(retry, "add", "\t// Every attempt failed."))
 
 		// On your own pull request GitHub refuses Approve and Request changes.
 		b.click("back", `document.querySelector('#prs-pr .back')`)
@@ -1019,6 +1145,8 @@ func TestBrowser(t *testing.T) {
 			b.press("prsTab")
 			b.click("!12", prRow(12))
 			b.waitFor("!12", `document.querySelector('#prs-pr .pr-num')?.textContent === '!12' && document.querySelectorAll('#viewer .fbox').length >= 3`)
+			b.waitFor("the Changes named with !", `document.querySelector('#viewer .allfiles').getAttribute('aria-label') === 'Changes of !12' && `+
+				fileBox("README.md")+`.querySelector('[aria-label="Open the whole file"]').dataset.tip === 'Open the whole file\nat !12'`)
 			return b
 		}
 
@@ -1081,14 +1209,14 @@ func TestBrowser(t *testing.T) {
 		b.click("Since your review", byText("#prs-pr .prmode.since .mode button", "Since your review"))
 		near := boxRow(session, "func check16() bool {")
 		b.waitFor("only the line put back", `document.querySelectorAll('#viewer .fbox').length === 1 && `+near)
-		b.evalJS(`window.e2ePosts = []; { const f = window.fetch; window.fetch = (u, o) => (String(u).includes('/api/pr/comment') && e2ePosts.push(JSON.parse(o.body)), f(u, o)); }`)
 		b.hover("a line", near)
 		b.click("+", near+`.querySelector('.addc')`)
 		b.waitFor("the editor", `document.activeElement?.matches('#viewer textarea')`)
 		b.typeText("Why 16?")
+		n = len(forge.calls())
 		b.press("submitNote")
 		at := lineOf(onMain, "func check16() bool {")
-		b.waitFor("the comment with its line in the target", fmt.Sprintf(`window.e2ePosts.length === 1 && e2ePosts[0].path === %s && e2ePosts[0].line === %d && e2ePosts[0].oldLine === %d`, jsString(session), at+10, at))
+		forge.waitFor(t, n, fmt.Sprintf(`"new_line":%d,"new_path":%q,"old_line":%d,`, at+10, session, at)) // its line in the target
 		b.noErrors()
 
 		// Below 16.3 the merge request is read only, and the box's place says why.
@@ -1107,7 +1235,11 @@ func TestBrowser(t *testing.T) {
 		repo, origin := reviewRepo(t)
 		forge := newFakeForge(t)
 		reviewForge(t, forge, repo, origin, false)
-		other := filepath.Join(t.TempDir(), "review-other")
+		tmp, err := filepath.EvalSymlinks(t.TempDir()) // as kijk keeps the folder
+		if err != nil {
+			t.Fatal(err)
+		}
+		other := filepath.Join(tmp, "review-other")
 		run(t, repo, "worktree", "add", "-q", "-b", "other", other, "origin/main")
 		claude := t.TempDir()
 		claudeAgent(t, claude, repo, "Fix the login", "idle")
@@ -1130,6 +1262,11 @@ func TestBrowser(t *testing.T) {
 			return `(` + check(path) + ` && !` + fileBox(path) + `.matches('.viewed') && !` + check(path) + `.checked)`
 		}
 		shut := func(path string) string { return fileBox(path) + `?.matches('.shut')` }
+		// drawn is true once the browser drew a box's lines. It skips a box off the screen, and one that
+		// just came on it for a frame or two: then a click on a line hits what is under it.
+		drawn := func(path string) string {
+			return fileBox(path) + `?.querySelector('.fbody').checkVisibility({contentVisibilityAuto: true})`
+		}
 		// still is true once an element is where it was at the poll before, so a click lands on it.
 		still := func(el string) string {
 			return `(r => { const y = Math.round(r.top); const same = window.e2eY === y; window.e2eY = y; return same })(` + el + `.getBoundingClientRect())`
@@ -1178,6 +1315,7 @@ func TestBrowser(t *testing.T) {
 		b.press("markViewed")
 		b.waitFor("retry.go viewed", viewed(retry)+` && `+shut(retry))
 		// On a viewed file, V clears the mark.
+		b.waitFor("the lines of README.md drawn", drawn(readme))
 		b.click("a line of README.md", boxRow(readme, "Webhooks retry five times."))
 		b.press("markViewed")
 		b.waitFor("README.md not viewed", notViewed(readme)+` && !`+shut(readme))
@@ -1241,6 +1379,8 @@ func TestBrowser(t *testing.T) {
 		b.waitFor("ci.yml not viewed", notViewed(ci)+` && !`+rowViewed("ci.yml")+` && `+count("1 of 3 viewed")+` && document.activeElement === `+prsRow("ci.yml"))
 		b.press("markViewed")
 		b.waitFor("ci.yml viewed, README.md next", viewed(ci)+` && `+rowViewed("ci.yml")+` && document.activeElement === `+prsRow("README.md")+` && `+prsRow("README.md")+`.matches('.selected')`)
+		b.settle()
+		b.waitFor("README.md still selected", prsRow("README.md")+`.matches('.selected') && !`+prsRow("ci.yml")+`.matches('.selected')`)
 		// A click on a row's box marks the file and does not open it.
 		before := evalJS[float64](b, `document.querySelector('.allfiles').scrollTop`)
 		b.click("the box of README.md's row", rowCheck("README.md"))
@@ -1432,20 +1572,28 @@ func TestBrowser(t *testing.T) {
 
 		// A comment goes on the line of the forge diff, where retry.go is new: it has no old line,
 		// though the line is unchanged since the review.
-		b.evalJS(`window.e2ePosts = []; { const f = window.fetch; window.fetch = (u, o) => (String(u).includes('/api/pr/comment') && e2ePosts.push(JSON.parse(o.body)), f(u, o)); }`)
 		ret := boxRow(retry, "\treturn err")
 		b.hover("a line", ret)
 		b.click("+", ret+`.querySelector('.addc')`)
 		b.waitFor("the editor", `document.activeElement?.matches('#viewer textarea')`)
 		b.typeText("Wrap the error.")
+		n := len(forge.calls())
 		b.press("submitNote")
-		b.waitFor("the comment on the forge's line", fmt.Sprintf(`window.e2ePosts.length === 1 && e2ePosts[0].path === %s && e2ePosts[0].line === %d && e2ePosts[0].oldLine === 0 && !e2ePosts[0].old && !document.querySelector('#viewer textarea')`, jsString(retry), lineOf(retryGo, "\treturn err")))
+		forge.waitFor(t, n, fmt.Sprintf(`{"body":"Wrap the error.","line":%d,"path":%q,"review":"PRR_1","side":"RIGHT"}`, lineOf(retryGo, "\treturn err"), retry))
+		b.waitFor("the editor closed", `!document.querySelector('#viewer textarea')`)
 
 		// Moving the switch closes an open comment; + on its line gives the text back.
 		b.hover("a line", ret)
 		b.click("+", ret+`.querySelector('.addc')`)
 		b.waitFor("the editor", `document.activeElement?.matches('#viewer textarea')`)
 		b.typeText("Keep me.")
+		// A new answer about #477 draws the view again while the comment is typed: the keys still go in.
+		n = forge.settle()
+		b.press("refreshPrs")
+		forge.waitFor(t, n, "pullRequest(number")
+		forge.settle()
+		b.typeText(" Twice.")
+		b.waitFor("the editor kept its focus", `document.activeElement?.matches('#viewer textarea') && document.activeElement.value === 'Keep me. Twice.'`)
 
 		// Show all changes in the bar goes back.
 		b.click("Show all changes", bar+`.querySelector('button')`)
@@ -1453,7 +1601,7 @@ func TestBrowser(t *testing.T) {
 		b.waitFor("the comment closed", `!document.querySelector('#viewer textarea') && `+ret)
 		b.hover("a line", ret)
 		b.click("+", ret+`.querySelector('.addc')`)
-		b.waitFor("its text back", `document.activeElement?.matches('#viewer textarea') && document.activeElement.value === 'Keep me.'`)
+		b.waitFor("its text back", `document.activeElement?.matches('#viewer textarea') && document.activeElement.value === 'Keep me. Twice.'`)
 		b.key("Escape", kb.Escape)
 		b.waitFor("closed", `!document.querySelector('#viewer textarea')`)
 
@@ -1467,7 +1615,9 @@ func TestBrowser(t *testing.T) {
 		merged := push(false)
 		b.press("refreshPrs")
 		b.waitFor("the switch says two commits", since+`?.dataset.tip.endsWith(' · 2 new commits')`)
-		b.click("Since your review", since)
+		b.evalJS(since + `.focus()`)
+		b.key("Enter", "\r")
+		b.waitFor("the focus still on the switch", `document.activeElement === `+since+` && `+since+`.getAttribute('aria-pressed') === 'true'`)
 		b.waitFor("billing.go left out", bar+`?.firstChild.textContent === 'Since your review · 2 commits · 1 file' && `+boxes+` === `+jsString(retry)+` && `+rows+` === `+jsString(retry))
 
 		// Marking the last file not viewed makes every file viewed: the switch hides, all changes show.
@@ -1485,8 +1635,10 @@ func TestBrowser(t *testing.T) {
 		run(t, work, "checkout", "-q", "sanne")
 		run(t, work, "merge", "-q", "--no-edit", "mainwork")
 		push(false)
+		// What only the new head brings: kijk asks what changed since the head of your last review.
+		b.evalJS(`window.e2eSince = []; { const f = window.fetch; window.fetch = (u, o) => f(u, o).then(r => (String(u).includes('/api/pr/since') && e2eSince.push(String(u)), r)); }`)
 		b.press("refreshPrs")
-		b.waitFor("the new head", `document.querySelector('#viewer .fbox')`)
+		b.waitFor("the question about the new head", `window.e2eSince.some(u => new URL(u, location.href).searchParams.get('from') === `+jsString(merged)+`)`)
 		forge.settle()
 		b.waitFor("the last review kept", reviewed(merged))
 		b.waitFor("no switch", `document.querySelector('#prs-pr .prfiles h3') && !`+sw+` && `+boxes+` === `+jsString(ci+" "+readme+" "+retry))

@@ -23,7 +23,9 @@ func newFakeForge(t *testing.T) *fakeForge {
 	f := &fakeForge{dir: t.TempDir()}
 	gh := `#!/bin/sh
 d=%[1]q
-printf '%%s\n' "home=$HOME gh $(printf '%%s ' "$@" | tr '\n' ' ')" >> "$d/calls.log" # one write, so calls at once do not mix
+in=
+case " $* " in *" --input - "*) in=$(cat) ;; esac
+printf '%%s\n' "home=$HOME gh $(printf '%%s ' "$@" | tr '\n' ' ')$in" >> "$d/calls.log" # one write, so calls at once do not mix
 if [ -f "$d/gh-error.txt" ]; then cat "$d/gh-error.txt" >&2; exit 1; fi
 f=
 m=
@@ -31,7 +33,7 @@ if [ "$1" = pr ]; then
   [ -f "$d/gh-pr-view.json" ] || { echo "no pull requests found for branch" >&2; exit 1; }
   f=gh-pr-view.json
 fi
-case "$*" in
+case "$* $in" in
 *"headRefOid reviews(states: PENDING"*) f=gh-target.json ;;
 *"addPullRequestReviewThreadReply("*) m=reply ;;
 *"addPullRequestReviewThread("*) m=thread ;;
@@ -44,7 +46,7 @@ case "$*" in
 *"resolveReviewThread("*) m=resolve ;;
 *"pullRequests(states"*) f=gh-list.json ;;
 *"search(query"*) f=gh-search.json ;;
-*"pullRequest(number"*) for a; do case "$a" in n=*) f="gh-pr-${a#n=}.json" ;; esac; done ;;
+*"pullRequest(number"*) f="gh-pr-$(printf '%%s' "$in" | sed -n 's/.*"n":\([0-9]*\).*/\1/p').json" ;;
 */actions/jobs/*) for a; do case "$a" in */actions/jobs/*) id=${a#*/actions/jobs/}; f="gh-log-${id%%/logs}.txt" ;; esac; done ;;
 esac
 if [ -n "$m" ]; then
@@ -55,7 +57,9 @@ if [ -n "$f" ] && [ -f "$d/$f" ]; then cat "$d/$f"; else echo "no answer for: $*
 `
 	glab := `#!/bin/sh
 d=%[1]q
-printf '%%s\n' "home=$HOME glab $(printf '%%s ' "$@" | tr '\n' ' ')" >> "$d/calls.log" # one write, so calls at once do not mix
+in=
+case " $* " in *" --input - "*) in=$(cat) ;; esac
+printf '%%s\n' "home=$HOME glab $(printf '%%s ' "$@" | tr '\n' ' ')$in" >> "$d/calls.log" # one write, so calls at once do not mix
 f=
 m=
 host=

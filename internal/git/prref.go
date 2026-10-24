@@ -127,7 +127,7 @@ func PRSince(root, split, from, head string) (Since, error) {
 		s.Rebased = true
 		return s, nil
 	}
-	raw, err := Raw(root, "diff", "--no-ext-diff", "--raw", "--no-abbrev", "-z", "-M", from, head)
+	all, err := PRFiles(root, from, head)
 	if err != nil {
 		return s, err
 	}
@@ -147,13 +147,11 @@ func PRSince(root, split, from, head string) (Since, error) {
 			return s, err
 		}
 	}
-	for _, c := range parseRaw(raw) {
+	for _, c := range all {
 		if ours[c.Path] || (c.Orig != "" && ours[c.Orig]) {
 			s.Files = append(s.Files, c)
 		}
 	}
-	setCounts(s.Files, numstat(root, "-M", from, head))
-	slices.SortFunc(s.Files, func(x, y change) int { return strings.Compare(x.Path, y.Path) })
 	// Commits of the target that came in with a merge are not the author's.
 	n, _ := Run(root, "rev-list", "--count", head, "^"+from, "^"+split)
 	s.Commits, _ = strconv.Atoi(n)
@@ -180,13 +178,16 @@ func SweepPRRefs(root string, open []int) {
 	}
 }
 
-// PRFile is a file as it is at pull request n's head, written once into dir by its blob hash, so
+// PRFile is a file as it is at a pull request's head, written once into dir by its blob hash, so
 // it can be read like a file on disk.
-func PRFile(root string, n int, path, dir string) (string, error) {
+func PRFile(root, head, path, dir string) (string, error) {
+	if !ValidHash(head) {
+		return "", ErrBadHash
+	}
 	if !filepath.IsLocal(filepath.FromSlash(path)) {
 		return "", ErrOutside
 	}
-	blob, err := Run(root, "rev-parse", "--verify", "-q", prRef(n)+":"+path)
+	blob, err := Run(root, "rev-parse", "--verify", "-q", head+":"+path)
 	if err != nil || !ValidHash(blob) {
 		return "", os.ErrNotExist
 	}

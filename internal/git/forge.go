@@ -25,6 +25,22 @@ type forge struct {
 	Web  string `json:"web"`
 }
 
+// Word is what the forge calls a pull request.
+func (f *forge) Word() string {
+	if f.Kind == "gitlab" {
+		return "merge request"
+	}
+	return "pull request"
+}
+
+// Ref is pull request n as the forge writes it: #12 on GitHub, !12 on GitLab.
+func (f *forge) Ref(n int) string {
+	if f.Kind == "gitlab" {
+		return "!" + strconv.Itoa(n)
+	}
+	return "#" + strconv.Itoa(n)
+}
+
 type pullRequest struct {
 	Number    int      `json:"number"`
 	Title     string   `json:"title"`

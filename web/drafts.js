@@ -1,8 +1,8 @@
-import { el, post, storeKey } from './api.js';
-import { loadView } from './prdata.js';
+import { el, post, storeKey, keepFocus } from './api.js';
+import { freshView, onView } from './prdata.js';
 import { avatar } from './threads.js';
 import { iconButton, plural } from './boxes.js';
-import { FORGE, forgeMark } from './pr.js';
+import { forgeMark, forgeWords } from './pr.js';
 import { mac } from './keys.js';
 import { setReviewed } from './viewed.js';
 
@@ -19,8 +19,6 @@ let hooks = {}; // announce(text), say(text), reviewed(root, n)
 export function setupDrafts(h) {
   hooks = h;
 }
-
-export const words = res => FORGE[res?.forge?.kind] || FORGE.github;
 
 // writable says whether kijk may write to the pull request of answer res.
 export const writable = res => !!res?.write?.ok;
@@ -40,13 +38,13 @@ function remember(root, n, id) {
   try { localStorage.setItem(idsKey(root, n), JSON.stringify([...s].slice(-500))); } catch { /* storage blocked */ }
 }
 
-export const wroteHere = (root, n, c) => ids(root, n).has(c.id);
+const wroteHere = (root, n, c) => ids(root, n).has(c.id);
 
 // ----- Sending -----
 
 async function send(root, n, route, body) {
   const res = await post(`pr/${route}`, { root, n, ...body });
-  await loadView(root, n).catch(() => {});
+  await freshView(root, n).catch(() => {});
   return res;
 }
 
@@ -54,33 +52,41 @@ async function send(root, n, route, body) {
 // goes once more only when the head is still at, the one on screen; 409 means the head moved.
 async function shown(root, n, at, route, body) {
   try {
-    return await post(route, { root, n, ...body });
+    return await post(route, { root, n, at, ...body });
   } catch (err) {
     if (err.status !== 409 && err.status !== 428) throw err;
-    const fresh = await loadView(root, n); // shows the new head
+    const fresh = await freshView(root, n); // shows the new head
     if (err.status === 409) throw err;
-    if (fresh.at !== at) throw new Error(`${words(fresh).num}${n} has new commits. kijk shows them now; look again first.`);
-    return post(route, { root, n, ...body });
+    if (fresh.at !== at) throw new Error(`${forgeWords(fresh).num}${n} has new commits. kijk shows them now; look again first.`);
+    return post(route, { root, n, at, ...body });
   }
 }
 
 async function addComment(root, n, at, c) {
   const res = await shown(root, n, at, 'pr/comment', c);
   remember(root, n, res.id);
-  await loadView(root, n).catch(() => {});
+  await freshView(root, n).catch(() => {});
 }
 
 // ----- Text boxes -----
 
 const ctrlEnter = e => e.key === 'Enter' && (mac ? e.metaKey : e.ctrlKey);
 
+// unsent keeps what is typed for a new comment or agent note until it is added, by view, file and
+// the text of its line, so + on that line gives it back, also after the view closed or the line moved.
+const unsent = new Map();
+
+// unsentKey names the text of a new comment or note on a line of view's file path.
+export const unsentKey = (view, path, l) => `${view}\n${path}\n${l.k === '-' ? '-' : '+'}${l.t}`;
+
 // textBox is a text box with its buttons: ok(text) runs on the button or Ctrl+Enter and may throw
-// to show why, cancel() on Cancel or Escape. The text stays when ok fails.
-function textBox(label, text, okText, ok, cancel) {
+// to show why, cancel() on Cancel or Escape. The text stays when ok fails, and under keep in unsent.
+export function textBox(label, text, okText, ok, cancel, keep) {
   const wrap = el('div', 'editbox');
   const area = el('textarea');
   area.setAttribute('aria-label', label);
-  area.value = text;
+  area.value = (keep && unsent.get(keep)) || text;
+  if (keep) area.oninput = () => (area.value.trim() ? unsent.set(keep, area.value) : unsent.delete(keep));
   const error = el('p', 'error');
   error.hidden = true;
   const acts = el('div', 'acts');
@@ -97,6 +103,7 @@ function textBox(label, text, okText, ok, cancel) {
     error.hidden = true;
     try {
       await ok(body);
+      unsent.delete(keep);
     } catch (err) {
       error.textContent = err.message;
       error.hidden = false;
@@ -121,14 +128,10 @@ function textBox(label, text, okText, ok, cancel) {
   return wrap;
 }
 
-// unsent keeps the text of a new comment closed with Escape, by file and line, until it is added.
-const unsent = new Map();
-
 // lineEditor is the box under row l of file f where a new comment is written; done() closes it, and
 // toForge(row), when set, gives the forge diff's row of a row's line. move(row, at) changes the head.
 export function lineEditor(root, n, res, f, l, done, toForge) {
   const ed = { text: l.t };
-  const kept = () => `${root}\n${n}\n${f.path}\n${ed.key}`;
   const box = el('div', 'thr draftonly editing');
   const head = el('div', 'thead');
   const title = el('span');
@@ -140,19 +143,9 @@ export function lineEditor(root, n, res, f, l, done, toForge) {
     if (!ed.row) throw new Error('This line is not in the diff now. Copy your text and add it on another line.');
     const r = (await toForge?.(ed.row)) || ed.row;
     await addComment(root, n, ed.at, { path: f.path, orig: f.orig || '', line: ed.line, old: ed.old, oldLine: r.k === ' ' ? r.o : 0, body });
-    unsent.delete(kept());
     hooks.announce?.(`Comment added to your review on line ${ed.line}`);
     done();
-  }, () => {
-    ed.keep();
-    done();
-  });
-  // keep holds the text not added yet, so + on the same line gives it back.
-  ed.keep = () => {
-    const left = text.querySelector('textarea').value;
-    if (left.trim()) unsent.set(kept(), left);
-    else unsent.delete(kept());
-  };
+  }, done, unsentKey(`${root}\n${n}`, f.path, l));
   c.append(who, text);
   box.append(head, c);
   ed.el = box;
@@ -167,7 +160,6 @@ export function lineEditor(root, n, res, f, l, done, toForge) {
     text.querySelector('textarea').setAttribute('aria-label', `Comment on line ${ed.line}`);
   };
   ed.move(l, res.at);
-  text.querySelector('textarea').value = unsent.get(kept()) || '';
   text.focus();
   return ed;
 }
@@ -185,7 +177,8 @@ export function moveEditor(ed, rows, at) {
 // ----- What a thread box needs to write -----
 
 const editors = new Map(); // a draft being edited: its text box
-const failed = new Map(); // a thread or draft whose write the forge refused: why
+// A thread or draft whose write the forge refused: {why, redraw}, until the next answer.
+const failed = new Map();
 const strips = new Map(); // the reply strips of forge mode, kept across redraws so what is typed stays
 
 // threadOpts are the parts of a thread box that write: who wrote each draft where, its text box and
@@ -194,7 +187,7 @@ export function threadOpts(root, n, res, redraw) {
   const can = writable(res);
   const key = id => `${root}\n${n}\n${id}`;
   const drafts = {
-    where: c => (wroteHere(root, n, c) ? '' : `· written on ${words(res).name}`),
+    where: c => (wroteHere(root, n, c) ? '' : `· written on ${forgeWords(res).name}`),
     body: c => editors.get(key(c.id)) || null,
     acts: c => (!can || editors.has(key(c.id)) ? [] : [
       iconButton(ICON.edit, 'Edit', () => {
@@ -218,7 +211,7 @@ export function threadOpts(root, n, res, redraw) {
     ]),
   };
   // A refusal shows in the thread, under its header.
-  const error = t => [t.id, ...t.comments.map(c => c.id)].map(id => failed.get(key(id))).find(Boolean) || '';
+  const error = t => [t.id, ...t.comments.map(c => c.id)].map(id => failed.get(key(id))?.why).find(Boolean) || '';
   if (!can) return { drafts, error };
   return {
     drafts,
@@ -231,6 +224,14 @@ export function threadOpts(root, n, res, redraw) {
   };
 }
 
+onView((root, n) => {
+  for (const [k, f] of failed) {
+    if (!k.startsWith(`${root}\n${n}\n`)) continue;
+    failed.delete(k);
+    f.redraw();
+  }
+});
+
 // tried runs a write; when the forge refuses it, its reason is kept under k and drawn.
 async function tried(k, redraw, write) {
   const had = failed.delete(k);
@@ -238,7 +239,7 @@ async function tried(k, redraw, write) {
     await write();
     if (had) redraw();
   } catch (err) {
-    failed.set(k, err.message);
+    failed.set(k, { why: err.message, redraw });
     hooks.announce?.(err.message);
     redraw();
     throw err;
@@ -317,7 +318,7 @@ function setReview(root, n, patch) {
 // saveSummary sets the summary on the forge: GitHub's pending review body, GitLab's draft note.
 async function saveSummary(root, n, at, body) {
   await shown(root, n, at, 'pr/summary', { body });
-  await loadView(root, n).catch(() => {});
+  await freshView(root, n).catch(() => {});
   hooks.announce?.('Summary saved');
 }
 
@@ -337,7 +338,7 @@ function tally(root, n, res) {
   }
   for (const c of res?.comments || []) {
     if (!c.draft) continue;
-    if (c.replyTo) replies.push({ c, to: `${c.replyTo} on the ${words(res).kind}` });
+    if (c.replyTo) replies.push({ c, to: `${c.replyTo} on the ${forgeWords(res).kind}` });
     else conv.push(c);
   }
   const web = list => list.filter(d => !wroteHere(root, n, d.c || d)).length;
@@ -407,16 +408,16 @@ export function reviewBox(root, n, res) {
       const r = box.res;
       const t = tally(root, n, r);
       const web = t.web([...t.lines, ...t.replies, ...t.conv]);
-      count.textContent = t.all ? `${plural(t.all, 'draft')}${web ? ` · ${web} from ${words(r).name}` : ''}` : 'no drafts yet';
+      count.textContent = t.all ? `${plural(t.all, 'draft')}${web ? ` · ${web} from ${forgeWords(r).name}` : ''}` : 'no drafts yet';
       const picked = verdict(root, n, r);
-      mode.replaceChildren(...VERDICTS.map(([v, text]) => {
+      keepFocus(mode, () => mode.replaceChildren(...VERDICTS.map(([v, text]) => {
         const b = el('button', null, text);
         b.setAttribute('aria-pressed', v === picked);
         b.disabled = !allowed(r, v);
         if (b.disabled) b.dataset.tip = r.write.why;
         b.onclick = () => setReview(root, n, { verdict: v });
         return b;
-      }));
+      })));
       why.textContent = r.write.why || '';
       why.hidden = !r.write.why;
       // A new summary from the forge shows. Text of the box's own not saved yet stays after it, so
@@ -472,7 +473,7 @@ export function commentFoot(root, n, res) {
     parts.foot.res = res;
     return parts.foot; // kept, so what is typed stays when the Overview draws again
   }
-  const w = words(res);
+  const w = forgeWords(res);
   const foot = el('div', 'foot');
   parts.foot = foot;
   foot.res = res;
@@ -514,7 +515,7 @@ export function commentFoot(root, n, res) {
 // ----- The check before anything is posted -----
 
 function checkRows(root, n, res) {
-  const w = words(res);
+  const w = forgeWords(res);
   const t = tally(root, n, res);
   const rows = [];
   const v = verdict(root, n, res);
@@ -544,7 +545,7 @@ function checkRows(root, n, res) {
 
 function openCheck(root, n, res) {
   if (document.querySelector('.confirm') || nothing(root, n, res)) return;
-  const w = words(res);
+  const w = forgeWords(res);
   const back = document.activeElement;
   const shade = el('div', 'backdrop');
   const box = el('div', 'confirm');
@@ -582,7 +583,7 @@ function openCheck(root, n, res) {
       note.textContent = `Everyone on the ${w.kind} sees it at once.`;
       ok.disabled = cancel.disabled = false;
       hooks.announce?.(err.message);
-      loadView(root, n).catch(() => {});
+      freshView(root, n).catch(() => {});
       return;
     }
     setReview(root, n, { verdict: 'comment' });
@@ -592,7 +593,7 @@ function openCheck(root, n, res) {
     hooks.say?.(said);
     hooks.announce?.(said);
     fetch('/api/count?name=review', { method: 'POST' }).catch(() => {}); // the local kijk counts, also for a remote folder
-    await loadView(root, n).catch(() => {});
+    await freshView(root, n).catch(() => {});
     hooks.reviewed?.(root, n);
   };
   ok.onclick = postIt;

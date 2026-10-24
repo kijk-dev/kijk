@@ -1,14 +1,14 @@
-import { el, get, svg } from './api.js';
+import { el, get, svg, keepFocus } from './api.js';
 import { lineCount, fileRow } from './git.js';
-import { FORGE, forgeMark, prChips } from './pr.js';
+import { forgeMark, forgeWords, prChips, ownPR } from './pr.js';
 import { onKey, keyLabel } from './keys.js';
-import { cachedView, loadView, onView, age } from './prdata.js';
+import { cachedView, loadView, freshView, onView, age } from './prdata.js';
 import { iconButton, plural, markCurrent } from './boxes.js';
 import { avatar, threadCount } from './threads.js';
 import { goToChange, setupChanges } from './changes.js';
 import { setupOverview } from './overview.js';
 import { setupDrafts, reviewBox } from './drafts.js';
-import { setBranchThreads, redrawBranchPanel, wakeBranch } from './review.js';
+import { setBranchThreads, showBranchPanel, redrawBranchPanel, wakeBranch } from './review.js';
 import { marksOf, setViewed, onViewed, listCount, sweep } from './viewed.js';
 import { shown, sinceParts, onSince, ownFile } from './since.js';
 
@@ -55,7 +55,7 @@ export function setupPrs(p) {
   setupChanges({ onTop: (n, path) => selectFile(path), openFile: p.openFile });
   setupDrafts({ announce: p.announce, say: p.say, reviewed: root => { if (root === folder) loadList(); } });
   setupOverview({
-    branch: () => ({ branch: st?.branch, base: st?.total?.base?.replace(/^origin\//, ''), ahead: st?.ahead, forge: line?.forge?.kind, create: line?.create }),
+    branch: () => ({ branch: st?.branch, base: st?.total?.base?.replace(/^origin\//, ''), ahead: st?.ahead, forge: line?.forge, create: line?.create }),
     own: n => n === ownNumber() && onBranch(),
     say: p.say,
     announce: p.announce,
@@ -82,9 +82,9 @@ export function setPrsFolder(key, state) {
 
 export const prsState = () => ({ open: saved.open, mode: saved.mode });
 
-const words = () => FORGE[line?.forge?.kind || list?.forge?.kind] || FORGE.github;
+const words = () => forgeWords(line?.forge ? line : list);
 const forgeKind = () => line?.forge?.kind || list?.forge?.kind || '';
-const ownNumber = () => (['open', 'draft'].includes(line?.pr?.state) ? line.pr.number : 0);
+const ownNumber = () => ownPR(line)?.number || 0;
 // A list needs the forge and its tool; a note on the PR line without a PR says the tool is missing.
 const maybeList = () => !!line?.forge && !(line.note && !line.pr);
 const hasList = () => maybeList() && !list?.note;
@@ -102,7 +102,14 @@ function which() {
 // prsStatus runs after each git status and PR line refresh of the open folder.
 export function prsStatus(status, pr) {
   st = status || st;
+  const was = ownNumber();
   line = pr;
+  if (ownNumber() !== was) {
+    // As after git switch: Local mode shows the new one's threads, and kijk asks about it now.
+    setBranchThreads(cachedView(folder, ownNumber()) || null);
+    lastAsk = 0;
+  }
+  showBranchPanel(status, pr);
   // The tab may have shown before kijk knew the forge, and then asked nothing.
   if (!tabEl.hidden && !lastAsk && line?.forge) refresh();
   else if (maybeList() && !list && !listCall) loadList();
@@ -174,11 +181,10 @@ async function loadList() {
   if (query) search();
 }
 
-async function load(n) {
+async function load(n, fresh) {
   const key = folder;
   try {
-    await loadView(folder, n);
-    failed.delete(n);
+    await (fresh ? freshView : loadView)(folder, n);
   } catch (err) {
     if (key !== folder) return;
     failed.set(n, err.message);
@@ -188,6 +194,7 @@ async function load(n) {
 
 onView((root, n, res) => {
   if (root !== folder) return;
+  failed.delete(n);
   if (n === ownNumber()) setBranchThreads(res);
   draw();
 });
@@ -200,13 +207,14 @@ onSince(root => {
   if (root === folder) draw();
 });
 
-// refresh asks again about what the tab shows. The list is asked too, for the count.
-function refresh() {
+// refresh asks again about what the tab shows. The list is asked too, for the count. fresh, as for
+// the refresh key, does not take the answer of a read already on its way.
+function refresh(fresh) {
   if (!folder || !line?.forge) return;
   lastAsk = Date.now();
   const w = which();
-  if (w.panel === 'pr') load(w.n);
-  else if (ownNumber()) load(ownNumber()); // the threads in Local mode
+  if (w.panel === 'pr') load(w.n, fresh);
+  else if (ownNumber()) load(ownNumber(), fresh); // the threads in Local mode
   if (maybeList()) loadList();
 }
 
@@ -479,10 +487,16 @@ function prHead(n, mine, res, row) {
   return h;
 }
 
+// The review box is a kept element that the draw moves, so keepFocus wraps all of it.
 function drawPR(n, mine) {
+  const top = prEl.querySelector('.prs-scroll')?.scrollTop;
+  keepFocus(prEl, () => prEl.replaceChildren(...prParts(n, mine)));
+  if (top) prEl.querySelector('.prs-scroll').scrollTop = top;
+}
+
+function prParts(n, mine) {
   const res = cachedView(folder, n);
   const row = list?.prs.find(r => r.number === n);
-  const focused = prEl.contains(document.activeElement) ? (document.activeElement.closest('.prfiles ul') ? 'list' : document.activeElement.className) : null;
   const parts = [prHead(n, mine, res, row)];
   const why = failed.get(n) || res?.error;
   if (why) parts.push(el('p', 'note error', why));
@@ -542,15 +556,7 @@ function drawPR(n, mine) {
   parts.push(wrap);
   const box = res && reviewBox(folder, n, res);
   if (box) parts.push(box);
-  // The review box is one element that moves into the new panel; a move loses the focus.
-  const typing = box?.contains(document.activeElement) ? document.activeElement : null;
-  const at = typing && [typing.selectionStart, typing.selectionEnd];
-  prEl.replaceChildren(...parts);
-  if (focused === 'list') ul.querySelector('[tabindex="0"]')?.focus();
-  if (typing?.isConnected) {
-    typing.focus();
-    if (at[0] != null) typing.setSelectionRange(...at);
-  }
+  return parts;
 }
 
 // viewedBox is a file row's Viewed box. It takes no Tab stop: V works on the focused row.
@@ -597,7 +603,7 @@ function selectFile(path) {
 
 onKey('refreshPrs', () => {
   if (!folder || !line?.forge) return false;
-  refresh();
+  refresh(true);
   page.announce(`Asking ${words().name} again`);
 });
 

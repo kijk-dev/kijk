@@ -65,7 +65,7 @@ func TestFolderListKeepsBrokenFileErrorAfterSave(t *testing.T) {
 	os.MkdirAll(filepath.Dir(p), 0o700)
 	os.WriteFile(p, []byte(`{"folders": [`), 0o600)
 	l := newFolderList(p, &viewer.Roots{})
-	if _, err := l.add([]savedFolder{{Path: abs("/api")}}); err != nil {
+	if _, err := l.add([]savedFolder{{Path: abs("/api")}}, 0); err != nil {
 		t.Fatal(err)
 	}
 	if saved, _ := readFolders(p); !slices.Equal(saved, []savedFolder{{Path: abs("/api")}}) {
@@ -86,7 +86,7 @@ func TestFolderListDoesNotOverwriteUnreadableFile(t *testing.T) {
 	os.Chmod(p, 0)
 	t.Cleanup(func() { os.Chmod(p, 0o600) })
 	l := newFolderList(p, &viewer.Roots{})
-	if _, err := l.add([]savedFolder{{Path: "/api"}}); err == nil {
+	if _, err := l.add([]savedFolder{{Path: "/api"}}, 0); err == nil {
 		t.Error("add saved over a file it could not read")
 	}
 	os.Chmod(p, 0o600)
@@ -168,7 +168,7 @@ func TestFolderListUndo(t *testing.T) {
 	p, _ := foldersPath()
 	rts := &viewer.Roots{}
 	l := newFolderList(p, rts)
-	l.add([]savedFolder{{Path: abs("/api")}, {Path: abs("/k"), Open: abs("/k/web")}, {Path: abs("/notes")}})
+	l.add([]savedFolder{{Path: abs("/api")}, {Path: abs("/k"), Open: abs("/k/web")}, {Path: abs("/notes")}}, 0)
 	if !l.remove(abs("/k")) || !l.remove(abs("/notes")) || rts.Has(abs("/k")) {
 		t.Fatal("remove")
 	}
@@ -234,7 +234,7 @@ func TestFolderRowRefreshWhenAsked(t *testing.T) {
 			t.Fatalf("no message with %s", want)
 		}
 	}
-	l.add([]savedFolder{{Path: dir}, {Path: other}})
+	l.add([]savedFolder{{Path: dir}, {Path: other}}, 0)
 	next(`"add":0`)
 	os.WriteFile(filepath.Join(dir, "new.txt"), []byte("a\nb\n"), 0o644)
 	if !l.refresh(dir) || l.refresh("/nope") {
@@ -248,11 +248,11 @@ func TestFolderListOpenPR(t *testing.T) {
 	useConfigDir(t)
 	p, _ := foldersPath()
 	l := newFolderList(p, &viewer.Roots{})
-	l.addFor([]savedFolder{{Path: abs("/shop")}}, 477)
+	l.add([]savedFolder{{Path: abs("/shop")}}, 477)
 	if _, open, _, _ := l.snapshot(); open.Root != abs("/shop") || open.PR != 477 {
 		t.Fatalf("open %+v", open)
 	}
-	l.add([]savedFolder{{Path: abs("/notes")}})
+	l.add([]savedFolder{{Path: abs("/notes")}}, 0)
 	if _, open, _, _ := l.snapshot(); open.Root != abs("/notes") || open.PR != 0 {
 		t.Fatalf("a folder alone opens no pull request: %+v", open)
 	}

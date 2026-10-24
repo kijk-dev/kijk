@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/url"
 	"os/exec"
 	"regexp"
@@ -51,7 +52,7 @@ func forgeTool(root string) (f *forge, tool, note string) {
 	}
 	tool = map[string]string{"github": "gh", "gitlab": "glab"}[f.Kind]
 	if _, err := exec.LookPath(tool); err != nil {
-		return f, tool, "Install " + tool + " and log in to see " + map[string]string{"gh": "pull request", "glab": "merge request"}[tool] + " status"
+		return f, tool, "Install " + tool + " and log in to see " + f.Word() + " status"
 	}
 	return f, tool, ""
 }
@@ -125,24 +126,29 @@ func graphQL[T any](tool string, f *forge, query string, vars map[string]any, ou
 	return parse(data, out)
 }
 
-// callGraphQL gives the data and the error messages of a GraphQL call. Strings go as -f, numbers
-// as -F, in name order, so a call reads the same each time.
+// callGraphQL gives the data and the error messages of a GraphQL call. gh reads it on stdin, as a
+// comment can pass a Windows command line's length; glab gets -f and -F fields in name order.
 func callGraphQL(tool string, f *forge, query string, vars map[string]any) (json.RawMessage, []string, error) {
-	args := []string{"api", "graphql", "--hostname", f.Host, "-f", "query=" + query}
-	keys := make([]string, 0, len(vars))
-	for k := range vars {
-		keys = append(keys, k)
-	}
-	slices.Sort(keys)
-	for _, k := range keys {
-		switch v := vars[k].(type) {
-		case int:
-			args = append(args, "-F", k+"="+strconv.Itoa(v))
-		default:
-			args = append(args, "-f", fmt.Sprintf("%s=%v", k, v))
+	args := []string{"api", "graphql", "--hostname", f.Host}
+	var in []byte
+	if tool == "gh" {
+		b, err := json.Marshal(map[string]any{"query": query, "variables": vars})
+		if err != nil {
+			return nil, nil, err
+		}
+		in, args = b, append(args, "--input", "-")
+	} else {
+		args = append(args, "-f", "query="+query)
+		for _, k := range slices.Sorted(maps.Keys(vars)) {
+			switch v := vars[k].(type) {
+			case int:
+				args = append(args, "-F", k+"="+strconv.Itoa(v))
+			default:
+				args = append(args, "-f", fmt.Sprintf("%s=%v", k, v))
+			}
 		}
 	}
-	b, err := runTool(tool, args...)
+	b, err := runToolIn(in, tool, args...)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -445,9 +451,9 @@ type PR struct {
 	PRRow
 	State     string     `json:"state"` // "open", "draft", "merged" or "closed"
 	Body      string     `json:"body"`  // markdown; the viewer renders it
-	HeadOid   string     `json:"headOid"`
-	BaseOid   string     `json:"baseOid,omitempty"`   // GitHub: the target's tip; GitLab: the merge base
-	MergeBase string     `json:"mergeBase,omitempty"` // when the forge gives it
+	HeadOid   string     `json:"-"`
+	BaseOid   string     `json:"-"` // GitHub: the target's tip; GitLab: the merge base
+	MergeBase string     `json:"-"` // when the forge gives it
 	Commits   int        `json:"commits"`
 	Reviewers []Reviewer `json:"reviewers"`
 	Approvals int        `json:"approvals"`
@@ -537,19 +543,15 @@ func ViewPR(root string, n int) (*PR, *forge, error) {
 		pr.Write = gitlabWrite(gitlabVersion(f.Host))
 		if pr.Write.OK {
 			// Submit publishes every draft, so kijk writes only when it can show them all.
-			if out, err := runTool("glab", "api", "--hostname", f.Host, gitlabMR(f, n)+"/draft_notes"); err != nil {
+			if ds, err := gitlabDrafts(f, n); err != nil {
 				pr.Write = Write{Note: "Cannot read your drafts: " + toolNote(tool, err)}
-			} else if err := addGitlabDrafts(&pr, out); err != nil {
-				pr.Write = Write{Note: "Cannot read your drafts: " + err.Error()}
+			} else {
+				addGitlabDrafts(&pr, ds)
 			}
 		}
 	}
 	if pr.State == "merged" || pr.State == "closed" {
-		word := "pull request"
-		if tool == "glab" {
-			word = "merge request"
-		}
-		pr.Write = Write{Note: "This " + word + " is " + pr.State + "."}
+		pr.Write = Write{Note: "This " + f.Word() + " is " + pr.State + "."}
 	}
 	return &pr, f, nil
 }
@@ -612,7 +614,7 @@ type gitlabDraft struct {
 	ID           int    `json:"id"`
 	Note         string `json:"note"`
 	DiscussionID string `json:"discussion_id"`
-	Position     *struct {
+	Position     struct {
 		OldPath string `json:"old_path"`
 		NewPath string `json:"new_path"`
 		OldLine int    `json:"old_line"`
@@ -624,7 +626,7 @@ type gitlabDraft struct {
 // general is a draft not on a line, not on a file and not a reply.
 func (d gitlabDraft) general() bool {
 	p := d.Position
-	return d.DiscussionID == "" && (p == nil || p.NewLine == 0 && p.OldLine == 0 && p.NewPath == "" && p.OldPath == "")
+	return d.DiscussionID == "" && p.NewLine == 0 && p.OldLine == 0 && p.NewPath == "" && p.OldPath == ""
 }
 
 // summaryDraft is the id of the summary of your review: your oldest general draft; 0 for none.
@@ -640,11 +642,7 @@ func summaryDraft(ds []gitlabDraft) int {
 
 // addGitlabDrafts adds your draft notes: a reply goes into its thread, a draft on a line is a new
 // comment, any other is part of the conversation.
-func addGitlabDrafts(pr *PR, out []byte) error {
-	var ds []gitlabDraft
-	if err := json.Unmarshal(out, &ds); err != nil {
-		return err
-	}
+func addGitlabDrafts(pr *PR, ds []gitlabDraft) {
 	summary := summaryDraft(ds)
 	for _, d := range ds {
 		c := Comment{ID: strconv.Itoa(d.ID), Author: pr.Me, Body: d.Note, Draft: true}
@@ -659,25 +657,44 @@ func addGitlabDrafts(pr *PR, out []byte) error {
 			}
 			continue
 		}
-		p := d.Position
 		if d.ID == summary {
 			pr.Drafts--
 			pr.Summary = c.Body
 			continue
 		}
-		if p == nil || p.NewLine == 0 && p.OldLine == 0 {
-			pr.Comments = append(pr.Comments, c) // also a comment on a whole file, which has no line to show under
+		p := d.Position
+		th, ok := gitlabThread(p.NewPath, p.OldPath, p.NewLine, p.OldLine, p.HeadSha, pr.HeadOid)
+		if !ok {
+			pr.Comments = append(pr.Comments, c)
 			continue
 		}
-		th := Thread{ID: "draft-" + c.ID, Path: cmp.Or(p.NewPath, p.OldPath), Line: p.NewLine, Draft: true, Comments: []Comment{c}}
-		if p.NewLine == 0 {
-			th.Path, th.Line, th.Old = cmp.Or(p.OldPath, p.NewPath), p.OldLine, true
-		}
-		th.OrigLine = th.Line
-		th.Outdated = p.HeadSha != "" && p.HeadSha != pr.HeadOid
+		th.ID, th.Draft, th.Comments = "draft-"+c.ID, true, []Comment{c}
 		pr.Threads = append(pr.Threads, th)
 	}
-	return nil
+}
+
+// gitlabThread places a note on its new line, else on the old line of a removed row; a note on a
+// whole file has no line (false). A note written on another head is outdated, as GitLab has no flag.
+func gitlabThread(newPath, oldPath string, newLine, oldLine int, noteHead, head string) (Thread, bool) {
+	if newLine == 0 && oldLine == 0 {
+		return Thread{}, false
+	}
+	t := Thread{Path: cmp.Or(newPath, oldPath), Line: newLine, Outdated: noteHead != "" && noteHead != head}
+	if newLine == 0 {
+		t.Path, t.Line, t.Old = cmp.Or(oldPath, newPath), oldLine, true
+	}
+	t.OrigLine = t.Line
+	return t, true
+}
+
+// gitlabDrafts are your draft notes on merge request n.
+func gitlabDrafts(f *forge, n int) ([]gitlabDraft, error) {
+	out, err := gitlabREST(f, "GET", gitlabMR(f, n)+"/draft_notes", nil)
+	if err != nil {
+		return nil, err
+	}
+	var ds []gitlabDraft
+	return ds, json.Unmarshal(out, &ds)
 }
 
 const githubPRQuery = `query($owner: String!, $name: String!, $n: Int!) {
@@ -944,7 +961,7 @@ func parseGitlabPR(data []byte, pr *PR) error {
 								Position  *struct {
 									FilePath, NewPath, OldPath string
 									NewLine, OldLine           int
-									DiffRefs                   *struct{ HeadSha string }
+									DiffRefs                   struct{ HeadSha string }
 								}
 							}
 						}
@@ -1013,17 +1030,11 @@ func parseGitlabPR(data []byte, pr *PR) error {
 			if n.Author != nil {
 				c.Author = n.Author.Username
 			}
-			if th == nil && n.Position != nil {
-				p := n.Position
-				th = &Thread{ID: d.ID, Path: cmp.Or(p.NewPath, p.FilePath), Line: p.NewLine, Resolved: d.Resolved, Comments: []Comment{},
-					CanReply: true, CanResolve: d.Resolvable && !d.Resolved, CanUnresolve: d.Resolvable && d.Resolved}
-				if p.NewLine == 0 {
-					th.Path, th.Line, th.Old = cmp.Or(p.OldPath, p.FilePath), p.OldLine, true
-				}
-				th.OrigLine = th.Line
-				// GitLab has no outdated flag: a note written on another head may sit on lines that changed.
-				if p.DiffRefs != nil && p.DiffRefs.HeadSha != pr.HeadOid {
-					th.Outdated = true
+			if p := n.Position; th == nil && p != nil {
+				if t, ok := gitlabThread(cmp.Or(p.NewPath, p.FilePath), cmp.Or(p.OldPath, p.FilePath), p.NewLine, p.OldLine, p.DiffRefs.HeadSha, pr.HeadOid); ok {
+					t.ID, t.Resolved, t.Comments = d.ID, d.Resolved, []Comment{}
+					t.CanReply, t.CanResolve, t.CanUnresolve = true, d.Resolvable && !d.Resolved, d.Resolvable && d.Resolved
+					th = &t
 				}
 			}
 			if th != nil {

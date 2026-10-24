@@ -1,4 +1,4 @@
-import { el } from './api.js';
+import { el, keepFocus } from './api.js';
 import { line, setView, isCurrent, LINE_HEIGHT } from './view.js';
 import { lineCount, kind } from './git.js';
 import { onKey, keyLabel } from './keys.js';
@@ -13,9 +13,9 @@ import { onKey, keyLabel } from './keys.js';
 //   marks(res)             {line(l) → extra class, hunk(h) → a tag or null}, optional
 //   decorate(v, b, rows)   {extra, under, end}: rows needed outside the hunks, the elements under
 //                          a row by its key ('n:12' new side, 'o:7' old side), and those at the end
-//   onAdd(v, path, row) and addTip: the + on a line, optional; row is {k, o, n, t}. With addOld
-//                          removed lines get one too; addLabel names it ("Add a note on line").
-//                          With addNear, an unchanged line gets one only that near a change
+//   add                    the + on a line, or none: {on(v, path, row), tip, label, old, near}; row
+//                          is {k, o, n, t}. label names it ("Add a note on line"); old gives removed
+//                          lines one too; near gives an unchanged line one only that near a change
 //   onTop(path)            the file at the top of the view changed
 //   drawn(v, b)            a box was drawn, optional
 //   marked(f)              the file has threads or notes, for Alt+↓ and Alt+↑
@@ -24,13 +24,13 @@ import { onKey, keyLabel } from './keys.js';
 //   viewable(f)            false when f cannot be marked viewed; optional
 //   banner()               an element above the boxes, or null; optional
 
-export const ICON = {
+const ICON = {
   plus: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>',
   chev: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>',
   doc: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/></svg>',
 };
 
-export const num = n => n.toLocaleString('en-US');
+const num = n => n.toLocaleString('en-US');
 export const plural = (n, word) => `${num(n)} ${word}${n === 1 ? '' : 's'}`;
 
 // Files whose diff nobody reads start folded.
@@ -39,7 +39,7 @@ const GENERATED = ['go.sum', 'package-lock.json', 'yarn.lock', 'pnpm-lock.yaml',
 const lines = f => (f.add || 0) + (f.del || 0);
 const generated = path => GENERATED.includes(path.split('/').pop()) || path.endsWith('.min.js');
 const heavy = f => generated(f.path) || lines(f) > BIG;
-export const HEAD = 34; // px, a box's sticky header
+const HEAD = 34; // px, a box's sticky header
 const AHEAD = 5 * LINE_HEIGHT + HEAD; // a jump puts its target this far below the top
 
 export function iconButton(svg, label, act) {
@@ -101,6 +101,8 @@ async function build(v) {
   scroll.addEventListener('scroll', () => {
     cancelAnimationFrame(frame);
     frame = requestAnimationFrame(() => {
+      if (scroll.scrollTop === v.placed) return;
+      v.placed = null;
       const a = anchor(v);
       if (a) v.src.onTop?.(a.b.f.path);
     });
@@ -157,7 +159,7 @@ async function updateBoxes(v, change) {
   const els = [...(banner ? [banner] : []), ...[...v.boxes.values()].map(b => b.el)];
   v.end.textContent = files.length ? 'End of the changes' : 'No changes yet';
   if (els.length + 1 !== v.scroll.children.length || els.some((e, i) => v.scroll.children[i] !== e)) {
-    v.scroll.replaceChildren(...els, v.end);
+    keepFocus(v.scroll, () => v.scroll.replaceChildren(...els, v.end));
     moved = true;
   }
   if (moved) restore(v, a);
@@ -197,7 +199,6 @@ const startsOpen = b => b.state === 'changed' || !(b.state === 'viewed' || heavy
 // keptOpen is the user's own fold or open of a box, while its viewed mark is as it was then.
 function keptOpen(v, b) {
   const k = v.tab.folds?.[b.f.path];
-  if (typeof k === 'boolean') return b.state ? undefined : k;
   return k?.state === b.state && (k.at || 0) === b.at ? k.open : undefined;
 }
 
@@ -246,14 +247,14 @@ export function marksChanged(v) {
 
 function fold(v, b, open) {
   b.open = open;
-  v.tab.folds = { ...v.tab.folds, [b.f.path]: v.src.viewed ? { open, state: b.state, at: b.at } : open };
+  v.tab.folds = { ...v.tab.folds, [b.f.path]: { open, state: b.state, at: b.at } };
   v.save();
   drawHead(v, b);
   showOpen(v, b);
   if (open && !b.loaded) loadBox(v, b);
 }
 
-export function drawHead(v, b) {
+function drawHead(v, b) {
   const f = b.f;
   const slash = f.path.lastIndexOf('/');
   const name = f.path.slice(slash + 1);
@@ -305,7 +306,7 @@ export function redraw(v, paths) {
 
 // loadBox fetches a box's diff and draws it when it changed. A call during a fetch fetches again
 // after it, so a change that came in the meantime is not lost.
-export async function loadBox(v, b) {
+async function loadBox(v, b) {
   if (b.loading) {
     b.again = true;
     return b.loading;
@@ -373,7 +374,7 @@ export async function drawBox(v, b) {
   if (res.error || res.binary || res.folder || !res.hunks.length) {
     const say = res.error || (res.binary ? 'Binary file changed' : res.folder ? 'Folder with its own git repository'
       : b.f.orig ? `Renamed from ${b.f.orig}, no content changes` : 'No content changes');
-    b.body.replaceChildren(...top, el('p', 'fempty', say), ...(deco.end || []), ...[...(deco.under?.values() || [])].flat());
+    keepFocus(b.body, () => b.body.replaceChildren(...top, el('p', 'fempty', say), ...(deco.end || []), ...[...(deco.under?.values() || [])].flat()));
     b.starts = [];
     v.src.drawn?.(v, b);
     return;
@@ -411,7 +412,8 @@ export async function drawBox(v, b) {
     sep.append(tx);
     out.push(sep);
     const changes = h.lines.flatMap((l, j) => (l.k === ' ' ? [] : [j]));
-    const near = j => !v.src.addNear || changes.some(c => Math.abs(c - j) <= v.src.addNear);
+    const add = v.src.add;
+    const near = j => !add.near || changes.some(c => Math.abs(c - j) <= add.near);
     h.lines.forEach((l, j) => {
       const row = line([l.o, l.n], l.x || l.t, `${l.k === '+' ? 'add ch-add' : l.k === '-' ? 'del' : ''}${marks.line?.(l) || ''}`);
       if (l.k !== ' ' && (j === 0 || h.lines[j - 1].k === ' ')) starts.push(row);
@@ -421,14 +423,14 @@ export async function drawBox(v, b) {
         row.dataset.n = l.n;
         row.dataset.t = l.t;
       }
-      if (v.src.onAdd && (l.k !== '-' || v.src.addOld) && (l.k !== ' ' || near(j))) {
-        const add = el('button', 'addc');
-        add.innerHTML = ICON.plus;
-        add.tabIndex = -1;
-        add.setAttribute('aria-label', `${v.src.addLabel || 'Add a note on line'} ${l.k === '-' ? l.o : l.n}`);
-        add.dataset.tip = v.src.addTip;
-        add.onclick = () => v.src.onAdd(v, b.f.path, l);
-        row.insertBefore(add, row.lastChild);
+      if (add && (l.k !== '-' || add.old) && (l.k !== ' ' || near(j))) {
+        const plus = el('button', 'addc');
+        plus.innerHTML = ICON.plus;
+        plus.tabIndex = -1;
+        plus.setAttribute('aria-label', `${add.label || 'Add a note on line'} ${l.k === '-' ? l.o : l.n}`);
+        plus.dataset.tip = add.tip;
+        plus.onclick = () => add.on(v, b.f.path, l);
+        row.insertBefore(plus, row.lastChild);
       }
       if (v.cur?.path === b.f.path && v.cur.n === l.n && l.k !== '-') row.classList.add('cur');
       out.push(row);
@@ -439,21 +441,21 @@ export async function drawBox(v, b) {
   // What has no line left, as on a deleted file, shows at the end of the box.
   for (const [key, els] of under) if (!placed.has(key)) out.push(...els);
   out.push(...(deco.end || []));
-  b.body.replaceChildren(...out);
+  keepFocus(b.body, () => b.body.replaceChildren(...out));
   b.starts = starts;
   v.src.drawn?.(v, b);
 }
 
 // ----- Keys: the current line, and jumps across boxes -----
 
-export function setCur(v, row) {
+function setCur(v, row) {
   v.scroll.querySelector('.ln.cur')?.classList.remove('cur');
   row.classList.add('cur');
   v.cur = { path: row.closest('.fbox').dataset.path, n: Number(row.dataset.n) };
 }
 
 // curRow is the current line: the one last clicked or moved to, else the first changed line in view.
-export function curRow(v) {
+function curRow(v) {
   const cur = v.scroll.querySelector('.ln.cur');
   if (cur) return cur;
   const top = v.scroll.scrollTop + HEAD;
@@ -480,7 +482,7 @@ function viewKey(v, e) {
 
 // step jumps to the next (dir 1) or previous (dir -1) element that pick(box) gives, across open
 // boxes, drawing a box on the way when it is not drawn yet. has(box) skips a box without drawing it.
-export async function step(v, dir, pick, has = () => true) {
+async function step(v, dir, pick, has = () => true) {
   if (!v.scroll) return;
   const at = v.scroll.scrollTop + AHEAD;
   const boxes = [...v.boxes.values()].filter(b => b.open);
@@ -513,11 +515,11 @@ onKey('prevNote', markKey(-1));
 // The note key opens the view's editor on the current line: an agent note, or a comment.
 onKey('addNote', () => {
   const v = last && isCurrent(last) ? last : null;
-  if (!v?.scroll || !v.src.onAdd || document.activeElement?.closest('textarea, input')) return false;
+  if (!v?.scroll || !v.src.add || document.activeElement?.closest('textarea, input')) return false;
   const row = curRow(v);
   if (!row?.querySelector('.addc')) return; // a line the forge takes no comment on
   setCur(v, row);
-  v.src.onAdd(v, row.closest('.fbox').dataset.path, { k: row.dataset.k, o: Number(row.dataset.o) || 0, n: Number(row.dataset.n), t: row.dataset.t });
+  v.src.add.on(v, row.closest('.fbox').dataset.path, { k: row.dataset.k, o: Number(row.dataset.o) || 0, n: Number(row.dataset.n), t: row.dataset.t });
 });
 
 // markCurrent is the key V in the open box view: it marks the current file viewed and goes to the
@@ -547,9 +549,14 @@ function currentBox(v) {
   return anchor(v)?.b;
 }
 
-// goToBox scrolls to a file's box.
+// goToBox scrolls to a file's box. Near the end the view can stop short of it, with another file at
+// the top: the box's file stays the one at the top until the view moves.
 export function goToBox(v, path, focus) {
   const b = v.boxes.get(path);
-  if (b) v.scroll.scrollTop = b.el.offsetTop - 12;
+  if (b) {
+    v.scroll.scrollTop = b.el.offsetTop - 12;
+    v.placed = v.scroll.scrollTop;
+    v.src.onTop?.(path);
+  }
   if (focus) v.scroll.focus({ preventScroll: true });
 }

@@ -2,7 +2,7 @@ import { el, get } from './api.js';
 import { isCurrent } from './view.js';
 import { boxView, showBoxes, noBoxes, goToBox, redraw, drawBox, marksChanged, oldLineOf } from './boxes.js';
 import { cachedView, loadView, onView } from './prdata.js';
-import { placeForge, threadCount } from './threads.js';
+import { placeForge, threadCount, threadsChanged } from './threads.js';
 import { lineEditor, moveEditor, threadOpts, writable } from './drafts.js';
 import { keyLabel } from './keys.js';
 import { marksOf, setViewed, onViewed } from './viewed.js';
@@ -57,7 +57,7 @@ function source(v) {
     fetch: (f, context) => diffOf(v, f, context, v.from),
     headParts: f => [threadCount(threadsOn(v, f.path))],
     openFile: f => hooks.openFile?.(n, f.path),
-    openTip: `Open the whole file\nat #${n}`,
+    openTip: `Open the whole file\nat ${v.num}${n}`,
     decorate: (v2, b, rows) => {
       const again = redrawFile(b.f.path);
       let threads = threadsOn(v, b.f.path);
@@ -75,9 +75,6 @@ function source(v) {
       }
       return placed;
     },
-    addOld: true,
-    addLabel: 'Comment on line',
-    addTip: `Comment on this line\n${keyLabel('addNote')}`,
     onTop: path => hooks.onTop?.(n, path),
     marked: f => threadsOn(v, f.path).length > 0,
     viewed: f => (prFile(v, f) && v.marks?.state(prFile(v, f))) || '',
@@ -92,14 +89,15 @@ function source(v) {
 export async function openChanges(viewer, root, tab, keep, save) {
   const v = boxView(viewer, root, tab, keep, save, {});
   v.n = tab.n;
-  v.label = `Changes of #${tab.n}`;
+  v.num = tab.num || '#';
+  v.label = `Changes of ${v.num}${tab.n}`;
   v.from = '';
   Object.assign(v.src, source(v));
   v.reload = () => {}; // the forge diff does not follow the files on disk
   view = v;
   const known = cachedView(root, tab.n);
   if (known) await show(v, known);
-  else viewer.replaceChildren(el('p', 'empty', `Fetching #${tab.n}…`));
+  else viewer.replaceChildren(el('p', 'empty', `Fetching ${v.num}${tab.n}…`));
   try {
     await loadView(root, tab.n);
   } catch (err) {
@@ -133,32 +131,26 @@ async function show(v, res) {
   if (!sh.files) return; // kijk asks what changed since your review; onSince shows it
   const moved = before && (v.from !== sh.from || v.since !== !!sh.since?.on);
   v.since = !!sh.since?.on;
-  if (moved && v.editor) {
-    // Its row is of the other diff: close it, and + on its line gives the text back.
-    v.editor.keep();
-    v.editor = null;
-  }
+  // Its row is of the other diff: close it, and + on its line gives the text back.
+  if (moved) v.editor = null;
   v.shownKey = shownKey(sh);
   v.files = sh.files;
   v.from = sh.from;
   v.bar = sh.since?.answer ? sinceBar(v.root, v.n, sh.since, sh.files) : null;
-  v.scroll?.setAttribute('aria-label', v.from ? `Changes of #${v.n} since your review` : v.label);
-  v.src.onAdd = writable(res) ? (v2, path, l) => openEditor(v, path, l) : null;
-  // The forge knows no line of the head of your last review.
-  v.src.addOld = !v.from;
-  // GitHub takes a comment only on a line of its own diff, which shows 3 lines around a change.
-  v.src.addNear = res.forge?.kind === 'github' ? 3 : 0;
+  v.scroll?.setAttribute('aria-label', v.from ? `${v.label} since your review` : v.label);
+  // The forge knows no line of the head of your last review, and GitHub takes a comment only on a
+  // line of its own diff, which shows 3 lines around a change.
+  v.src.add = writable(res) && {
+    on: (v2, path, l) => openEditor(v, path, l), label: 'Comment on line', tip: `Comment on this line\n${keyLabel('addNote')}`,
+    old: !v.from, near: res.forge?.kind === 'github' ? 3 : 0,
+  };
   if (!res.files.length) return noBoxes(v, res.error || 'No changes');
   if (!v.scroll) v.goal = goals.get(`${v.root}\n${v.n}`) || '';
   goals.delete(`${v.root}\n${v.n}`);
   await showBoxes(v);
   if (moved && v.scroll && isCurrent(v)) v.scroll.scrollTop = 0;
   // A new thread or draft leaves the diff as it was, so its box would not draw again by itself.
-  if (before && isCurrent(v)) {
-    const on = (r, path) => JSON.stringify((r.threads || []).filter(t => t.path === path));
-    const changed = v.files.map(f => f.path).filter(path => on(before, path) !== on(res, path));
-    if (changed.length) redraw(v, changed);
-  }
+  if (before && isCurrent(v)) redraw(v, threadsChanged(before, res, v.files.map(f => f.path)));
 }
 
 // openEditor opens the box for a new comment under row l of a file.

@@ -91,3 +91,11 @@ func TestCreateURLAndNotes(t *testing.T) {
 		t.Errorf("auth note = %q", n)
 	}
 }
+
+// Each forge names a pull request in its own words: GitLab's is a merge request, !12.
+func TestForgeWords(t *testing.T) {
+	gh, gl := &forge{Kind: "github"}, &forge{Kind: "gitlab"}
+	if got := gh.Word() + " " + gh.Ref(12) + ", " + gl.Word() + " " + gl.Ref(12); got != "pull request #12, merge request !12" {
+		t.Errorf("got %q", got)
+	}
+}

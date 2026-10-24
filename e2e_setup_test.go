@@ -24,6 +24,7 @@ import (
 	"github.com/chromedp/cdproto/emulation"
 	"github.com/chromedp/cdproto/input"
 	cdppage "github.com/chromedp/cdproto/page"
+	cdpruntime "github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
 	"github.com/chromedp/chromedp/kb"
 
@@ -178,11 +179,32 @@ func (p page) waitFor(what, js string) {
 
 func (p page) waitLong(d time.Duration, what, js string) {
 	p.t.Helper()
+	// Not chromedp.Poll: it runs in the frame's last-made JS world, which in Brave is Shields' own
+	// world, where the page's globals do not exist.
 	ctx, cancel := context.WithTimeout(p.ctx, d+5*time.Second)
 	defer cancel()
-	poll := chromedp.Poll[bool]("!!("+js+")", chromedp.WithPollingTimeout(d), chromedp.WithPollingInterval(100*time.Millisecond))
-	if _, err := chromedp.Run(ctx, poll); err != nil {
-		p.fail("waiting for %s: %v", what, err)
+	var last error
+	for end := time.Now().Add(d); time.Now().Before(end); time.Sleep(100 * time.Millisecond) {
+		ok, err := chromedp.Run(ctx, chromedp.Evaluate[bool]("!!("+js+")"))
+		if err == nil && ok {
+			return
+		}
+		last = err
+	}
+	if last != nil {
+		p.fail("waiting for %s: %v", what, last)
+	}
+	p.fail("waiting for %s: timeout", what)
+}
+
+// settle waits two frames, so the page has run what it put off to the next frame, as a scroll event.
+func (p page) settle() {
+	p.t.Helper()
+	ctx, cancel := context.WithTimeout(p.ctx, stepTimeout)
+	defer cancel()
+	await := func(e *cdpruntime.EvaluateParams) { e.AwaitPromise = new(true) }
+	if _, err := chromedp.Run(ctx, chromedp.Evaluate[bool](`new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => r(true))))`, await)); err != nil {
+		p.fail("waiting two frames: %v", err)
 	}
 }
 

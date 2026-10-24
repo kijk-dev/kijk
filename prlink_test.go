@@ -13,6 +13,7 @@ func TestParsePRLink(t *testing.T) {
 		"https://github.com/acme/shop/pull/477/files?diff=unified#top": "github.com acme/shop 477",
 		"https://gitlab.com/group/sub/api/-/merge_requests/12":         "gitlab.com group/sub/api 12",
 		"https://gitlab.example.org/team/api/-/merge_requests/3/diffs": "gitlab.example.org team/api 3",
+		"https://gitlab.example.org:8443/team/api/-/merge_requests/3":  "gitlab.example.org team/api 3",
 		"https://github.com/acme/shop/issues/477":                      "",
 		"https://github.com/acme/shop":                                 "",
 		"https://github.com/acme/shop/pull/x":                          "",
@@ -68,6 +69,17 @@ func TestPRClone(t *testing.T) {
 	}
 	if got := prClone(link, []string{other}, func() []string { return nil }); got != "" {
 		t.Errorf("no clone: %q", got)
+	}
+}
+
+// A forge on its own port: the clone's origin names the port too.
+func TestPRClonePort(t *testing.T) {
+	isolatedGit(t)
+	repo := gitRepo(t)
+	run(t, repo, "remote", "add", "origin", "https://gitlab.example.org:8443/team/api.git")
+	link, _ := parsePRLink("https://gitlab.example.org:8443/team/api/-/merge_requests/3")
+	if got := prClone(link, []string{repo}, func() []string { return nil }); got == "" {
+		t.Errorf("no clone found for %+v", link)
 	}
 }
 

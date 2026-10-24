@@ -1,10 +1,11 @@
-import { el, get, storeKey } from './api.js';
+import { el, get, storeKey, keepFocus } from './api.js';
 import { isCurrent } from './view.js';
 import { lineCount, ago, fileRow } from './git.js';
-import { forgeMark, FORGE } from './pr.js';
+import { forgeMark, forgeWords, ownPR } from './pr.js';
 import { keyLabel, mac } from './keys.js';
+import { textBox, unsentKey } from './drafts.js';
 import { boxView, showBoxes, noBoxes, redraw, drawBox, iconButton, goToBox, plural } from './boxes.js';
-import { threadEl, outdatedBar, threadCount, avatar, sent } from './threads.js';
+import { threadEl, outdatedBar, threadCount, avatar, sent, threadsChanged } from './threads.js';
 
 // The PRs tab for the folder's own branch: the panel in the sidebar, the Branch changes view, agent
 // notes and Copy for agent. Its pull request's threads come from prs.js.
@@ -62,29 +63,23 @@ export function setBranchFolder(key, icon) {
 
 // refreshBranch runs with each git status refresh. It asks for the branch changes only while the
 // PRs tab or the Branch changes view shows them.
-export async function refreshBranch(st, pr, tgt) {
+export async function refreshBranch(st, pr) {
   status = st;
   prStatus = pr;
-  target = tgt;
+  target = ownPR(pr)?.target || '';
   if (!shown() && !openView()) return;
   await load();
 }
 
 // showBranchPanel draws the panel again after the git status or the PR line learned more, and
 // asks for the branch changes when the panel just showed without them.
-export function showBranchPanel(st, pr, tgt) {
+export function showBranchPanel(st, pr) {
   status = st || status;
   prStatus = pr;
-  target = tgt;
+  target = ownPR(pr)?.target || '';
   if (loading?.key === `${folder}\n${target}`) return; // the load draws the panel when it is done
   if (data) drawPanel();
   else if (shown()) load();
-}
-
-// ownPR is the number of the branch's open pull request, or 0.
-function ownPR() {
-  const p = prStatus?.pr;
-  return p && ['open', 'draft'].includes(p.state) ? p.number : 0;
 }
 
 // wakeBranch loads the branch changes when the panel just showed without them.
@@ -96,12 +91,14 @@ export function redrawBranchPanel() {
   if (data) drawPanel();
 }
 
-// setBranchThreads takes the answer about the branch's pull request, for its threads in Local mode.
+// setBranchThreads takes the answer about the branch's own pull request, for its threads in Local
+// mode, or null when it has none.
 export function setBranchThreads(res) {
+  const before = branchPR;
   branchPR = res;
   if (data) drawPanel();
   const v = openView();
-  if (v) redraw(v, [...new Set((res?.threads || []).map(t => t.path))]);
+  if (v) redraw(v, threadsChanged(before, res, [...v.boxes.keys()]));
 }
 
 export function focusBranchList() {
@@ -171,7 +168,7 @@ function saveCopiedThreads() {
 }
 
 // openThreads are the threads of the branch's pull request that still want an answer.
-const openThreads = () => (branchPR && branchPR.number === ownPR() ? sent(branchPR.threads).filter(t => !t.resolved && !t.outdated) : []);
+const openThreads = () => (branchPR ? sent(branchPR.threads).filter(t => !t.resolved && !t.outdated) : []);
 const threadLines = new Map(); // thread id: the line on disk it shows under
 
 function saveNotes() {
@@ -197,12 +194,9 @@ function notesChanged(paths) {
 function drawPanel() {
   if (!folder) return;
   if (!data) return panel.replaceChildren(el('p', 'note', error || 'Loading…'));
-  // The panel redraws on every refresh, so the focus moves to the same control in the new one.
-  const focused = panel.contains(document.activeElement) ? document.activeElement : null;
-  const key = focused?.closest('.prfiles ul') ? 'list' : focused?.dataset.k;
-  panel.replaceChildren(header(), ...(error ? [el('p', 'note error', error)] : []), ...unpushedBar(), fileList(), notesBox());
-  if (key === 'list') focusBranchList();
-  else if (key) panel.querySelector(`[data-k="${key}"]`)?.focus();
+  const top = panel.querySelector('.prs-scroll')?.scrollTop;
+  keepFocus(panel, () => panel.replaceChildren(header(), ...(error ? [el('p', 'note error', error)] : []), ...unpushedBar(), fileList(), notesBox()));
+  if (top) panel.querySelector('.prs-scroll').scrollTop = top;
 }
 
 function header() {
@@ -210,7 +204,7 @@ function header() {
   const top = el('div', 'pr-top');
   const f = prStatus?.forge;
   const p = prStatus?.pr || data.pr;
-  const words = FORGE[f?.kind || 'github'];
+  const words = forgeWords(prStatus);
   if (f) top.append(forgeMark(f.kind));
   if (p) {
     const title = el(p.url ? 'a' : 'span', 'pr-title', p.title);
@@ -308,7 +302,7 @@ function fileList() {
     e.preventDefault();
     e.stopPropagation();
   };
-  const ov = page.overviewRow?.(ownPR());
+  const ov = page.overviewRow?.(ownPR(prStatus)?.number || 0, branchPR);
   if (ov) {
     ov.tabIndex = ul.querySelector('[tabindex="0"]') ? -1 : 0;
     ul.prepend(ov);
@@ -434,8 +428,7 @@ const branchSource = {
     if (v.editor?.path === b.f.path && !v.editor.id) put(`n:${v.editor.n}`, v.editor.el);
     return { extra, under, end, top: th.bar.length ? outdatedBar(`local:${b.f.path}`, th.bar, { redraw: redrawBox }) : [] };
   },
-  onAdd: (v, path, l) => openEditor(v, path, l.n, l.t),
-  addTip: `Note for the agent\n${keyLabel('addNote')}`,
+  add: { on: (v, path, l) => openEditor(v, path, l.n, l.t), tip: `Note for the agent\n${keyLabel('addNote')}` },
   onTop: path => selectRow(path),
   drawn: (v, b) => {
     if (v.editor?.path === b.f.path) v.editor.el.querySelector('textarea')?.focus({ preventScroll: true });
@@ -521,7 +514,7 @@ async function place(v, b, rows) {
 }
 
 // threadsOn are the threads of the branch's pull request on a file.
-const threadsOn = path => (branchPR && branchPR.number === ownPR() ? sent(branchPR.threads).filter(t => t.path === path) : []);
+const threadsOn = path => (branchPR ? sent(branchPR.threads).filter(t => t.path === path) : []);
 
 // placeThreads puts each thread of the branch's pull request on the line on disk that has the text
 // its line has at the head: the same line, else the nearest one. Other threads go to the bar.
@@ -578,7 +571,7 @@ function replyStrip(t, path, line, text) {
     };
   }
   Object.assign(s, { path, line, text });
-  const words = FORGE[prStatus?.forge?.kind] || FORGE.github;
+  const words = forgeWords(prStatus);
   s.input.setAttribute('aria-label', `Note for the agent on line ${line}`);
   s.hint.textContent = `Reply to ${t.comments[0]?.author} in “As on ${words.name}”`;
   return s.foot;
@@ -607,18 +600,20 @@ function relocate(n, texts) {
   return changed;
 }
 
-// placeAll puts every note on its line, also notes whose box is not drawn, so the prompt has their
-// lines as they are now.
+// placeAll puts every note and open thread on its line on disk, also those whose box is not drawn,
+// so the prompt has their lines as they are now. False when another folder opened meanwhile.
 async function placeAll() {
   const key = folder;
-  const paths = [...new Set(notes.map(n => n.path))];
-  const files = await Promise.all(paths.map(path => fileLines(folder, path)));
+  const ts = openThreads().filter(t => !t.old && t.text != null);
+  const paths = [...new Set([...notes, ...ts].map(x => x.path))];
+  const files = new Map(await Promise.all(paths.map(async path => [path, await fileLines(folder, path)])));
   if (key !== folder) return false;
   const moved = new Set();
-  paths.forEach((path, i) => {
-    if (!files[i]) return;
-    for (const n of notes) if (n.path === path && relocate(n, files[i].texts)) moved.add(path);
-  });
+  for (const n of notes) if (files.get(n.path) && relocate(n, files.get(n.path).texts)) moved.add(n.path);
+  for (const t of ts) {
+    const line = files.get(t.path) && nearest(files.get(t.path).texts, t.text, threadLines.get(t.id) || t.line);
+    if (line) threadLines.set(t.id, line);
+  }
   if (moved.size) notesChanged(moved);
   return true;
 }
@@ -664,21 +659,11 @@ function openEditor(v, path, n, text, note) {
   const c = el('div', 'c');
   const who = el('div', 'who');
   who.append(agentMark(), el('b', null, 'Agent note'), el('span', 'muted', `· line ${n}`));
-  const area = el('textarea');
-  area.setAttribute('aria-label', `Note for the agent on line ${n}`);
-  area.placeholder = 'Note for the agent';
-  area.value = note?.body || '';
-  const acts = el('div', 'acts');
-  const hint = el('span', 'muted');
-  hint.append(el('kbd', null, mac ? '⌘' : 'Ctrl'), ' ', el('kbd', null, 'Enter'), note ? ' saves it' : ' adds it');
-  const cancel = el('button', 'tool', 'Cancel');
-  const ok = el('button', 'tool', note ? 'Save' : 'Add note');
-  acts.append(hint, cancel, ok);
-  c.append(who, area, acts);
-  box.append(c);
-  const submit = () => {
-    const body = area.value.trim();
-    if (!body) return;
+  const close = () => {
+    closeEditor(v);
+    v.scroll.focus({ preventScroll: true });
+  };
+  const edit = textBox(`Note for the agent on line ${n}`, note?.body || '', note ? 'Save' : 'Add note', body => {
     if (note) {
       note.body = body;
       note.copiedAt = 0; // the agent has not seen the new text
@@ -689,23 +674,10 @@ function openEditor(v, path, n, text, note) {
     notesChanged([path]);
     page.announce(note ? 'Note saved' : `Note added on line ${n}`);
     v.scroll.focus({ preventScroll: true });
-  };
-  const close = () => {
-    closeEditor(v);
-    v.scroll.focus({ preventScroll: true });
-  };
-  ok.onclick = submit;
-  cancel.onclick = close;
-  area.onkeydown = e => {
-    if (e.key === 'Enter' && (mac ? e.metaKey : e.ctrlKey)) {
-      e.preventDefault();
-      submit();
-    } else if (e.key === 'Escape') {
-      e.preventDefault();
-      e.stopPropagation();
-      close();
-    }
-  };
+  }, close, note ? '' : unsentKey(notesKey, path, { k: '+', t: text }));
+  edit.querySelector('textarea').placeholder = 'Note for the agent';
+  c.append(who, edit);
+  box.append(c);
   v.editor = { path, n, id: note?.id, el: box };
   const b = v.boxes.get(path);
   if (b?.loaded) drawBox(v, b);
@@ -718,30 +690,12 @@ function closeEditor(v) {
   if (b?.loaded) drawBox(v, b);
 }
 
-
-// placeThreadsAll finds the line on disk of every open thread, also of those whose box is not
-// drawn, so the prompt has the line the thread is on now.
-async function placeThreadsAll() {
-  const key = folder;
-  const ts = openThreads().filter(t => !t.old && t.text != null);
-  const paths = [...new Set(ts.map(t => t.path))];
-  const files = await Promise.all(paths.map(path => fileLines(folder, path)));
-  if (key !== folder) return false;
-  for (const t of ts) {
-    const file = files[paths.indexOf(t.path)];
-    const line = file && nearest(file.texts, t.text, threadLines.get(t.id) || t.line);
-    if (line) threadLines.set(t.id, line);
-  }
-  return true;
-}
-
 // ----- Copy for agent -----
 
 // prompt is the text the agent gets: two fixed lines, then each note under its file and line.
 function prompt(picked, threads = []) {
-  const f = prStatus?.forge;
   const p = prStatus?.pr || data.pr;
-  const words = FORGE[f?.kind || 'github'];
+  const words = forgeWords(prStatus);
   const pr = p ? ` (${words.short} ${words.num}${p.number})` : '';
   const out = [`Review notes for branch ${data.branch}${pr}.`, 'Fix each one, then say what you changed.'];
   for (const n of picked) {
@@ -763,7 +717,7 @@ function closeCopy() {
 }
 
 async function startCopy() {
-  if (!(await placeAll()) || !(await placeThreadsAll())) return;
+  if (!(await placeAll())) return;
   const button = panel.querySelector('[data-k=copy]');
   if (button) openCopy(button);
 }
@@ -790,7 +744,7 @@ function openCopy(button) {
     list.append(li);
     return { n, check };
   });
-  const words = FORGE[prStatus?.forge?.kind] || FORGE.github;
+  const words = forgeWords(prStatus);
   const threadList = el('ul');
   const tpicks = openThreads().sort((a, b) => a.path.localeCompare(b.path) || a.line - b.line).map(t => {
     const used = copiedThreads.has(t.id);
