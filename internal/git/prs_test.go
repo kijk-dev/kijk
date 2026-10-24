@@ -204,6 +204,20 @@ gid://gitlab/Discussion/c legacy.go:3 old=true orig=3 resolved=true outdated=fal
 	}
 }
 
+// A note on a whole file has no line to show under: it is part of the conversation, as a draft on a
+// whole file is.
+func TestParseGitlabFileNote(t *testing.T) {
+	var pr PR
+	data := `{"project":{"mergeRequest":{"iid":"12","diffHeadSha":"3333","discussions":{"nodes":[{"id":"gid://gitlab/Discussion/f","resolvable":true,"notes":{"nodes":[
+{"author":{"username":"tim"},"body":"Split this file?","position":{"filePath":"retry.go","newPath":"retry.go","oldPath":"retry.go","newLine":null,"oldLine":null,"diffRefs":{"headSha":"3333"}}}]}}]}}}}`
+	if err := parseGitlabPR([]byte(data), &pr); err != nil {
+		t.Fatal(err)
+	}
+	if len(pr.Threads) != 0 || comments(pr.Comments) != "tim: Split this file?" {
+		t.Errorf("threads %s, conversation %s", threads(pr.Threads), comments(pr.Comments))
+	}
+}
+
 // fakeTool puts a gh or glab on PATH that prints answer, and gives the arguments of its last call.
 func fakeTool(t *testing.T, tool, answer string) (args func() []string) {
 	t.Helper()
