@@ -981,6 +981,7 @@ func TestBrowser(t *testing.T) {
 		saveKey := map[bool]string{false: "Ctrl", true: "⌘"}[b.mac]
 		b.waitFor("not saved yet", box+`.querySelector('.saved').textContent === 'Not saved · `+saveKey+` Enter saves it'`)
 		shots(b, "prs-summary-unsaved")
+		forge.settle()
 		if strings.Contains(strings.Join(forge.calls()[n:], "\n"), "updatePullRequestReview(") {
 			t.Fatal("kijk saved the summary on a key press")
 		}
@@ -1000,6 +1001,7 @@ func TestBrowser(t *testing.T) {
 		shots(b, "prs-check")
 		b.key("Escape", kb.Escape)
 		b.waitFor("the check closed, nothing lost", `!document.querySelector('.confirm') && !document.querySelector('.backdrop') && `+box+`.querySelector('textarea').value === `+jsString(summary)+` && `+box+`.querySelector('.mode button[aria-pressed=true]').textContent === 'Approve'`)
+		forge.settle()
 		if strings.Contains(strings.Join(forge.calls(), "\n"), "submitPullRequestReview(") {
 			t.Fatal("Escape posted the review")
 		}
@@ -1614,8 +1616,10 @@ func TestBrowser(t *testing.T) {
 		run(t, work, "checkout", "-q", "sanne")
 		run(t, work, "merge", "-q", "--no-edit", "mainwork")
 		push(false)
+		// What only the new head brings: kijk asks what changed since the head of your last review.
+		b.evalJS(`window.e2eSince = []; { const f = window.fetch; window.fetch = (u, o) => f(u, o).then(r => (String(u).includes('/api/pr/since') && e2eSince.push(String(u)), r)); }`)
 		b.press("refreshPrs")
-		b.waitFor("the new head", `document.querySelector('#viewer .fbox')`)
+		b.waitFor("the question about the new head", `window.e2eSince.some(u => new URL(u, location.href).searchParams.get('from') === `+jsString(merged)+`)`)
 		forge.settle()
 		b.waitFor("the last review kept", reviewed(merged))
 		b.waitFor("no switch", `document.querySelector('#prs-pr .prfiles h3') && !`+sw+` && `+boxes+` === `+jsString(ci+" "+readme+" "+retry))
