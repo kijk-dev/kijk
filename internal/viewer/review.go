@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/kijk-dev/kijk/internal/git"
@@ -85,10 +86,11 @@ var errNotShown = errors.New("Open the pull request again")
 
 // prComment needs the head on screen for a reply too, as the reply may start your pending review.
 func prComment(req writeRequest, p openedPR) (any, error) {
-	if p.head == "" {
-		return nil, errNotShown
+	head, err := shownHead(req, p)
+	if err != nil {
+		return nil, err
 	}
-	id, err := git.AddComment(req.Root, req.N, p.head, req.NewComment)
+	id, err := git.AddComment(req.Root, req.N, head, req.NewComment)
 	return map[string]string{"id": id}, err
 }
 
@@ -106,16 +108,31 @@ func prResolve(req writeRequest, _ openedPR) (any, error) {
 
 // prSummary sets the summary of your review on the forge.
 func prSummary(req writeRequest, p openedPR) (any, error) {
-	if p.head == "" {
-		return nil, errNotShown // a new pending review would start on a head not on screen
+	head, err := shownHead(req, p) // a new pending review would start on it
+	if err != nil {
+		return nil, err
 	}
-	return struct{}{}, git.SetSummary(req.Root, req.N, p.head, req.Body)
+	return struct{}{}, git.SetSummary(req.Root, req.N, head, req.Body)
 }
 
 func prSubmit(req writeRequest, p openedPR) (any, error) {
 	// A verdict is for the head on screen, so kijk must know which one that is.
-	if p.head == "" && req.Verdict != "comment" {
-		return nil, errNotShown
+	if req.Verdict != "comment" {
+		if _, err := shownHead(req, p); err != nil {
+			return nil, err
+		}
 	}
 	return struct{}{}, git.SubmitReview(req.Root, req.N, p.head, req.Verdict)
+}
+
+// shownHead is the head a write goes to. The page must say it shows it: else the write would go to
+// the last head any page loaded.
+func shownHead(req writeRequest, p openedPR) (string, error) {
+	if p.head == "" {
+		return "", errNotShown
+	}
+	if req.At == "" {
+		return "", fmt.Errorf("%w: the write does not say which head it is for", git.ErrBadInput)
+	}
+	return p.head, nil
 }
