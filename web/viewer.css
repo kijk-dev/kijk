@@ -347,14 +347,14 @@ dialog.goto::backdrop { background: none; }
   border: 1px solid var(--edge); background: var(--bg); color: var(--text); caret-color: var(--modified);
 }
 #message:focus { outline: 2px solid var(--modified); outline-offset: -1px; }
-#commit-btn {
+#commit-btn, .primary {
   font: inherit; font-weight: 600; padding: 4px; border: 0; border-radius: 4px; background: var(--accent-fill); color: var(--on-accent);
   cursor: pointer; transition: background-color .12s;
 }
-#commit-btn:hover:not(:disabled) { background: color-mix(in srgb, var(--accent-fill) 88%, #000); }
-#commit-btn:active:not(:disabled) { background: color-mix(in srgb, var(--accent-fill) 76%, #000); }
-#commit-btn:focus-visible { outline-offset: 2px; }
-#commit-btn:disabled { font-weight: 400; background: var(--border); color: var(--muted); cursor: default; }
+#commit-btn:hover:not(:disabled), .primary:hover:not(:disabled) { background: color-mix(in srgb, var(--accent-fill) 88%, #000); }
+#commit-btn:active:not(:disabled), .primary:active:not(:disabled) { background: color-mix(in srgb, var(--accent-fill) 76%, #000); }
+#commit-btn:focus-visible, .primary:focus-visible { outline-offset: 2px; }
+#commit-btn:disabled, .primary:disabled { font-weight: 400; background: var(--border); color: var(--muted); cursor: default; }
 #git-output {
   margin: 8px 12px; padding: 6px 8px; max-height: 200px; overflow: auto; white-space: pre-wrap;
   font: 11px/1.4 var(--code-font); color: var(--conflict);
@@ -586,6 +586,46 @@ button.pill:hover { background: color-mix(in srgb, var(--modified) 22%, var(--se
 .reviewbox .gone li { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .reviewbox .gone .where { flex: none; color: var(--muted); font: 11px var(--code-font); }
 .reviewbox .gone .body { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Your review: the verdict, the summary, and Submit review…, solid like Commit (#commit-btn), whose
+   place it takes. */
+.reviewbox .mode { margin-left: 0; display: flex; }
+.reviewbox .mode button { flex: 1 1 auto; padding: 2px 4px; white-space: nowrap; }
+.reviewbox .mode button:disabled { color: color-mix(in srgb, var(--muted) 70%, var(--panel)); cursor: default; }
+.reviewbox .why { font-size: 12px; color: var(--muted); }
+.reviewbox .saved { margin-top: -2px; font-size: 12px; color: var(--muted); }
+.reviewbox .error { font-size: 12px; color: var(--error); }
+.reviewbox .error:empty { display: none; }
+.reviewbox textarea {
+  font: inherit; resize: vertical; min-height: 40px; padding: 5px 8px; border-radius: 4px;
+  border: 1px solid var(--edge); background: var(--bg); color: var(--text); caret-color: var(--modified);
+}
+.reviewbox textarea::placeholder { color: var(--muted); }
+.reviewbox textarea:focus { outline: 2px solid var(--modified); outline-offset: -1px; }
+.prrow .yours { color: var(--modified); }
+
+/* The one check before a review is posted. Its light backdrop says this is the action that leaves the machine. */
+.backdrop { position: fixed; inset: 0; z-index: 8; background: color-mix(in srgb, var(--text) 14%, transparent); }
+.confirm {
+  position: fixed; z-index: 9; left: 50%; top: 18vh; transform: translateX(-50%); width: min(520px, 90vw);
+  border: 1px solid var(--border); border-radius: 6px; background: var(--panel); color: var(--text); box-shadow: 0 4px 12px rgb(0 0 0 / .25);
+}
+.confirm h2 { display: flex; align-items: center; gap: 7px; margin: 0; padding: 12px 16px 4px; font-size: 14px; font-weight: 600; }
+.confirm h2 .hostmark svg { width: 15px; height: 15px; }
+.confirm .sub { margin: 0 16px 10px; font-size: 12px; color: var(--muted); }
+.confirm ul { margin: 0 16px; padding: 0; list-style: none; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); }
+.confirm li { display: flex; align-items: baseline; gap: 8px; padding: 5px 10px; font-size: 13px; }
+.confirm li + li { border-top: 1px solid var(--border); }
+.confirm li .k { width: 76px; flex: none; color: var(--muted); font-size: 12px; }
+.confirm li .v { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.confirm li .v .muted { font-size: 12px; }
+.confirm .verdict { font-weight: 600; }
+.confirm .verdict.ok { color: var(--added); }
+.confirm .verdict.bad { color: var(--conflict); }
+.confirm .error { margin: 8px 16px 0; font-size: 12px; color: var(--error); }
+.confirm .acts { display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 12px 16px; }
+.confirm .acts .muted { margin-right: auto; font-size: 12px; }
+.confirm .acts .tool { padding: 3px 12px; font-size: 13px; white-space: nowrap; }
+.confirm .acts .primary { padding: 4px 14px; white-space: nowrap; }
 
 /* Branch changes: every file in one scroll. Each file is a box whose header sticks while you scroll it. */
 .allfiles { position: relative; flex: 1; min-height: 0; overflow: auto; padding: 12px 12px 0; background: var(--panel); }
@@ -707,6 +747,17 @@ button.pill:hover { background: color-mix(in srgb, var(--modified) 22%, var(--se
 .thr textarea:focus { outline: 2px solid var(--modified); outline-offset: -1px; }
 .thr .acts { display: flex; align-items: center; justify-content: flex-end; gap: 6px; margin: 8px 0 0 30px; font-size: 12px; }
 .thr .acts .muted { margin-right: auto; }
+/* Your draft: dashed, like everything not sent yet. A new comment of yours has a grey header. */
+.thr .c.mine { margin: 10px 10px 0; padding: 9px 10px 11px; border: 1px dashed var(--edge); border-radius: 6px; background: var(--panel); }
+.thr .c.mine:last-child { margin-bottom: 10px; }
+.thr .c.mine + .c { padding-top: 10px; }
+.thr.draftonly .thead { background: var(--panel); color: var(--muted); }
+.thr.draftonly:has(.thead)::before { background: var(--panel); }
+.thr .thead .tool { background: var(--bg); font-weight: 400; }
+.thr .error { margin: 6px 0 0 30px; font-size: 12px; color: var(--error); }
+.thr .thead + .error { margin: 8px 14px 0; }
+.thr .foot .error { margin: 0; flex: 0 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.thr .foot .error:empty { display: none; }
 kbd { font: 11px/1 var(--code-font); padding: 1px 4px; border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 3px; background: var(--bg); color: var(--muted); }
 
 /* Copy for agent: pick the notes that go into the prompt. */

@@ -16,7 +16,24 @@ import (
 // number: the page never sends a revision.
 type prRanges struct {
 	sync.Mutex
-	m map[string][2]string // root and number: split point and head
+	m      map[string][2]string // root and number: split point and head
+	writes map[string]git.Write // root and number: what kijk may write, as the forge last said
+}
+
+func (p *prRanges) setWrite(root string, n int, w git.Write) {
+	p.Lock()
+	defer p.Unlock()
+	if len(p.writes) > 200 {
+		clear(p.writes)
+	}
+	p.writes[root+"\n"+strconv.Itoa(n)] = w
+}
+
+func (p *prRanges) rules(root string, n int) (git.Write, bool) {
+	p.Lock()
+	defer p.Unlock()
+	w, ok := p.writes[root+"\n"+strconv.Itoa(n)]
+	return w, ok
 }
 
 func (p *prRanges) set(root string, n int, split, head string) {
@@ -100,6 +117,7 @@ func (a *api) prView(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
+	a.ranges.setWrite(root, n, pr.Write)
 	out := prReply{PR: pr, Forge: f, Files: []any{}}
 	out.BodyHTML = markdownHTML(pr.Body)
 	for i := range pr.Comments {

@@ -44,7 +44,7 @@ export async function post(name, body) {
     body: JSON.stringify(r0.root == null ? body : { ...body, root: r0.root }),
   });
   const text = await r.text();
-  if (!r.ok) throw new Error(text.trim());
+  if (!r.ok) throw Object.assign(new Error(text.trim()), { status: r.status });
   return JSON.parse(text);
 }
 

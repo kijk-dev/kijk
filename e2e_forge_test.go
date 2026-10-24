@@ -14,7 +14,8 @@ import (
 
 // fakeForge is a folder with a gh and a glab that answer from the files in it, picked by the
 // question they get, and log every call. A question with no file fails, as a tool would; with
-// gh-error.txt, gh fails every call with its text.
+// gh-error.txt, gh fails every call with its text. A write m (such as gh-thread.json for "thread")
+// first copies the files in after-m/ over the answers, once, so the next read shows what it did.
 type fakeForge struct{ dir string }
 
 func newFakeForge(t *testing.T) *fakeForge {
@@ -22,30 +23,60 @@ func newFakeForge(t *testing.T) *fakeForge {
 	f := &fakeForge{dir: t.TempDir()}
 	gh := `#!/bin/sh
 d=%[1]q
-echo "home=$HOME gh $*" | tr '\n' ' ' >> "$d/calls.log"; echo >> "$d/calls.log"
+printf '%%s\n' "home=$HOME gh $(printf '%%s ' "$@" | tr '\n' ' ')" >> "$d/calls.log" # one write, so calls at once do not mix
 if [ -f "$d/gh-error.txt" ]; then cat "$d/gh-error.txt" >&2; exit 1; fi
 f=
+m=
 if [ "$1" = pr ]; then
   [ -f "$d/gh-pr-view.json" ] || { echo "no pull requests found for branch" >&2; exit 1; }
   f=gh-pr-view.json
 fi
 case "$*" in
+*"headRefOid reviews(states: PENDING"*) f=gh-target.json ;;
+*"addPullRequestReviewThreadReply("*) m=reply ;;
+*"addPullRequestReviewThread("*) m=thread ;;
+*"addPullRequestReview("*) m=review ;;
+*"submitPullRequestReview("*) m=submit ;;
+*"updatePullRequestReviewComment("*) m=edit ;;
+*"updatePullRequestReview("*) m=update ;;
+*"deletePullRequestReviewComment("*) m=delete ;;
+*"unresolveReviewThread("*) m=unresolve ;;
+*"resolveReviewThread("*) m=resolve ;;
 *"pullRequests(states"*) f=gh-list.json ;;
 *"search(query"*) f=gh-search.json ;;
 *"pullRequest(number"*) for a; do case "$a" in n=*) f="gh-pr-${a#n=}.json" ;; esac; done ;;
 */actions/jobs/*) for a; do case "$a" in */actions/jobs/*) id=${a#*/actions/jobs/}; f="gh-log-${id%%/logs}.txt" ;; esac; done ;;
 esac
+if [ -n "$m" ]; then
+  f="gh-$m.json"
+  if [ -d "$d/after-$m" ]; then cp "$d/after-$m"/* "$d/" && rm -r "$d/after-$m"; fi
+fi
 if [ -n "$f" ] && [ -f "$d/$f" ]; then cat "$d/$f"; else echo "no answer for: $*" >&2; exit 1; fi
 `
 	glab := `#!/bin/sh
 d=%[1]q
-echo "home=$HOME glab $*" | tr '\n' ' ' >> "$d/calls.log"; echo >> "$d/calls.log"
+printf '%%s\n' "home=$HOME glab $(printf '%%s ' "$@" | tr '\n' ' ')" >> "$d/calls.log" # one write, so calls at once do not mix
 f=
+m=
+host=
 if [ "$1" = mr ]; then f=glab-mr-view.json; fi
+prev=
+for a; do [ "$prev" = --hostname ] && host=$a; prev=$a; done
 case "$*" in
 *"mergeRequests(state"*) f=glab-list.json ;;
 *"mergeRequest(iid"*) for a; do case "$a" in iid=*) f="glab-pr-${a#iid=}.json" ;; esac; done ;;
+*"mergeRequestRequestChanges("*) m=changes ;;
+*" version") f="glab-version-$host.json" ;;
+*/draft_notes/bulk_publish*) m=publish ;;
+*"--method POST "*/approve) m=approve ;;
+*"--method PUT "*/draft_notes/*) m=put ;;
+*"--method POST "*/draft_notes*) m=draft ;;
+*/draft_notes) f=glab-drafts.json ;;
 esac
+if [ -n "$m" ]; then
+  f="glab-$m.json"
+  if [ -d "$d/after-$m" ]; then cp "$d/after-$m"/* "$d/" && rm -r "$d/after-$m"; fi
+fi
 if [ -n "$f" ] && [ -f "$d/$f" ]; then cat "$d/$f"; else echo '{}'; fi
 `
 	for name, script := range map[string]string{"gh": gh, "glab": glab} {
@@ -63,6 +94,21 @@ func (f *fakeForge) env() string {
 
 func (f *fakeForge) set(t *testing.T, name string, answer any) {
 	t.Helper()
+	writeAnswer(t, filepath.Join(f.dir, name), answer)
+}
+
+// after makes the answer in name change to answer once the write m came, such as "thread".
+func (f *fakeForge) after(t *testing.T, m, name string, answer any) {
+	t.Helper()
+	dir := filepath.Join(f.dir, "after-"+m)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeAnswer(t, filepath.Join(dir, name), answer)
+}
+
+func writeAnswer(t *testing.T, path string, answer any) {
+	t.Helper()
 	b, ok := answer.([]byte)
 	if s, isText := answer.(string); isText {
 		b, ok = []byte(s), true
@@ -73,7 +119,7 @@ func (f *fakeForge) set(t *testing.T, name string, answer any) {
 			t.Fatal(err)
 		}
 	}
-	if err := os.WriteFile(filepath.Join(f.dir, name), b, 0o644); err != nil {
+	if err := os.WriteFile(path, b, 0o644); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -134,7 +180,15 @@ func ghThread(id, path string, line any, orig int, resolved, outdated bool, hunk
 	if hunk != "" {
 		cs[0]["diffHunk"] = hunk
 	}
-	return obj{"id": id, "isResolved": resolved, "isOutdated": outdated, "path": path, "line": line, "originalLine": orig, "diffSide": "RIGHT", "comments": obj{"nodes": cs}}
+	return obj{"id": id, "isResolved": resolved, "isOutdated": outdated, "path": path, "line": line, "originalLine": orig, "diffSide": "RIGHT", "comments": obj{"nodes": cs},
+		"viewerCanReply": true, "viewerCanResolve": !resolved, "viewerCanUnresolve": resolved}
+}
+
+// ghDraft is a comment of your pending review.
+func ghDraft(id, body string) obj {
+	c := ghComment("you", body)
+	c["id"], c["state"] = id, "PENDING"
+	return c
 }
 
 func ghCheck(id int, name, status, conclusion string, run int, file string) obj {
@@ -263,11 +317,18 @@ func reviewForge(t *testing.T, f *fakeForge, repo, origin string, ownThread bool
 		[]obj{ghCheck(401, "build", "COMPLETED", "SUCCESS", 2001, ".github/workflows/none.yml"), ghCheck(402, "test (linux)", "COMPLETED", "FAILURE", 2001, ".github/workflows/none.yml")}))
 	f.set(t, "gh-log-402.txt", "2026-10-21T10:00:01.0000000Z === RUN   TestResume\n2026-10-21T10:00:02.0000000Z     session_test.go:12: got nil session\n2026-10-21T10:00:03.0000000Z --- FAIL: TestResume (0.00s)\n")
 
-	f.set(t, "gh-pr-477.json", ghPR(r477, "Webhook delivery gave up after **one** failed POST.\n\n- Retry up to five times.", theirs, main,
+	f.set(t, "gh-pr-477.json", pr477(theirs, main, func(ts []obj) []obj { return ts }))
+	f.set(t, "gh-log-303.txt", "2026-10-21T10:00:01.0000000Z === RUN   TestBackoffJitter\n2026-10-21T10:00:02.0000000Z     backoff_test.go:41: delay 1.204s outside [0.5s, 1.2s]\n2026-10-21T10:00:03.0000000Z --- FAIL: TestBackoffJitter (0.00s)\n")
+}
+
+// pr477 is gh's answer about sanne's #477; edit changes its threads.
+func pr477(theirs, main string, edit func([]obj) []obj) obj {
+	r477 := ghRow(477, "Retry webhook delivery with backoff", "sanne", "retry-webhooks", false, 37, 0, "FAILURE")
+	return ghPR(r477, "Webhook delivery gave up after **one** failed POST.\n\n- Retry up to five times.", theirs, main,
 		[]obj{{"author": ghUser("priya"), "state": "APPROVED"}, {"author": ghUser("tim"), "state": "COMMENTED"}},
 		[]obj{{"requestedReviewer": obj{"__typename": "User", "login": "you"}}},
 		[]obj{ghComment("tim", "Do we want the attempt number in the delivery log?")},
-		[]obj{
+		edit([]obj{
 			ghThread("T1", "internal/webhook/retry.go", lineOf(retryGo, "\t\tif !retryable(err) {"), 0, false, false, "",
 				ghComment("tim", "Should a 429 count as retryable?"), ghComment("sanne", "Good point, I'll add it."), ghComment("priya", "Agreed.")),
 			ghThread("T2", "internal/webhook/retry.go", lineOf(retryGo, "\t\tselect {"), 0, true, false, "",
@@ -276,15 +337,14 @@ func reviewForge(t *testing.T, f *fakeForge, repo, origin string, ownThread bool
 				ghComment("tim", "Name this delay.")),
 			ghThread("T6", "internal/webhook/retry.go", nil, 21, true, true, "@@ -0,0 +1,21 @@\n+\tlog.Print(err)",
 				ghComment("priya", "Log less here."), ghComment("sanne", "Removed.")),
-		},
+		}),
 		[]obj{
 			ghCheck(301, "build", "COMPLETED", "SUCCESS", 1284, ".github/workflows/ci.yml"),
 			ghCheck(302, "test (linux)", "COMPLETED", "SUCCESS", 1284, ".github/workflows/ci.yml"),
 			ghCheck(303, "test (windows)", "COMPLETED", "FAILURE", 1284, ".github/workflows/ci.yml"),
 			ghCheck(304, "Vercel – Preview", "COMPLETED", "SUCCESS", 0, ""),
 			ghCheck(305, "Docs preview", "COMPLETED", "CANCELLED", 0, ""),
-		}))
-	f.set(t, "gh-log-303.txt", "2026-10-21T10:00:01.0000000Z === RUN   TestBackoffJitter\n2026-10-21T10:00:02.0000000Z     backoff_test.go:41: delay 1.204s outside [0.5s, 1.2s]\n2026-10-21T10:00:03.0000000Z --- FAIL: TestBackoffJitter (0.00s)\n")
+		})
 }
 
 // gitOut runs git in dir and gives its output.
