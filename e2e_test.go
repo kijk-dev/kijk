@@ -103,6 +103,7 @@ func TestBrowser(t *testing.T) {
 		p := p.on(t)
 		p.click("the Git tab", gitTab)
 		p.waitFor("main.go and notes.txt in the changes", inList("Unstaged", "main.go")+" && "+inList("Unstaged", "notes.txt"))
+		p.waitFor("no PRs tab on main", prsTab+`.hidden`)
 		p.click("main.go", changeRow("main.go"))
 		p.waitFor("the diff of main.go", diffRow("del", "const items = 7")+" && "+diffRow("add", "const items = 70"))
 		p.noErrors()
@@ -175,6 +176,298 @@ func TestBrowser(t *testing.T) {
 		p.noErrors()
 	})
 
+	t.Run("branch review", func(t *testing.T) {
+		repo := reviewRepo(t)
+		claude := t.TempDir()
+		claudeAgent(t, claude, repo, "Fix the login", "idle")
+		k := startKijkIn(t, exe, t.TempDir(), "CLAUDE_CONFIG_DIR="+claude, "PATH="+fakeForgeTools(t)+string(os.PathListSeparator)+os.Getenv("PATH"))
+		b := openPage(t, newTab(t, tab), k, "/")
+		b.selectAgent("Fix the login", "review")
+		const session = "internal/auth/session.go"
+
+		// The PRs tab and its panel.
+		b.waitFor("the PRs tab", `(b => b && !b.hidden && b.dataset.tip.startsWith('PRs\n'))(`+prsTab+`)`)
+		b.press("prsTab")
+		b.waitFor("the PRs panel", `!document.querySelector('#prs').hidden && `+prsTab+`.classList.contains('active')`)
+		b.waitFor("the pull request", `document.querySelector('#prs .pr-num')?.textContent === '#482' && document.querySelector('#prs .pr-title')?.textContent === 'Fix login redirect loop'`)
+		b.waitFor("the branch and its base", `[...document.querySelectorAll('#prs .prmeta .ref')].map(r => r.textContent).join(' ') === 'fix-login main'`)
+		b.waitFor("the bar", `document.querySelector('#prs .unpushed .t')?.textContent === "1 commit and 2 files not pushed. Reviewers don't see them yet." && `+
+			byText("#prs .unpushed button", "Push"))
+		b.waitFor("six files", `document.querySelectorAll('#prs .prfiles li').length === 6`)
+		b.waitFor("the new files marked", prsRow("redirect.go")+`.querySelector('.np') && `+prsRow("redirect_test.go")+`.querySelector('.np') && !`+prsRow("session.go")+`.querySelector('.np')`)
+		b.act("reload", chromedp.Reload())
+		b.waitFor("the PRs tab kept", prsTab+`.classList.contains('active') && !document.querySelector('#prs').hidden && document.querySelectorAll('#prs .prfiles li').length === 6`)
+
+		// Branch changes: every file in one scroll.
+		b.waitFor("the Branch changes tab", `document.querySelector('#filetabs .filetab.active')?.textContent.startsWith('Branch changes')`)
+		b.waitFor("six boxes", `document.querySelectorAll('#viewer .fbox').length === 6`)
+		b.waitFor("go.sum folded", fileBox("go.sum")+`.classList.contains('shut') && `+fileBox("go.sum")+`.querySelector('.fnote').textContent.startsWith('Generated file, 2 lines')`)
+		b.waitFor("the edit not committed", boxHas("README.md", "add", "Run it with go run."))
+		b.waitFor("the untracked file", boxHas("internal/auth/redirect_test.go", "add np", "func TestSafeNext(t *testing.T) {"))
+		b.waitFor("the lines not pushed", boxHas(session, "add np", "\tsess, ok := s.byID[id]")+" && "+fileBox(session)+`.querySelector('.np-tag')`)
+		b.waitFor("the pushed line without dashes", boxHas(session, "add", "\tsess, ok := s.lookup(c.Value)")+` && !`+boxRow(session, "\tsess, ok := s.lookup(c.Value)")+`.classList.contains('np')`)
+		b.waitFor("the dashed circle on new files", fileBox("internal/auth/redirect.go")+`.querySelector('.fhead .np') && !`+fileBox(session)+`.querySelector('.fhead .np')`)
+		fold := fileBox("README.md") + `.querySelector('.fold')`
+		b.click("the README.md chevron", fold)
+		b.waitFor("README.md folded", fileBox("README.md")+`.classList.contains('shut')`)
+		b.click("the README.md chevron", fold)
+		b.waitFor("README.md open", `!`+fileBox("README.md")+`.classList.contains('shut')`)
+
+		// The sidebar list jumps to a box, and follows the scroll.
+		b.click("session.go in the list", prsRow("session.go"))
+		b.waitFor("session.go at the top", `(s => s.scrollTop > 0 && Math.abs(`+fileBox(session)+`.offsetTop - 12 - s.scrollTop) < 2)(document.querySelector('.allfiles'))`)
+		b.evalJS(`document.querySelector('.allfiles').scrollTop = 0`)
+		b.waitFor("README.md selected", prsRow("README.md")+`.classList.contains('selected')`)
+		b.press("nextChange")
+		b.waitFor("a change below the top", changeAt)
+		top := evalJS[float64](b, `document.querySelector('.allfiles').scrollTop`)
+		b.press("nextChange")
+		b.waitFor("the next change", changeAt+` && document.querySelector('.allfiles').scrollTop > `+fmt.Sprint(top))
+		b.press("prevChange")
+		b.waitFor("the change before", changeAt+` && document.querySelector('.allfiles').scrollTop === `+fmt.Sprint(top))
+		b.press("find")
+		b.act("wait for a find bar", chromedp.Sleep(200*time.Millisecond))
+		b.waitFor("no find bar in Branch changes", `document.querySelector('#findbar').hidden`)
+		b.click("Show more lines", fileBox(session)+`.querySelector('.ln.sep .more')`)
+		b.waitFor("more lines of session.go", boxRow(session, "func (s *Store) Resume(w http.ResponseWriter, r *http.Request) (*Session, error) {"))
+
+		// The agent edits a file above the one on screen: the view stays where it is.
+		b.click("session.go in the list", prsRow("session.go"))
+		b.waitFor("session.go at the top", `(s => s.scrollTop > 0 && Math.abs(`+fileBox(session)+`.offsetTop - 12 - s.scrollTop) < 2)(document.querySelector('.allfiles'))`)
+		write(t, filepath.Join(repo, "README.md"), "# Review\n\nA shop backend.\n\nRun it with go run.\n\nOr build it.\nThen run the binary.\n")
+		b.waitFor("the new lines", boxHas("README.md", "add", "Then run the binary."))
+		b.waitFor("session.go still at the top", `Math.abs(`+fileBox(session)+`.offsetTop - 12 - document.querySelector('.allfiles').scrollTop) < 2`)
+
+		// Agent notes: with + and with the key.
+		b.waitFor("no + on a removed line", fileBox(session)+`.querySelector('.ln.del') && !`+fileBox(session)+`.querySelector('.ln.del .addc')`)
+		noted := boxRow(session, "\tsess, ok := s.byID[id]")
+		b.hover("the line to note", noted)
+		b.waitFor("the + button", `getComputedStyle(`+noted+`.querySelector('.addc')).display !== 'none'`)
+		b.click("+", noted+`.querySelector('.addc')`)
+		b.waitFor("the note editor", `document.activeElement?.matches('.thr.editing textarea')`)
+		b.typeText("Return a copy, not the pointer.")
+		b.press("submitNote")
+		b.waitFor("the note under its line", noted+`.nextElementSibling?.matches('.thr.note') && `+noted+`.nextElementSibling.querySelector('p').textContent === 'Return a copy, not the pointer.'`)
+		b.waitFor("one note on session.go", fileBox(session)+`.querySelector('.fhead .tc')?.textContent === '1' && `+prsRow("session.go")+`.querySelector('.tc')?.textContent === '1'`)
+		redirect := boxRow("internal/auth/redirect.go", "\treturn next")
+		b.click("a line of redirect.go", redirect+`.querySelector('.tx')`)
+		b.press("addNote")
+		b.waitFor("the note editor", `document.activeElement?.matches('.thr.editing textarea')`)
+		b.press("submitNote")
+		b.waitFor("an empty note not added", `document.querySelector('.thr.editing') && !`+fileBox("internal/auth/redirect.go")+`.querySelector('.thr.note:not(.editing)')`)
+		b.typeText("Keep next only when it is a path on this site.")
+		b.press("submitNote")
+		b.waitFor("the second note", redirect+`.nextElementSibling?.matches('.thr.note:not(.editing)')`)
+		b.click("Edit", redirect+`.nextElementSibling.querySelector('[aria-label=Edit]')`)
+		b.waitFor("the editor with the note", `document.activeElement?.value === 'Keep next only when it is a path on this site.'`)
+		b.typeText(" A //evil.com path passes now.")
+		b.press("submitNote")
+		b.waitFor("the edited note", redirect+`.nextElementSibling?.querySelector('p')?.textContent === 'Keep next only when it is a path on this site. A //evil.com path passes now.'`)
+		b.waitFor("two notes in the box", `document.querySelector('#prs .reviewbox .head .muted')?.textContent === '2'`)
+
+		// Notes stay over a reload.
+		b.act("reload", chromedp.Reload())
+		b.waitFor("the notes after a reload", noted+`?.nextElementSibling?.matches('.thr.note') && `+redirect+`?.nextElementSibling?.matches('.thr.note')`)
+		b.waitFor("the PRs tab kept", prsTab+`.classList.contains('active') && !document.querySelector('#prs').hidden`)
+		b.evalJS(`document.querySelector('.allfiles').scrollTop = 0`)
+		b.evalJS(`document.querySelector('.allfiles').focus()`)
+		b.press("nextNote")
+		b.waitFor("the first note below the top", `(s => [...s.querySelectorAll('.thr.note')].some(n => Math.abs(n.getBoundingClientRect().top - s.getBoundingClientRect().top - 124) < 2))(document.querySelector('.allfiles'))`)
+
+		// Another branch: main has no branch changes and shows no notes; back on fix-login they return.
+		run(t, repo, "stash", "-q", "-u")
+		run(t, repo, "checkout", "-q", "main")
+		b.waitFor("no PRs tab on main", prsTab+`.hidden`)
+		b.waitFor("no branch changes on main", `!document.querySelector('.fbox') && !document.querySelector('.thr.note') && document.querySelector('#viewer .empty')?.textContent === 'This branch has no branch changes'`)
+		run(t, repo, "checkout", "-q", "fix-login")
+		run(t, repo, "stash", "pop", "-q")
+		b.waitFor("the PRs tab again", `!`+prsTab+`.hidden && !document.querySelector('#prs').hidden`)
+		b.waitFor("the notes again", noted+`?.nextElementSibling?.matches('.thr.note') && `+redirect+`?.nextElementSibling?.matches('.thr.note')`)
+
+		// The same while a file tab shows: Branch changes is not left on the old branch.
+		b.click("Open the whole file", fileBox(session)+`.querySelector('[aria-label="Open the whole file"]')`)
+		b.waitFor("the file tab", activeFile("session.go"))
+		b.click("the Files tab", filesTab)
+		run(t, repo, "stash", "-q", "-u")
+		run(t, repo, "checkout", "-q", "main")
+		b.waitFor("no PRs tab on main", prsTab+`.hidden`)
+		b.click("the Branch changes tab", byText("#filetabs .filetab span", "Branch changes"))
+		b.waitFor("no branch changes on main", `!document.querySelector('.fbox') && !document.querySelector('.thr.note') && document.querySelector('#viewer .empty')?.textContent === 'This branch has no branch changes'`)
+		run(t, repo, "checkout", "-q", "fix-login")
+		run(t, repo, "stash", "pop", "-q")
+		b.waitFor("the PRs tab again", `!`+prsTab+`.hidden`)
+		b.press("prsTab")
+		b.waitFor("the notes again", noted+`?.nextElementSibling?.matches('.thr.note') && `+redirect+`?.nextElementSibling?.matches('.thr.note')`)
+
+		// A branch with the same split point, upstream and changes shows none of these notes.
+		run(t, repo, "stash", "-q", "-u")
+		run(t, repo, "checkout", "-q", "-b", "other")
+		run(t, repo, "branch", "-q", "--set-upstream-to=origin/fix-login")
+		run(t, repo, "stash", "pop", "-q")
+		b.waitFor("the other branch", `[...document.querySelectorAll('#prs .prmeta .ref')].map(r => r.textContent).join(' ') === 'other main'`)
+		b.waitFor("no notes on the other branch", `document.querySelector('#prs .reviewbox .head .muted')?.textContent === 'none yet' && document.querySelector('.fbox') && !document.querySelector('.thr.note')`)
+		run(t, repo, "stash", "-q", "-u")
+		run(t, repo, "checkout", "-q", "fix-login")
+		run(t, repo, "stash", "pop", "-q")
+		b.waitFor("the notes of fix-login", noted+`?.nextElementSibling?.matches('.thr.note') && `+redirect+`?.nextElementSibling?.matches('.thr.note')`)
+
+		// A failed read of a file does not make its notes outdated, also when their boxes are not drawn.
+		b.click("close Branch changes", `document.querySelector('#filetabs .filetab.active .close')`)
+		b.waitFor("Branch changes closed", `!document.querySelector('.fbox')`)
+		b.evalJS(`window.e2eFetch = window.fetch; window.fetch = (u, o) => String(u).includes('/api/lines') ? Promise.resolve(new Response('git failed', {status: 500})) : e2eFetch(u, o)`)
+		b.click("Copy for agent", byText("#prs .reviewbox button", "Copy for agent…"))
+		b.waitFor("the panel", `document.querySelectorAll('.copypanel li').length === 2`)
+		b.waitFor("no note outdated", `![...document.querySelectorAll('.copypanel .where')].some(w => w.textContent.includes('outdated'))`)
+		b.key("Escape", kb.Escape)
+		b.evalJS(`window.fetch = e2eFetch`)
+		b.press("prsTab")
+		b.waitFor("Branch changes again", redirect+`?.nextElementSibling?.matches('.thr.note') && !document.querySelector('.thr.note .was')`)
+
+		// A failed refresh keeps the view and the note being typed.
+		b.click("a line of redirect.go", redirect+`.querySelector('.tx')`)
+		b.press("addNote")
+		b.typeText("Half a note")
+		b.evalJS(`window.e2eFails = 0; window.fetch = (u, o) => String(u).includes('/api/branch') ? (e2eFails++, Promise.resolve(new Response('git failed', {status: 500}))) : e2eFetch(u, o)`)
+		readme, err := os.ReadFile(filepath.Join(repo, "README.md"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		write(t, filepath.Join(repo, "README.md"), string(readme)+"\n")
+		b.waitFor("a failed refresh", `e2eFails > 0`)
+		b.act("wait for the page", chromedp.Sleep(300*time.Millisecond))
+		b.waitFor("the view and the note kept", `document.querySelector('.fbox') && document.querySelector('.thr.editing textarea')?.value === 'Half a note' && document.querySelectorAll('.thr.note:not(.editing)').length === 2`)
+		b.evalJS(`window.fetch = e2eFetch`)
+		write(t, filepath.Join(repo, "README.md"), string(readme))
+		b.key("Escape", kb.Escape)
+		b.waitFor("the editor closed", `!document.querySelector('.thr.editing')`)
+
+		// Lines added above a note: it stays under its line, also when its box is not on screen.
+		redirectGo := filepath.Join(repo, "internal", "auth", "redirect.go")
+		src, err := os.ReadFile(redirectGo)
+		if err != nil {
+			t.Fatal(err)
+		}
+		write(t, redirectGo, strings.Replace(string(src), "package auth\n", "package auth\n\n// One.\n// Two.\n// Three.\n", 1))
+		b.waitFor("the note four lines lower", redirect+`?.querySelector('.gut span:last-child').textContent === '12' && `+redirect+`.nextElementSibling?.matches('.thr.note')`)
+		b.click("close Branch changes", `document.querySelector('#filetabs .filetab.active .close')`)
+		b.waitFor("Branch changes closed", `!document.querySelector('.fbox')`)
+		write(t, redirectGo, strings.Replace(string(src), "package auth\n", "package auth\n\n// One.\n// Two.\n// Three.\n// Four.\n// Five.\n", 1))
+		b.click("Copy for agent", byText("#prs .reviewbox button", "Copy for agent…"))
+		b.waitFor("the note at its new line", `document.querySelector('.copypanel pre')?.textContent.includes('internal/auth/redirect.go:14\n')`)
+		b.key("Escape", kb.Escape)
+		b.press("prsTab")
+		b.waitFor("Branch changes again", redirect+`?.nextElementSibling?.matches('.thr.note')`)
+
+		// The agent changes the noted line: the note is outdated and keeps the old line.
+		write(t, filepath.Join(repo, session), sessionGo("sess, ok := s.lookup(c.Value)", strings.Replace(lookupGo, "sess, ok := s.byID[id]", "sess, ok := s.copyOf(id)", 1)))
+		b.waitFor("the note outdated", `[...document.querySelectorAll('.thr.note')].some(n => [...n.querySelectorAll('.chip')].some(c => c.textContent === 'Outdated') && n.querySelector('.was')?.textContent === '\tsess, ok := s.byID[id]')`)
+
+		// Copy for agent.
+		b.evalJS(`window.e2eFetches = []; { const f = window.fetch; window.fetch = (u, o) => f(u, o).then(r => (e2eFetches.push(u + ' ' + r.status), r)); }`)
+		b.evalJS(`navigator.clipboard.writeText = () => Promise.reject(new Error('denied'))`)
+		b.click("Copy for agent", byText("#prs .reviewbox button", "Copy for agent…"))
+		b.waitFor("the panel with both notes checked", `[...document.querySelectorAll('.copypanel li input')].filter(c => c.checked).length === 2`)
+		prompt := "Review notes for branch fix-login (PR #482).\nFix each one, then say what you changed.\n\n" +
+			"internal/auth/redirect.go:14\n  Keep next only when it is a path on this site. A //evil.com path passes now.\n\n" +
+			fmt.Sprintf("internal/auth/session.go:%d\n  Return a copy, not the pointer.", lineOf(sessionGo("", lookupGo), "\tsess, ok := s.byID[id]"))
+		b.waitFor("the prompt", `document.querySelector('.copypanel pre').textContent === `+jsString(prompt))
+		b.click("Copy 2", byText(".copypanel button", "Copy 2"))
+		b.waitFor("the prompt selected when the clipboard is refused", `document.querySelector('.copypanel') && getSelection().toString().trim() === document.querySelector('.copypanel pre').textContent.trim()`)
+		b.key("Escape", kb.Escape)
+		b.waitFor("the panel closed", `!document.querySelector('.copypanel')`)
+		b.evalJS(`navigator.clipboard.writeText = t => (window.e2eClip = t, Promise.resolve())`)
+		b.click("Copy for agent", byText("#prs .reviewbox button", "Copy for agent…"))
+		b.waitFor("the first box focused", `document.activeElement?.matches('.copypanel li input')`)
+		b.key("Space", " ")
+		b.waitFor("one note picked", `document.querySelector('.copypanel .acts .muted').textContent === '1 of 2 picked'`)
+		b.key("Space", " ")
+		b.waitFor("two notes picked", `document.querySelector('.copypanel .acts .muted').textContent === '2 of 2 picked'`)
+		b.key("Enter", "\r")
+		b.waitFor("the prompt on the clipboard", `window.e2eClip === `+jsString(prompt))
+		b.waitFor("the notes copied", `document.querySelector('#prs .reviewbox .head .muted')?.textContent === '2 · 2 copied' && document.querySelectorAll('.thr.note.copied').length === 2`)
+		b.waitFor("the status bar", `document.querySelector('#statusbar').textContent.includes('Copied 2 notes')`)
+		b.waitFor("the copy counted by the local kijk", `e2eFetches.includes('/api/count?name=agent-copy 200')`)
+		b.waitFor("the copy read aloud", `document.querySelector('#announce').textContent === 'Copied 2 notes'`)
+		if os.Getenv("KIJK_E2E_SHOTS") != "" {
+			b.evalJS(`[...document.querySelectorAll('.thr.note')].at(-1).scrollIntoView({block: 'center'})`)
+			b.act("wait for the layout", chromedp.Sleep(300*time.Millisecond))
+			b.screenshot(e2eOut(t), "branch-copied")
+		}
+
+		// A second round: only the new note is picked, and Clear copied keeps it.
+		binary := boxRow("README.md", "Then run the binary.")
+		b.click("a line of README.md", binary+`.querySelector('.tx')`)
+		b.press("addNote")
+		b.typeText("Say how to build it.")
+		b.press("submitNote")
+		b.waitFor("the third note", binary+`.nextElementSibling?.matches('.thr.note:not(.editing)')`)
+		b.click("Copy for agent", byText("#prs .reviewbox button", "Copy for agent…"))
+		b.waitFor("only the new note picked", `document.querySelector('.copypanel .acts .muted')?.textContent === '1 of 3 picked' && document.querySelector('.copypanel li input:checked + .what .where').textContent === 'README.md:8'`)
+		b.key("Escape", kb.Escape)
+		b.click("Clear copied", byText("#prs .reviewbox button", "Clear copied"))
+		b.waitFor("the new note kept", `document.querySelector('#prs .reviewbox .head .muted')?.textContent === '1' && document.querySelectorAll('.thr.note').length === 1 && `+binary+`.nextElementSibling?.matches('.thr.note')`)
+		b.click("Delete", binary+`.nextElementSibling.querySelector('[aria-label=Delete]')`)
+		b.waitFor("no notes", `document.querySelector('#prs .reviewbox .head .muted')?.textContent === 'none yet' && !document.querySelector('.thr.note')`)
+
+		// A note on a line the diff no longer shows keeps that line in view.
+		check := boxRow(session, "func check16() bool {")
+		b.hover("a line next to the change", check)
+		b.click("+", check+`.querySelector('.addc')`)
+		b.typeText("Name this for what it checks.")
+		b.press("submitNote")
+		b.waitFor("the note", check+`.nextElementSibling?.matches('.thr.note')`)
+		write(t, filepath.Join(repo, session), sessionGo("sess, ok := s.lookup(c.Value)", ""))
+		b.waitFor("its line as a hunk of its own", `!`+boxHas(session, "add", "// lookup reads a session without touching its expiry.")+` && `+check+`?.previousElementSibling?.matches('.sep') && `+check+`.nextElementSibling?.matches('.thr.note')`)
+		b.click("Delete", check+`.nextElementSibling.querySelector('[aria-label=Delete]')`)
+		b.waitFor("the note deleted", `!document.querySelector('.thr.note') && !`+check)
+
+		// All pushed: no bar and no dashed marks.
+		run(t, repo, "add", "-A")
+		run(t, repo, "commit", "-qm", "All of it")
+		run(t, repo, "push", "-q")
+		b.evalJS(`document.querySelector('.allfiles').scrollTop = 0`)
+		b.waitFor("no bar", `document.querySelector('#prs .prfiles') && !document.querySelector('#prs .unpushed')`)
+		b.waitFor("no dashed marks", `!document.querySelector('#prs .np, .fhead .np') && !`+fileBox("README.md")+`.querySelector('.ln.np, .np-tag')`)
+
+		if os.Getenv("KIJK_E2E_SHOTS") != "" {
+			write(t, filepath.Join(repo, session), sessionGo("sess, ok := s.lookup(c.Value)", strings.Replace(lookupGo, "sess, ok := s.byID[id]", "sess, ok := s.copyOf(id)", 1)))
+			copyOf := boxRow(session, "\tsess, ok := s.copyOf(id)")
+			b.waitFor("the line", copyOf)
+			b.hover("a line", copyOf)
+			b.click("+", copyOf+`.querySelector('.addc')`)
+			b.typeText("Say why a copy is needed.")
+			b.press("submitNote")
+			b.click("session.go in the list", prsRow("session.go"))
+			dir := e2eOut(t)
+			for _, s := range []struct {
+				name, scheme string
+				width        int64
+			}{{"light", "light", 1400}, {"dark", "dark", 1400}, {"narrow", "light", 800}} {
+				b.emulate(s.scheme, s.width)
+				b.act("wait for the layout", chromedp.Sleep(300*time.Millisecond))
+				b.screenshot(dir, "branch-"+s.name)
+			}
+			b.emulate("light", 1400)
+			b.click("Copy for agent", byText("#prs .reviewbox button", "Copy for agent…"))
+			b.screenshot(dir, "branch-copy")
+			b.key("Escape", kb.Escape)
+		}
+
+		// On GitLab the tab says MRs, and the prompt names the merge request.
+		run(t, repo, "config", "remote.origin.url", "https://gitlab.com/acme/review.git")
+		b.act("reload", chromedp.Reload())
+		b.waitFor("the MRs tab", prsTab+`.dataset.tip.startsWith('MRs\n') && document.querySelector('#prs .pr-num')?.textContent === '!12'`)
+		b.waitFor("Branch changes", binary)
+		b.click("a line of README.md", binary+`.querySelector('.tx')`)
+		b.press("addNote")
+		b.typeText("Say how to build it.")
+		b.press("submitNote")
+		b.click("Copy for agent", byText("#prs .reviewbox button", "Copy for agent…"))
+		b.waitFor("the merge request in the prompt", `document.querySelector('.copypanel pre')?.textContent.startsWith('Review notes for branch fix-login (MR !12).\n')`)
+		b.key("Escape", kb.Escape)
+		b.noErrors()
+	})
+
 	t.Run("shots", func(t *testing.T) {
 		if os.Getenv("KIJK_E2E_SHOTS") == "" {
 			t.Skip("set KIJK_E2E_SHOTS=1 to save the main views in light, dark and a narrow window")
@@ -238,17 +531,40 @@ func TestBrowser(t *testing.T) {
 		publish(t, "0.0.1", exe)
 		app := namedRepo(t, "app")
 		write(t, filepath.Join(app, "app.go"), "package app\n")
+		run(t, app, "add", ".")
+		run(t, app, "commit", "-qm", "Add the app")
+		run(t, app, "checkout", "-qb", "start")
+		write(t, filepath.Join(app, "app.go"), "package app\n\n// Start runs the app.\nfunc Start() {}\n")
+		run(t, app, "commit", "-qam", "Add Start")
 		claudeAgent(t, filepath.Join(m.home(vm), ".claude"), app, "Remote work", "busy")
 		home := t.TempDir()
 		write(t, filepath.Join(home, ".config", "kijk", "machines.json"), fmt.Sprintf(`{"machines":[{"target":%q,"enabled":true}]}`, vm))
 		local := startKijkIn(t, exe, home)
 		r := openPage(t, newTab(t, tab), local, "/")
 		// The first connection installs kijk on the machine.
-		r.waitLong(time.Minute, "the agent on the machine", rowLabelIs("Remote work, Claude Code, app · main, Busy"))
+		r.waitLong(time.Minute, "the agent on the machine", rowLabelIs("Remote work, Claude Code, app · start, Busy"))
 		r.click("the remote row", row("Remote work"))
 		r.waitFor("app.go in the tree", treeItem("app.go"))
 		r.click("app.go", treeItem("app.go"))
 		r.waitFor("the remote code", activeFile("app.go")+" && "+viewHas("package app"))
+
+		// The PRs tab of a remote folder comes from the kijk on its machine; its copies count here.
+		r.waitFor("the PRs tab", `(b => b && !b.hidden && b.dataset.tip.startsWith('Branch\n'))(`+prsTab+`)`)
+		r.press("prsTab")
+		r.waitFor("the bar", `document.querySelector('#prs .unpushed .t')?.textContent === "This branch is not pushed yet. Reviewers don't see it."`)
+		r.waitFor("the change", boxHas("app.go", "add np", "// Start runs the app."))
+		r.click("the new line", boxRow("app.go", "func Start() {}")+`.querySelector('.tx')`)
+		r.press("addNote")
+		r.waitFor("the note editor", `document.activeElement?.matches('.thr.editing textarea')`)
+		r.typeText("Return an error.")
+		r.press("submitNote")
+		r.waitFor("the note", boxRow("app.go", "func Start() {}")+`.nextElementSibling?.matches('.thr.note')`)
+		r.evalJS(`window.e2eFetches = []; { const f = window.fetch; window.fetch = (u, o) => f(u, o).then(r => (e2eFetches.push(u + ' ' + r.status), r)); }`)
+		r.evalJS(`navigator.clipboard.writeText = t => (window.e2eClip = t, Promise.resolve())`)
+		r.click("Copy for agent", byText("#prs .reviewbox button", "Copy for agent…"))
+		r.click("Copy 1", byText(".copypanel button", "Copy 1"))
+		r.waitFor("the prompt", `window.e2eClip === `+jsString("Review notes for branch start.\nFix each one, then say what you changed.\n\napp.go:4\n  Return an error."))
+		r.waitFor("the copy counted by the local kijk", `e2eFetches.includes('/api/count?name=agent-copy 200')`)
 		r.noErrors()
 	})
 
@@ -457,7 +773,36 @@ func typeOf(types []fileType, name string) fileType {
 const (
 	gitTab   = `document.querySelector('#tabs button[data-tab=git]')`
 	filesTab = `document.querySelector('#tabs button[data-tab=files]')`
+	prsTab   = `document.querySelector('#tabs button[data-tab=prs]')`
 )
+
+// prsRow is the row of a file in the PRs tab's list.
+func prsRow(name string) string {
+	return fmt.Sprintf(`[...document.querySelectorAll('#prs .prfiles li')].find(e => e.querySelector('.name')?.textContent === %s)`, jsString(name))
+}
+
+// fileBox is the box of a file in the Branch changes view.
+func fileBox(path string) string {
+	return fmt.Sprintf(`document.querySelector('#viewer .fbox[data-path=%s]')`, jsString(path))
+}
+
+// boxRow is the row of a box whose text is text.
+func boxRow(path, text string) string {
+	return fmt.Sprintf(`[...(%s?.querySelectorAll('.ln') || [])].find(e => e.querySelector('.tx')?.textContent === %s)`, fileBox(path), jsString(text))
+}
+
+// boxHas is true when a box has a row of the classes cls, such as "add np", with the text.
+func boxHas(path, cls, text string) string {
+	return fmt.Sprintf(`[...(%s?.querySelectorAll('.ln.%s') || [])].some(e => e.querySelector('.tx')?.textContent === %s)`, fileBox(path), strings.ReplaceAll(cls, " ", "."), jsString(text))
+}
+
+// lineOf is the number of the first line of text that is line.
+func lineOf(text, line string) int {
+	return slices.Index(strings.Split(text, "\n"), line) + 1
+}
+
+// changeAt is true when a change starts five lines below the top of the Branch changes view.
+const changeAt = `(s => [...s.querySelectorAll('.fbox:not(.shut) .ln.add, .fbox:not(.shut) .ln.del')].some(r => Math.abs(r.getBoundingClientRect().top - s.getBoundingClientRect().top - 124) < 2))(document.querySelector('.allfiles'))`
 
 const agentRows = `[...document.querySelectorAll('#rows li[role=button]')]`
 

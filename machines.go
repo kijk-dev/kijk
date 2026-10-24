@@ -494,11 +494,11 @@ func newRemoteProxy(t *http.Transport, addr string, cookie *http.Cookie) *remote
 
 func (p *remoteProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) { p.rp.ServeHTTP(w, r) }
 
-// serveMachine is the /m/{machine}/api/ route.
+// serveMachine is the /m/{machine}/api/ route. Updates and use counts stay with the local kijk.
 func (m *machineManager) serveMachine(w http.ResponseWriter, req *http.Request) {
 	name := req.PathValue("machine")
 	rest := strings.TrimPrefix(req.URL.Path, "/m/"+name)
-	if rest == "/api/update" || rest == "/api/restart" || !strings.HasPrefix(rest, "/api/") {
+	if rest == "/api/update" || rest == "/api/restart" || rest == "/api/count" || !strings.HasPrefix(rest, "/api/") {
 		http.NotFound(w, req)
 		return
 	}

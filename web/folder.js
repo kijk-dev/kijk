@@ -2,15 +2,18 @@ import { el, get, post, base, splitKey, storeKey } from './api.js';
 import { showTree, paint, refreshTree, openFolders, selectFile } from './tree.js';
 import { refreshView, jumpChange, showMessage } from './view.js';
 import { setTabs, tabState, openTab, activeTab, recentFiles, closeActive, goPlace } from './tabs.js';
-import { showPR } from './pr.js';
+import { showPR, FORGE } from './pr.js';
+import { setupReview, setBranchFolder, refreshBranch, showBranchPanel, focusBranchList } from './review.js';
 import { marks, showChanges, showGraph, revealHead, reviewKey, ago, lineCount } from './git.js';
 import { openFind, findAgain, openGotoLine, openGotoFile, openRecent } from './find.js';
 import { onKey, keyLabel, keyNames } from './keys.js';
 
-// The view of the open folder: its tree, file tabs, and the Files and Git sidebar tabs.
+// The view of the open folder: its tree, file tabs, and the Files, Git and PRs sidebar tabs.
 const filesEl = document.getElementById('files');
 const gitEl = document.getElementById('git');
+const prsEl = document.getElementById('prs');
 const tabsEl = document.getElementById('tabs');
+const prsBtn = tabsEl.querySelector('[data-tab=prs]');
 const sidebarHead = document.getElementById('sidebar-head');
 const folderName = document.getElementById('folder-name');
 const gitNote = document.getElementById('git-note');
@@ -59,9 +62,18 @@ let sidebar = 'files'; // the sidebar tab chosen for the open folder
 let page = null;
 
 // setupFolder tells the view about the page around it: lastKey, the localStorage key that keeps the
-// open folder; start, shown when no folder is open; announce(text); and onFolderEvent, run on each live update of the folder.
+// open folder; start, shown when no folder is open; announce(text); say(text), a short note in the
+// status bar; agentIcon(row), the icon of the row's agent type; and onFolderEvent, run on each live
+// update of the folder.
 export function setupFolder(p) {
   page = p;
+  setupReview({
+    announce: p.announce,
+    say: p.say,
+    push: pushNow,
+    openFile: path => { if (!offline) openTab({ kind: 'file', path }, true); },
+    openBranch: () => openTab({ kind: 'branch', path: '' }, true),
+  });
 }
 
 export const SERVER = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="7" rx="1.5"/><rect x="3" y="13" width="18" height="7" rx="1.5"/><path d="M7 7.5h.01M7 16.5h.01"/></svg>';
@@ -104,6 +116,7 @@ export function openFolder(r, again) {
     onFile: (path, pin) => { if (!offline) openTab({ kind: 'file', path }, pin); },
     onToggle: saveState,
   });
+  setBranchFolder(r.key, page.agentIcon?.(r)); // before the tabs, which may open Branch changes
   setTabs(r.key, state, tabsChanged);
   tabsEl.hidden = true;
   sidebarHead.hidden = false;
@@ -112,6 +125,7 @@ export function openFolder(r, again) {
   pr = cachedPR(r.key);
   upHash = null;
   showPR(prLine, pr);
+  showPrsTab();
   refreshPR();
   selectTab('files');
   refreshGit();
@@ -157,6 +171,7 @@ export function closeFolder() {
   showOffline();
   git = null;
   pr = null;
+  setBranchFolder(null);
   setTabs(null, {}, () => {});
   showMessage(viewer, page.start);
   filesEl.replaceChildren();
@@ -223,13 +238,16 @@ async function refreshPR() {
   const before = prTarget();
   pr = res;
   showPR(prLine, pr);
+  showPrsTab();
   if (prTarget() !== before) refreshGit();
+  else showBranchPanel(git, pr, prTarget());
   if (pr?.pr?.ci === 'running') prTimer = setTimeout(refreshPR, 60000);
 }
 
 async function refreshGit() {
   if (offline) return; // keep what is on screen until the machine is back
   const root = openKey;
+  refreshBranch(git, pr, prTarget()); // at the same time as the status, which takes as long
   let st;
   try {
     st = await get('status', { root, target: prTarget() });
@@ -241,8 +259,10 @@ async function refreshGit() {
   gitNote.hidden = !st.error;
   gitNote.textContent = st.error || '';
   if (!st.git) return selectTab('files');
-  if (!git) selectTab(sidebar);
+  prsBtn.hidden = !st.total;
+  if (!git || prsEl.hidden === (shownTab() === 'prs')) selectTab(shownTab());
   git = st;
+  showBranchPanel(st, pr, prTarget());
   if (upHash !== null && st.upHash !== upHash) refreshPR();
   upHash = st.upHash || '';
   paint(filesEl, marks(st));
@@ -389,6 +409,18 @@ function selectTab(tab) {
   }
   filesEl.hidden = tab !== 'files';
   gitEl.hidden = tab !== 'git';
+  prsEl.hidden = tab !== 'prs';
+}
+
+// shownTab is the chosen sidebar tab, or Git while the branch has no PRs tab.
+const shownTab = () => (sidebar === 'prs' && prsBtn.hidden ? 'git' : sidebar);
+
+// The PRs tab is named for the forge: pull requests on GitHub, merge requests on GitLab.
+function showPrsTab() {
+  const kind = pr?.forge?.kind;
+  const word = FORGE[kind] ? `${FORGE[kind].short}s` : 'Branch';
+  prsBtn.dataset.tip = `${word}\n${keyLabel('prsTab')}`;
+  prsBtn.setAttribute('aria-label', word);
 }
 
 function switchSidebar(tab) {
@@ -396,6 +428,7 @@ function switchSidebar(tab) {
   selectTab(tab);
   saveState();
   refreshGit();
+  if (tab === 'prs' && !offline) openTab({ kind: 'branch', path: '' }, true);
 }
 
 tabsEl.onclick = e => {
@@ -405,19 +438,22 @@ tabsEl.onclick = e => {
 
 // The sidebar keys also move the focus there, as IntelliJ's tool window keys do.
 function showSidebar(tab) {
-  if (!openKey || (tab === 'git' && tabsEl.hidden)) return;
+  if (!openKey || (tab !== 'files' && tabsEl.hidden) || (tab === 'prs' && prsBtn.hidden)) return;
   switchSidebar(tab);
+  if (tab === 'prs') return focusBranchList();
   const list = tab === 'files' ? filesEl : changesEl;
   (list.querySelector('[tabindex="0"]') || list).focus();
 }
+const TAB_KEYS = { files: 'filesTab', git: 'gitTab', prs: 'prsTab' };
 for (const b of tabsEl.querySelectorAll('button[data-tab]')) {
-  const action = b.dataset.tab === 'files' ? 'filesTab' : 'gitTab';
+  const action = TAB_KEYS[b.dataset.tab];
   b.dataset.tip = `${b.dataset.tip}\n${keyLabel(action)}`;
   b.setAttribute('aria-keyshortcuts', keyNames(action));
 }
 commitBtn.title = `Commit (${keyLabel('commit')})`;
 onKey('filesTab', () => showSidebar('files'));
 onKey('gitTab', () => showSidebar('git'));
+onKey('prsTab', () => showSidebar('prs'));
 onKey('commit', () => {
   if (!openKey || tabsEl.hidden) return;
   switchSidebar('git');

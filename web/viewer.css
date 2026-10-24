@@ -478,3 +478,152 @@ button.pill:hover { background: color-mix(in srgb, var(--modified) 22%, var(--se
 .offline #git .item input[type=checkbox] { opacity: .5; }
 @media (prefers-reduced-motion: reduce) { #stalebar { animation: none; } }
 @keyframes notice-in { from { opacity: 0; } }
+
+/* The PRs tab: the folder's own branch, its branch changes and the agent notes. */
+#prs:not([hidden]) { flex: 1; min-height: 0; display: flex; flex-direction: column; container-type: inline-size; }
+.prs-scroll { flex: 1; min-height: 0; overflow: auto; }
+.prhead { flex: none; display: flex; flex-direction: column; gap: 4px; padding: 6px 12px 7px; border-bottom: 1px solid var(--border); font-size: 12px; }
+.prhead .pr-top { gap: 5px; }
+.prhead .pr-title { font-size: 13px; text-decoration: none; }
+.prhead a.pr-title:hover { text-decoration: underline; }
+.branchmark { display: flex; flex: none; color: var(--muted); }
+.branchmark svg { width: 14px; height: 14px; }
+.prmeta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 5px; padding-left: 19px; color: var(--muted); }
+.prmeta .ref { font-size: 11px; line-height: 16px; }
+.prmeta .arrow { display: flex; }
+.prmeta .arrow svg { width: 11px; height: 11px; }
+
+/* What reviewers cannot see yet. Dashed means "only on this machine". */
+.unpushed { flex: none; display: flex; align-items: flex-start; gap: 7px; padding: 6px 12px 7px; border-bottom: 1px solid var(--border); font-size: 12px; }
+.unpushed > svg { flex: none; width: 13px; height: 13px; margin-top: 2px; color: var(--muted); }
+.unpushed .t { flex: 1; min-width: 0; }
+.unpushed .then { color: var(--muted); }
+.unpushed .tool { flex: none; }
+.unpushed .tool:disabled { opacity: .5; cursor: default; }
+
+.prfiles h3 { display: flex; align-items: center; margin: 8px 12px 2px; font-size: 11px; text-transform: uppercase; color: var(--muted); }
+.prfiles h3 .lc { margin-left: 8px; padding-left: 0; font-weight: 600; }
+.prfiles ul:focus { outline: none; }
+.prfiles .item { gap: 6px; padding-left: 12px; }
+.prfiles .item > .dir { flex-shrink: 1000; min-width: 0; }
+.prfiles .item:focus { outline: none; }
+.prfiles .item:focus-visible { outline: 2px solid var(--busy); outline-offset: -2px; }
+.np { display: flex; flex: none; color: var(--muted); }
+.np svg { width: 12px; height: 12px; }
+.tc { flex: none; display: inline-flex; align-items: center; gap: 2px; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.tc svg { width: 11px; height: 11px; }
+.tc.open { color: var(--modified); }
+.prfiles .tc + .lc { margin-left: 0; }
+.prfiles .item .tc { margin-left: auto; }
+
+/* The agent notes box at the bottom of the tab. */
+.reviewbox { flex: none; display: flex; flex-direction: column; gap: 6px; padding: 8px 12px; border-top: 1px solid var(--border); }
+.reviewbox .head { display: flex; align-items: baseline; gap: 6px; font-size: 12px; }
+.reviewbox .head b { font-weight: 600; }
+.reviewbox .head > * { white-space: nowrap; }
+.reviewbox .head .muted { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.reviewbox .hint { margin: 0; font-size: 12px; color: var(--muted); }
+.reviewbox .tool.wide { display: flex; align-items: center; justify-content: center; gap: 6px; padding: 3px 8px; font-size: 13px; }
+.reviewbox .tool.wide svg { width: 13px; height: 13px; }
+.reviewbox .tool:disabled { opacity: .5; cursor: default; }
+.reviewbox .gone { max-height: 120px; overflow: auto; font-size: 12px; }
+.reviewbox .gone li { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.reviewbox .gone .where { flex: none; color: var(--muted); font: 11px var(--code-font); }
+.reviewbox .gone .body { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Branch changes: every file in one scroll. Each file is a box whose header sticks while you scroll it. */
+.allfiles { position: relative; flex: 1; min-height: 0; overflow: auto; padding: 12px 12px 0; background: var(--panel); }
+.allfiles:focus { outline: none; }
+.fbox { margin-bottom: 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); overflow: clip; content-visibility: auto; }
+.fhead {
+  position: sticky; top: -12px; z-index: 2; display: flex; align-items: center; gap: 7px; height: 34px; padding: 0 8px 0 4px;
+  background: var(--panel); border-bottom: 1px solid var(--border); font-size: 12.5px; white-space: nowrap;
+}
+.fbox.shut { content-visibility: visible; }
+.fbox.shut .fhead { border-bottom: 0; }
+.fhead .fold svg { transition: transform .1s; }
+.fbox:not(.shut) .fhead .fold svg { transform: rotate(90deg); }
+.fpath { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.fpath b { font-weight: 600; }
+.fhead .lc { margin-left: 0; padding-left: 0; font-size: 11.5px; }
+.fhead .np svg { width: 13px; height: 13px; }
+.fhead .grow { flex: 1; }
+.fnote { display: flex; align-items: center; gap: 4px; padding: 4px 12px; border-top: 1px solid var(--border); background: var(--sep-bg); font-size: 12px; color: var(--muted); }
+.fnote .more { font: inherit; padding: 0; position: static; }
+.fbody { overflow-x: auto; container-type: inline-size; font: var(--code-size)/18px var(--code-font); padding: 0 0 6px; }
+.fbody .ln { position: relative; min-width: max-content; }
+.fbody .ln.sep .gut { width: calc(var(--gutter) * 2); }
+.fbody .ln.sep .tx { color: var(--muted); }
+.fbody .ln.sep .more { font: 12px system-ui, -apple-system, sans-serif; margin-left: 10px; padding: 0; position: static; }
+.fempty { margin: 8px 12px 2px; color: var(--muted); font: 12px system-ui, -apple-system, sans-serif; }
+.fend { margin: 4px 0 24px; text-align: center; font-size: 12px; color: var(--muted); }
+.np-tag {
+  display: inline-flex; align-items: center; gap: 4px; margin-left: 10px; padding: 0 6px; border: 1px dashed var(--edge); border-radius: 8px;
+  font: 11px/14px system-ui, -apple-system, sans-serif; color: var(--muted); vertical-align: 1px;
+}
+.np-tag svg { width: 10px; height: 10px; }
+/* A dashed change bar: the line exists only on this machine. */
+.ln.np .gut::after { background: repeating-linear-gradient(var(--added) 0 3px, transparent 3px 6px); }
+.allfiles:focus .ln.cur .gut { box-shadow: inset 2px 0 var(--busy); }
+.addc {
+  position: absolute; left: calc(var(--gutter) * 2 - 19px); top: 1px; z-index: 1; display: none; width: 16px; height: 16px; padding: 1px;
+  border: 0; border-radius: 3px; background: var(--accent-fill); color: var(--on-accent); cursor: pointer;
+}
+.addc svg { width: 14px; height: 14px; stroke-width: 2.5; }
+.ln:hover .addc { display: flex; }
+
+/* An agent note: a box under its line, with a notch that points up at it. Dashed: it never leaves kijk. */
+.thr {
+  position: sticky; left: 24px; width: min(700px, calc(100cqi - 40px)); margin: 10px 16px 12px 24px; white-space: normal;
+  font: 14px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--text);
+  background: var(--bg); border: 1px dashed var(--edge); border-radius: 8px;
+}
+.thr::before {
+  content: ""; position: absolute; top: -7px; left: 18px; width: 12px; height: 12px; transform: rotate(45deg);
+  background: var(--bg); border-top: 1px dashed var(--edge); border-left: 1px dashed var(--edge);
+}
+.thr .c { padding: 10px 14px 12px; }
+.thr .who { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.thr .who b { font-weight: 600; }
+.thr .who .muted { font-size: 12px; white-space: nowrap; }
+.thr .who .end { margin-left: auto; display: flex; gap: 2px; }
+.thr .agent { display: flex; flex: none; width: 22px; height: 22px; align-items: center; justify-content: center; color: var(--agent-color, var(--muted)); }
+.thr .agent svg { width: 14px; height: 14px; }
+.thr .agent.plain svg { fill: none; stroke: currentColor; }
+.thr p { margin: 4px 0 0 30px; max-width: 72ch; overflow-wrap: anywhere; white-space: pre-wrap; }
+.thr.copied p { color: var(--muted); }
+.thr .was { display: block; max-width: calc(72ch - 30px); margin: 6px 0 0 30px; padding: 0 6px; border-radius: 3px; background: var(--del-bg); font: 12px/18px var(--code-font); white-space: pre; overflow: hidden; text-overflow: ellipsis; }
+.thr textarea {
+  display: block; width: calc(100% - 30px); margin: 6px 0 0 30px; min-height: 56px; resize: vertical;
+  font: inherit; font-size: 13.5px; padding: 6px 9px; border: 1px solid var(--edge); border-radius: 4px; background: var(--bg); color: var(--text); caret-color: var(--modified);
+}
+.thr textarea:focus { outline: 2px solid var(--modified); outline-offset: -1px; }
+.thr .acts { display: flex; align-items: center; justify-content: flex-end; gap: 6px; margin: 8px 0 0 30px; font-size: 12px; }
+.thr .acts .muted { margin-right: auto; }
+kbd { font: 11px/1 var(--code-font); padding: 1px 4px; border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 3px; background: var(--bg); color: var(--muted); }
+
+/* Copy for agent: pick the notes that go into the prompt. */
+.copypanel {
+  position: fixed; z-index: 5; width: min(440px, calc(100vw - 16px)); max-height: 80vh; display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--panel); color: var(--text); box-shadow: 0 4px 12px rgb(0 0 0 / .25); font-size: 12px;
+}
+.copypanel h2 { margin: 0; padding: 8px 12px 6px; font-size: 13px; font-weight: 600; }
+.copypanel ul { padding: 0 0 4px; overflow: auto; }
+.copypanel li { display: flex; align-items: flex-start; gap: 7px; padding: 4px 12px; }
+.copypanel li:hover { background: color-mix(in srgb, var(--select) 50%, transparent); }
+.copypanel li input { margin: 2px 0 0; accent-color: var(--modified); flex: none; }
+.copypanel .what { flex: 1; min-width: 0; cursor: pointer; }
+.copypanel .where { display: block; color: var(--muted); font: 11px/16px var(--code-font); }
+.copypanel .body { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.copypanel li.used .body { color: var(--muted); }
+.copypanel pre {
+  margin: 0 12px; max-height: 150px; overflow: auto; padding: 7px 9px; border: 1px solid var(--border); border-radius: 4px;
+  background: var(--bg); font: 11px/16px var(--code-font); white-space: pre-wrap;
+}
+.copypanel pre:focus { outline: 2px solid var(--busy); outline-offset: -1px; }
+.copypanel .acts { display: flex; align-items: center; gap: 6px; padding: 8px 12px; }
+.copypanel .acts .muted { margin-right: auto; }
+.copypanel .tool:disabled { opacity: .5; cursor: default; }
+.copypanel .label { padding: 6px 12px 3px; font-size: 11px; font-weight: 700; text-transform: uppercase; color: var(--muted); }
+@media (prefers-reduced-motion: reduce) { .fhead .fold svg { transition: none; } }
+#prs .note.error { margin: 6px 12px 0; font-size: 12px; color: var(--error); }

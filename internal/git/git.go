@@ -480,6 +480,15 @@ func CommitFiles(root, hash string) ([]change, error) {
 	if err != nil {
 		return nil, err
 	}
+	out := parseNameStatus(raw)
+	if n, err := Raw(root, "show", "-z", "--format=", "--numstat", "-M", "--first-parent", hash); err == nil {
+		setCounts(out, parseNumstat(n))
+	}
+	return out, nil
+}
+
+// parseNameStatus reads git's --name-status -z output.
+func parseNameStatus(raw []byte) []change {
 	out := []change{}
 	f := strings.Split(strings.TrimPrefix(string(raw), "\n"), "\x00")
 	for i := 0; i+1 < len(f); i++ {
@@ -495,10 +504,7 @@ func CommitFiles(root, hash string) ([]change, error) {
 		}
 		out = append(out, c)
 	}
-	if n, err := Raw(root, "show", "-z", "--format=", "--numstat", "-M", "--first-parent", hash); err == nil {
-		setCounts(out, parseNumstat(n))
-	}
-	return out, nil
+	return out
 }
 
 // Push pushes the current branch, or publishes it to origin when it has no upstream.
@@ -556,26 +562,35 @@ type DiffResult struct {
 	Hunks  []Hunk `json:"hunks"`
 }
 
-// Diff returns the change of one file. mode is "unstaged", "staged" or "commit" (with hash).
+// Diff returns the change of one file. mode is "unstaged", "staged", "commit" (with hash) or
+// "branch" (with the split point as hash: from there to the file on disk).
 func Diff(root, path, orig, mode, hash string, context int) (DiffResult, error) {
 	if !filepath.IsLocal(filepath.FromSlash(path)) || (orig != "" && !filepath.IsLocal(filepath.FromSlash(orig))) {
 		return DiffResult{}, ErrOutside
 	}
 	args := []string{"diff", "--no-color", "--no-ext-diff", "-M", "-U" + strconv.Itoa(context)}
 	switch mode {
+	case "unstaged":
 	case "staged":
 		args = append(args, "--cached")
-	case "commit":
+	case "commit", "branch":
 		if !ValidHash(hash) {
 			return DiffResult{}, ErrBadHash
 		}
-		args = []string{"show", "--format=", "--first-parent", "--no-color", "--no-ext-diff", "-M", "-U" + strconv.Itoa(context), hash}
+		if mode == "branch" {
+			args = append(args, hash)
+		} else {
+			args = []string{"show", "--format=", "--first-parent", "--no-color", "--no-ext-diff", "-M", "-U" + strconv.Itoa(context), hash}
+		}
+	default:
+		return DiffResult{}, ErrBadMode
 	}
+	// Paths are file names, not patterns: "[draft].md" must not match "d.md".
 	args = append(args, "--")
 	if orig != "" {
-		args = append(args, orig)
+		args = append(args, ":(literal)"+orig)
 	}
-	out, err := Raw(root, append(args, path)...)
+	out, err := Raw(root, append(args, ":(literal)"+path)...)
 	if err != nil {
 		return DiffResult{}, err
 	}
@@ -592,6 +607,15 @@ type LineChange struct {
 
 var hunkCountRe = regexp.MustCompile(`(?m)^@@ -\d+(?:,(\d+))? \+(\d+)(?:,(\d+))? @@`)
 
+// hunkCount reads a number of a hunk header; git leaves out a count of 1.
+func hunkCount(s string) int {
+	if s == "" {
+		return 1
+	}
+	n, _ := strconv.Atoi(s)
+	return n
+}
+
 // LineChanges compares the file on disk with HEAD, for the change marks beside the code.
 func LineChanges(root, path string) ([]LineChange, error) {
 	if !filepath.IsLocal(filepath.FromSlash(path)) {
@@ -602,15 +626,8 @@ func LineChanges(root, path string) ([]LineChange, error) {
 		return nil, err
 	}
 	changes := []LineChange{}
-	count := func(s string) int { // git leaves out a count of 1
-		if s == "" {
-			return 1
-		}
-		n, _ := strconv.Atoi(s)
-		return n
-	}
 	for _, m := range hunkCountRe.FindAllStringSubmatch(string(out), -1) {
-		removed, start, added := count(m[1]), count(m[2]), count(m[3])
+		removed, start, added := hunkCount(m[1]), hunkCount(m[2]), hunkCount(m[3])
 		c := LineChange{Kind: "mod", Start: start, Count: added}
 		if removed == 0 {
 			c.Kind = "add"

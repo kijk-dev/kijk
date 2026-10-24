@@ -3,7 +3,7 @@ import { refreshTip, tipSide } from './tip.js';
 import { openKey, openFolder, closeFolder, setMachine, setupFolder, showFetched, SERVER } from './folder.js';
 import { ago, lineCount } from './git.js';
 import { mac } from './keys.js';
-import { showKijk, showAgentErrors, showUndo, restarting } from './status.js';
+import { showKijk, showAgentErrors, showUndo, showSaid, restarting } from './status.js';
 
 // The agent types kijk knows, in its order. They come from the local kijk, also for remote rows.
 const agentTypes = await get('agenttypes');
@@ -44,7 +44,16 @@ const announcer = document.getElementById('announce');
 function announce(text) {
   if (text && announcer.textContent !== text) announcer.textContent = text;
 }
-setupFolder({ lastKey, start, announce, onFolderEvent: () => { if (foldersMode) refreshRow(); } });
+// agentIcon is the icon of the row's first agent type, for the agent notes of its folder.
+function agentIcon(r) {
+  const type = agentType(r.agents?.[0]?.type);
+  if (!type.icon) return null;
+  const icon = el('span', 'agent');
+  icon.innerHTML = type.icon; // from the local kijk's own files, never a remote machine's text
+  if (type.color) icon.style.setProperty('--agent-color', type.color);
+  return icon;
+}
+setupFolder({ lastKey, start, announce, say: showSaid, agentIcon, onFolderEvent: () => { if (foldersMode) refreshRow(); } });
 tipSide('#rail', 'right');
 tipSide('#statusbar', 'above');
 

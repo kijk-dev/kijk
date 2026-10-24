@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/kijk-dev/kijk/internal/agents"
@@ -80,6 +81,19 @@ func (t *telemetry) send(name string, extra map[string]any) {
 	}
 }
 
+// agentCopies counts the uses of Copy for agent since the last "kijk active".
+var agentCopies atomic.Int64
+
+// countUse counts a use the page reports. Only names kijk knows are counted.
+func countUse(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Query().Get("name") != "agent-copy" {
+		http.Error(w, "unknown count", http.StatusBadRequest)
+		return
+	}
+	agentCopies.Add(1)
+	reply(w, struct{}{})
+}
+
 // agentCounts are the agent numbers on "kijk active". byType counts local agents per agent type.
 type agentCounts struct {
 	byType           map[string]int
@@ -103,7 +117,7 @@ func (t *telemetry) active(now time.Time, folders int, looking bool, counts *age
 		}
 	}
 	t.lastActive = day
-	props := map[string]any{"folders": folders}
+	props := map[string]any{"folders": folders, "agent_copies": agentCopies.Swap(0)}
 	if counts != nil {
 		n := 0
 		for _, c := range counts.byType {

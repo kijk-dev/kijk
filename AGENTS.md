@@ -19,10 +19,10 @@ in code, UI text and commit messages.
 - The UI is plain ES modules and CSS in `web/`, embedded with `go:embed` in `main.go`. There is no
   build step and no npm: edit the files, rebuild, reload. The viewer side is the view of one open
   folder: `folder.js`, `view.js`, `tabs.js`, `tree.js`, `git.js`, `find.js`, `diagram.js`, `pr.js`,
-  `api.js`, `keys.js`, `tip.js`, `viewer.css`, and `engines/` with one file per diagram engine. The
-  app side is the page around it: `app.js` (the rail), `status.js`, `app.css` and `index.html`. App
-  files may import viewer files; viewer files never import app files, and a test in `main_test.go`
-  checks it.
+  `review.js` (the PRs tab), `api.js`, `keys.js`, `tip.js`, `viewer.css`, and `engines/` with one
+  file per diagram engine. The app side is the page around it: `app.js` (the rail), `status.js`,
+  `app.css` and `index.html`. App files may import viewer files; viewer files never import app
+  files, and a test in `main_test.go` checks it.
 
 ## Rules
 

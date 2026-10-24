@@ -191,6 +191,26 @@ func splitPoint(root, base string) string {
 	return fork
 }
 
+// branchBase finds what a branch is compared with: the PR target, else the main line, and where
+// HEAD split from it. Each is empty when there is none.
+func branchBase(root, target string) (main, base, fork string) {
+	main = mainRef(root)
+	base = main
+	if tr := targetRef(root, target); tr != "" {
+		base = tr
+	}
+	if base != "" {
+		fork = splitPoint(root, base)
+	}
+	return main, base, fork
+}
+
+// onBase tells whether HEAD is on the main line or the base itself, or on no branch: then it has
+// no branch total.
+func onBase(branch, main, base string) bool {
+	return branch == "" || branch == strings.TrimPrefix(main, "origin/") || branch == strings.TrimPrefix(base, "origin/")
+}
+
 // startTotal counts the branch total next to git status. The returned func waits for it, hides it
 // where a folder has none, and adds the untracked counts, which need the status first.
 func startTotal(root, target string) func(branch string, untracked []change) *branchTotal {
@@ -200,15 +220,8 @@ func startTotal(root, target string) func(branch string, untracked []change) *br
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		main = mainRef(root)
-		base = main
-		if tr := targetRef(root, target); tr != "" {
-			base = tr
-		}
-		if base == "" {
-			return
-		}
-		fork := splitPoint(root, base)
+		var fork string
+		main, base, fork = branchBase(root, target)
 		if fork == "" {
 			return
 		}
@@ -220,7 +233,7 @@ func startTotal(root, target string) func(branch string, untracked []change) *br
 	}()
 	return func(branch string, untracked []change) *branchTotal {
 		wg.Wait()
-		if t == nil || branch == "" || branch == strings.TrimPrefix(main, "origin/") || branch == strings.TrimPrefix(base, "origin/") {
+		if t == nil || onBase(branch, main, base) {
 			return nil
 		}
 		for _, c := range untracked {
