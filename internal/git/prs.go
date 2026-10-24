@@ -51,7 +51,7 @@ func forgeTool(root string) (f *forge, tool, note string) {
 	}
 	tool = map[string]string{"github": "gh", "gitlab": "glab"}[f.Kind]
 	if _, err := exec.LookPath(tool); err != nil {
-		return f, tool, "Install " + tool + " and log in to see " + map[string]string{"gh": "pull request", "glab": "merge request"}[tool] + " status"
+		return f, tool, "Install " + tool + " and log in to see " + f.Word() + " status"
 	}
 	return f, tool, ""
 }
@@ -545,11 +545,7 @@ func ViewPR(root string, n int) (*PR, *forge, error) {
 		}
 	}
 	if pr.State == "merged" || pr.State == "closed" {
-		word := "pull request"
-		if tool == "glab" {
-			word = "merge request"
-		}
-		pr.Write = Write{Note: "This " + word + " is " + pr.State + "."}
+		pr.Write = Write{Note: "This " + f.Word() + " is " + pr.State + "."}
 	}
 	return &pr, f, nil
 }

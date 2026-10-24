@@ -121,8 +121,7 @@ func (a *api) prView(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
-	_, sign := prWords(f.Kind)
-	ref := sign + strconv.Itoa(n)
+	ref := f.Ref(n)
 	a.opened.set(root, n, func(p *openedPR) { p.write, p.ref = pr.Write, ref })
 	out := prReply{PR: pr, Forge: f, Files: []any{}}
 	out.BodyHTML = markdownHTML(pr.Body)
@@ -137,8 +136,7 @@ func (a *api) prView(w http.ResponseWriter, r *http.Request) {
 	}
 	if pr.State == "merged" || pr.State == "closed" {
 		git.DeletePRRef(root, n)
-		word, _ := prWords(f.Kind)
-		out.Error = "This " + word + " is " + pr.State + "."
+		out.Error = pr.Write.Note
 		reply(w, out)
 		return
 	}
@@ -260,12 +258,4 @@ func (a *api) prLog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	reply(w, map[string][]string{"lines": lines})
-}
-
-// prWords are what a forge calls a pull request, and the sign before its number.
-func prWords(kind string) (word, sign string) {
-	if kind == "gitlab" {
-		return "merge request", "!"
-	}
-	return "pull request", "#"
 }

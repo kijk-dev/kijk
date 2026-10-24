@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
@@ -202,7 +201,7 @@ func gitlabSubmit(f *forge, n int, head, verdict string) error {
 		}
 		_, err = gitlabREST(f, "POST", mr+"/approve", sha)
 		if err != nil && conflictRe.MatchString(err.Error()) {
-			err = sayErr(fmt.Sprintf("!%d has new commits. Look at them first.", n))
+			err = sayErr(f.Ref(n) + " has new commits. Look at them first.")
 		}
 	case "changes":
 		what = "Request changes"

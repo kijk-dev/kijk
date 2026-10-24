@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"encoding/json"
 	"errors"
-	"fmt"
 )
 
 // GitHub holds a review as your pending review, one per user and pull request: every text goes
@@ -85,7 +84,7 @@ func githubComment(f *forge, n int, head string, c NewComment) (string, error) {
 	}
 	// GitHub places a new thread by the commit of the review it goes into.
 	if c.Thread == "" && t.review != "" && t.reviewAt != head {
-		return "", olderReview(n)
+		return "", olderReview(f, n)
 	}
 	review, err := t.pending(f, head)
 	if err != nil {
@@ -121,8 +120,8 @@ func githubComment(f *forge, n int, head string, c NewComment) (string, error) {
 	return "", nil
 }
 
-func olderReview(n int) error {
-	return sayErr(fmt.Sprintf("Your pending review on #%d is on an older commit. Post it first, or finish it on GitHub.", n))
+func olderReview(f *forge, n int) error {
+	return sayErr("Your pending review on " + f.Ref(n) + " is on an older commit. Post it first, or finish it on GitHub.")
 }
 
 // githubSummary sets the body of your pending review, making the review when there is none.
@@ -154,7 +153,7 @@ func githubSubmit(f *forge, n int, head, verdict string) error {
 	event := Verdicts[verdict]
 	// GitHub records a submitted review on its own commit, and a verdict is for the head on screen.
 	if t.review != "" && verdict != "comment" && t.reviewAt != head {
-		return olderReview(n)
+		return olderReview(f, n)
 	}
 	if t.review != "" {
 		return mutate("gh", f, `mutation($review: ID!, $event: PullRequestReviewEvent!, $body: String!) { submitPullRequestReview(input: {pullRequestReviewId: $review, event: $event, body: $body}) { pullRequestReview { id } } }`,

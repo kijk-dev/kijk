@@ -70,11 +70,7 @@ func toolErr(tool string, err error) error {
 }
 
 func headMoved(f *forge, n int) error {
-	sign := "#"
-	if f.Kind == "gitlab" {
-		sign = "!"
-	}
-	return fmt.Errorf("%s%d %w", sign, n, ErrHeadMoved)
+	return fmt.Errorf("%s %w", f.Ref(n), ErrHeadMoved)
 }
 
 // AddComment adds a draft to your review and gives its id. A comment on a line is refused when

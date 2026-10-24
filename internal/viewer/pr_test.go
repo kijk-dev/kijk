@@ -307,16 +307,6 @@ func TestPRViewChecksWithoutHead(t *testing.T) {
 	}
 }
 
-// GitLab's words name a merge request with "!", GitHub's a pull request with "#".
-func TestForgeWords(t *testing.T) {
-	if w, s := prWords("gitlab"); w+" "+s != "merge request !" {
-		t.Errorf("gitlab: %q %q", w, s)
-	}
-	if w, s := prWords("github"); w+" "+s != "pull request #" {
-		t.Errorf("github: %q %q", w, s)
-	}
-}
-
 // What changed since a reviewed head is diffed against the head kijk keeps for the pull request.
 func TestPRSinceRoute(t *testing.T) {
 	clone, head, base := prRepo(t)
