@@ -2,7 +2,7 @@ import { el, get, svg, keepFocus } from './api.js';
 import { lineCount, fileRow } from './git.js';
 import { forgeMark, forgeWords, prChips, ownPR } from './pr.js';
 import { onKey, keyLabel } from './keys.js';
-import { cachedView, loadView, onView, age } from './prdata.js';
+import { cachedView, loadView, freshView, onView, age } from './prdata.js';
 import { iconButton, plural, markCurrent } from './boxes.js';
 import { avatar, threadCount } from './threads.js';
 import { goToChange, setupChanges } from './changes.js';
@@ -181,10 +181,10 @@ async function loadList() {
   if (query) search();
 }
 
-async function load(n) {
+async function load(n, fresh) {
   const key = folder;
   try {
-    await loadView(folder, n);
+    await (fresh ? freshView : loadView)(folder, n);
   } catch (err) {
     if (key !== folder) return;
     failed.set(n, err.message);
@@ -207,13 +207,14 @@ onSince(root => {
   if (root === folder) draw();
 });
 
-// refresh asks again about what the tab shows. The list is asked too, for the count.
-function refresh() {
+// refresh asks again about what the tab shows. The list is asked too, for the count. fresh, as for
+// the refresh key, does not take the answer of a read already on its way.
+function refresh(fresh) {
   if (!folder || !line?.forge) return;
   lastAsk = Date.now();
   const w = which();
-  if (w.panel === 'pr') load(w.n);
-  else if (ownNumber()) load(ownNumber()); // the threads in Local mode
+  if (w.panel === 'pr') load(w.n, fresh);
+  else if (ownNumber()) load(ownNumber(), fresh); // the threads in Local mode
   if (maybeList()) loadList();
 }
 
@@ -602,7 +603,7 @@ function selectFile(path) {
 
 onKey('refreshPrs', () => {
   if (!folder || !line?.forge) return false;
-  refresh();
+  refresh(true);
   page.announce(`Asking ${words().name} again`);
 });
 
