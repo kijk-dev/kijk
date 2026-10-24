@@ -700,6 +700,24 @@ func TestBrowser(t *testing.T) {
 		b.click("session.go in the list", prsRow("session.go"))
 		b.waitFor("its thread again", asked+`?.nextElementSibling?.matches('.thr:not(.note)')`)
 
+		// A refresh keeps the place in a file list, of the branch and of a pull request.
+		b.act("a short window", chromedp.EmulateViewport(1400, 330))
+		for _, panel := range []string{"#prs-branch", "#prs-pr"} {
+			if panel == "#prs-pr" {
+				b.click("As on GitHub", byText("#prs-branch .prmode button", "As on GitHub"))
+			}
+			files := `document.querySelector('` + panel + ` .prs-scroll')`
+			b.waitFor("a list that scrolls", files+`?.scrollHeight > `+files+`.clientHeight + 10`)
+			b.evalJS(files + `.scrollTop = 10`)
+			n := forge.settle()
+			b.press("refreshPrs")
+			forge.waitFor(t, n, "pullRequest(number")
+			forge.settle()
+			b.waitFor("the list in its place", files+`.scrollTop === 10`)
+		}
+		b.click("Local", byText("#prs-pr .prmode button", "Local"))
+		b.act("the window as it was", chromedp.EmulateReset())
+
 		// The PR line's title opens the PRs tab on its pull request; ↗ still goes to the website.
 		b.click("the Git tab", gitTab)
 		b.waitFor("the PR line", `document.querySelector('#prline .pr-title')?.textContent === 'Fix login redirect loop' && document.querySelector('#prline .pr-link')?.href === 'https://github.com/acme/review/pull/482'`)
