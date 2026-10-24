@@ -2,8 +2,8 @@ import { el, get, post, base, splitKey, storeKey } from './api.js';
 import { showTree, paint, refreshTree, openFolders, selectFile } from './tree.js';
 import { refreshView, jumpChange, showMessage } from './view.js';
 import { setTabs, tabState, openTab, activeTab, recentFiles, closeActive, goPlace } from './tabs.js';
-import { showPR, FORGE } from './pr.js';
-import { setupReview, setBranchFolder, refreshBranch, showBranchPanel, focusBranchList } from './review.js';
+import { showPR, ownPR, FORGE } from './pr.js';
+import { setupReview, setBranchFolder, refreshBranch, focusBranchList } from './review.js';
 import { setupPrs, setPrsFolder, prsState, prsStatus, prsShown, showPrsItem, focusPrs, branchHead, overviewRow, openPR } from './prs.js';
 import { marks, showChanges, showGraph, revealHead, reviewKey, ago, lineCount } from './git.js';
 import { openFind, findAgain, openGotoLine, openGotoFile, openRecent } from './find.js';
@@ -76,7 +76,7 @@ export function setupFolder(p) {
     openFile: path => { if (!offline) openTab({ kind: 'file', path }, true); },
     openBranch,
     branchHead,
-    overviewRow: n => overviewRow(n),
+    overviewRow,
   });
   setupPrs({
     announce: p.announce,
@@ -234,7 +234,7 @@ function reload() {
 }
 
 // An open PR's target branch is what "behind", conflicts and the graph compare with.
-const prTarget = () => (['open', 'draft'].includes(pr?.pr?.state) ? pr.pr.target : '');
+const prTarget = () => ownPR(pr)?.target || '';
 
 // refreshPR asks gh or glab about this branch's pull request: on open, after a push, on Fetch,
 // and every minute while CI runs.
@@ -260,7 +260,6 @@ async function refreshPR() {
   showPR(prLine, pr, openFolderPR);
   showPrsTab();
   if (prTarget() !== before) refreshGit();
-  else showBranchPanel(git, pr, prTarget());
   prsStatus(git, pr);
   if (pr?.pr?.ci === 'running') prTimer = setTimeout(refreshPR, 60000);
 }
@@ -268,7 +267,7 @@ async function refreshPR() {
 async function refreshGit() {
   if (offline) return; // keep what is on screen until the machine is back
   const root = openKey;
-  refreshBranch(git, pr, prTarget()); // at the same time as the status, which takes as long
+  refreshBranch(git, pr); // at the same time as the status, which takes as long
   let st;
   try {
     st = await get('status', { root, target: prTarget() });
@@ -283,7 +282,6 @@ async function refreshGit() {
   prsBtn.hidden = !st.total && !pr?.forge;
   if (!git || prsEl.hidden === (shownTab() === 'prs')) selectTab(shownTab());
   git = st;
-  showBranchPanel(st, pr, prTarget());
   prsStatus(st, pr);
   if (upHash !== null && st.upHash !== upHash) refreshPR();
   upHash = st.upHash || '';

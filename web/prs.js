@@ -1,6 +1,6 @@
 import { el, get, svg, keepFocus } from './api.js';
 import { lineCount, fileRow } from './git.js';
-import { FORGE, forgeMark, prChips } from './pr.js';
+import { FORGE, forgeMark, prChips, ownPR } from './pr.js';
 import { onKey, keyLabel } from './keys.js';
 import { cachedView, loadView, onView, age } from './prdata.js';
 import { iconButton, plural, markCurrent } from './boxes.js';
@@ -8,7 +8,7 @@ import { avatar, threadCount } from './threads.js';
 import { goToChange, setupChanges } from './changes.js';
 import { setupOverview } from './overview.js';
 import { setupDrafts, reviewBox } from './drafts.js';
-import { setBranchThreads, redrawBranchPanel, wakeBranch } from './review.js';
+import { setBranchThreads, showBranchPanel, redrawBranchPanel, wakeBranch } from './review.js';
 import { marksOf, setViewed, onViewed, listCount, sweep } from './viewed.js';
 import { shown, sinceParts, onSince, ownFile } from './since.js';
 
@@ -84,7 +84,7 @@ export const prsState = () => ({ open: saved.open, mode: saved.mode });
 
 const words = () => FORGE[line?.forge?.kind || list?.forge?.kind] || FORGE.github;
 const forgeKind = () => line?.forge?.kind || list?.forge?.kind || '';
-const ownNumber = () => (['open', 'draft'].includes(line?.pr?.state) ? line.pr.number : 0);
+const ownNumber = () => ownPR(line)?.number || 0;
 // A list needs the forge and its tool; a note on the PR line without a PR says the tool is missing.
 const maybeList = () => !!line?.forge && !(line.note && !line.pr);
 const hasList = () => maybeList() && !list?.note;
@@ -102,7 +102,14 @@ function which() {
 // prsStatus runs after each git status and PR line refresh of the open folder.
 export function prsStatus(status, pr) {
   st = status || st;
+  const was = ownNumber();
   line = pr;
+  if (ownNumber() !== was) {
+    // As after git switch: Local mode shows the new one's threads, and kijk asks about it now.
+    setBranchThreads(cachedView(folder, ownNumber()) || null);
+    lastAsk = 0;
+  }
+  showBranchPanel(status, pr);
   // The tab may have shown before kijk knew the forge, and then asked nothing.
   if (!tabEl.hidden && !lastAsk && line?.forge) refresh();
   else if (maybeList() && !list && !listCall) loadList();

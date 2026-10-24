@@ -1,7 +1,7 @@
 import { el, get, storeKey, keepFocus } from './api.js';
 import { isCurrent } from './view.js';
 import { lineCount, ago, fileRow } from './git.js';
-import { forgeMark, FORGE } from './pr.js';
+import { forgeMark, ownPR, FORGE } from './pr.js';
 import { keyLabel, mac } from './keys.js';
 import { textBox, unsentKey } from './drafts.js';
 import { boxView, showBoxes, noBoxes, redraw, drawBox, iconButton, goToBox, plural } from './boxes.js';
@@ -63,29 +63,23 @@ export function setBranchFolder(key, icon) {
 
 // refreshBranch runs with each git status refresh. It asks for the branch changes only while the
 // PRs tab or the Branch changes view shows them.
-export async function refreshBranch(st, pr, tgt) {
+export async function refreshBranch(st, pr) {
   status = st;
   prStatus = pr;
-  target = tgt;
+  target = ownPR(pr)?.target || '';
   if (!shown() && !openView()) return;
   await load();
 }
 
 // showBranchPanel draws the panel again after the git status or the PR line learned more, and
 // asks for the branch changes when the panel just showed without them.
-export function showBranchPanel(st, pr, tgt) {
+export function showBranchPanel(st, pr) {
   status = st || status;
   prStatus = pr;
-  target = tgt;
+  target = ownPR(pr)?.target || '';
   if (loading?.key === `${folder}\n${target}`) return; // the load draws the panel when it is done
   if (data) drawPanel();
   else if (shown()) load();
-}
-
-// ownPR is the number of the branch's open pull request, or 0.
-function ownPR() {
-  const p = prStatus?.pr;
-  return p && ['open', 'draft'].includes(p.state) ? p.number : 0;
 }
 
 // wakeBranch loads the branch changes when the panel just showed without them.
@@ -97,7 +91,8 @@ export function redrawBranchPanel() {
   if (data) drawPanel();
 }
 
-// setBranchThreads takes the answer about the branch's pull request, for its threads in Local mode.
+// setBranchThreads takes the answer about the branch's own pull request, for its threads in Local
+// mode, or null when it has none.
 export function setBranchThreads(res) {
   branchPR = res;
   if (data) drawPanel();
@@ -172,7 +167,7 @@ function saveCopiedThreads() {
 }
 
 // openThreads are the threads of the branch's pull request that still want an answer.
-const openThreads = () => (branchPR && branchPR.number === ownPR() ? sent(branchPR.threads).filter(t => !t.resolved && !t.outdated) : []);
+const openThreads = () => (branchPR ? sent(branchPR.threads).filter(t => !t.resolved && !t.outdated) : []);
 const threadLines = new Map(); // thread id: the line on disk it shows under
 
 function saveNotes() {
@@ -304,7 +299,7 @@ function fileList() {
     e.preventDefault();
     e.stopPropagation();
   };
-  const ov = page.overviewRow?.(ownPR());
+  const ov = page.overviewRow?.(ownPR(prStatus)?.number || 0, branchPR);
   if (ov) {
     ov.tabIndex = ul.querySelector('[tabindex="0"]') ? -1 : 0;
     ul.prepend(ov);
@@ -517,7 +512,7 @@ async function place(v, b, rows) {
 }
 
 // threadsOn are the threads of the branch's pull request on a file.
-const threadsOn = path => (branchPR && branchPR.number === ownPR() ? sent(branchPR.threads).filter(t => t.path === path) : []);
+const threadsOn = path => (branchPR ? sent(branchPR.threads).filter(t => t.path === path) : []);
 
 // placeThreads puts each thread of the branch's pull request on the line on disk that has the text
 // its line has at the head: the same line, else the nearest one. Other threads go to the bar.
