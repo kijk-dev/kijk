@@ -939,8 +939,16 @@ func TestBrowser(t *testing.T) {
 				return append(ts, mine("Name the error: ev.ID."))
 			})
 		}
+		// The refresh key asks again, also while an older read is on its way.
+		b.evalJS(`{ const f = window.fetch; let held = false; const go = new Promise(r => window.e2eGo = r);
+			window.fetch = (u, o) => { const p = f(u, o); if (held || !String(u).includes('/api/pr/view')) return p; held = true; return p.then(r => go.then(() => r)); }; }`)
+		n = forge.settle()
+		b.click("Overview", prsRow("Overview"))
+		forge.waitFor(t, n, "pullRequest(number")
+		forge.settle()
 		forge.set(t, "gh-pr-477.json", full())
 		b.press("refreshPrs")
+		b.evalJS(`e2eGo()`)
 		box := `document.querySelector('#prs-pr .reviewbox')`
 		b.waitFor("the review box", box+`?.querySelector('.head').textContent === 'Your review3 drafts · 1 from GitHub' && `+
 			`[...`+box+`.querySelectorAll('.mode button')].map(x => x.textContent + ':' + x.getAttribute('aria-pressed') + ':' + x.disabled).join('|') === 'Comment:true:false|Approve:false:false|Request changes:false:false' && `+
