@@ -889,7 +889,8 @@ func TestBrowser(t *testing.T) {
 		b.evalJS(`(a => { a.focus(); a.setSelectionRange(a.value.length, a.value.length) })(` + box + `.querySelector('textarea'))`)
 		n = len(forge.calls())
 		b.typeText(" Thanks.")
-		b.waitFor("not saved yet", box+`.querySelector('.saved').textContent === 'Not saved · Ctrl Enter saves it'`)
+		saveKey := map[bool]string{false: "Ctrl", true: "⌘"}[b.mac]
+		b.waitFor("not saved yet", box+`.querySelector('.saved').textContent === 'Not saved · `+saveKey+` Enter saves it'`)
 		shots(b, "prs-summary-unsaved")
 		if strings.Contains(strings.Join(forge.calls()[n:], "\n"), "updatePullRequestReview(") {
 			t.Fatal("kijk saved the summary on a key press")
