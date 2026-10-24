@@ -1,4 +1,4 @@
-import { el, post, storeKey } from './api.js';
+import { el, post, storeKey, keepFocus } from './api.js';
 import { freshView } from './prdata.js';
 import { avatar } from './threads.js';
 import { iconButton, plural } from './boxes.js';
@@ -409,14 +409,14 @@ export function reviewBox(root, n, res) {
       const web = t.web([...t.lines, ...t.replies, ...t.conv]);
       count.textContent = t.all ? `${plural(t.all, 'draft')}${web ? ` · ${web} from ${words(r).name}` : ''}` : 'no drafts yet';
       const picked = verdict(root, n, r);
-      mode.replaceChildren(...VERDICTS.map(([v, text]) => {
+      keepFocus(mode, () => mode.replaceChildren(...VERDICTS.map(([v, text]) => {
         const b = el('button', null, text);
         b.setAttribute('aria-pressed', v === picked);
         b.disabled = !allowed(r, v);
         if (b.disabled) b.dataset.tip = r.write.why;
         b.onclick = () => setReview(root, n, { verdict: v });
         return b;
-      }));
+      })));
       why.textContent = r.write.why || '';
       why.hidden = !r.write.why;
       // A new summary from the forge shows. Text of the box's own not saved yet stays after it, so

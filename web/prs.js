@@ -1,4 +1,4 @@
-import { el, get, svg } from './api.js';
+import { el, get, svg, keepFocus } from './api.js';
 import { lineCount, fileRow } from './git.js';
 import { FORGE, forgeMark, prChips } from './pr.js';
 import { onKey, keyLabel } from './keys.js';
@@ -479,10 +479,14 @@ function prHead(n, mine, res, row) {
   return h;
 }
 
+// The review box is a kept element that the draw moves, so keepFocus wraps all of it.
 function drawPR(n, mine) {
+  keepFocus(prEl, () => prEl.replaceChildren(...prParts(n, mine)));
+}
+
+function prParts(n, mine) {
   const res = cachedView(folder, n);
   const row = list?.prs.find(r => r.number === n);
-  const focused = prEl.contains(document.activeElement) ? (document.activeElement.closest('.prfiles ul') ? 'list' : document.activeElement.className) : null;
   const parts = [prHead(n, mine, res, row)];
   const why = failed.get(n) || res?.error;
   if (why) parts.push(el('p', 'note error', why));
@@ -542,15 +546,7 @@ function drawPR(n, mine) {
   parts.push(wrap);
   const box = res && reviewBox(folder, n, res);
   if (box) parts.push(box);
-  // The review box is one element that moves into the new panel; a move loses the focus.
-  const typing = box?.contains(document.activeElement) ? document.activeElement : null;
-  const at = typing && [typing.selectionStart, typing.selectionEnd];
-  prEl.replaceChildren(...parts);
-  if (focused === 'list') ul.querySelector('[tabindex="0"]')?.focus();
-  if (typing?.isConnected) {
-    typing.focus();
-    if (at[0] != null) typing.setSelectionRange(...at);
-  }
+  return parts;
 }
 
 // viewedBox is a file row's Viewed box. It takes no Tab stop: V works on the focused row.

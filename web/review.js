@@ -1,4 +1,4 @@
-import { el, get, storeKey } from './api.js';
+import { el, get, storeKey, keepFocus } from './api.js';
 import { isCurrent } from './view.js';
 import { lineCount, ago, fileRow } from './git.js';
 import { forgeMark, FORGE } from './pr.js';
@@ -197,12 +197,7 @@ function notesChanged(paths) {
 function drawPanel() {
   if (!folder) return;
   if (!data) return panel.replaceChildren(el('p', 'note', error || 'Loading…'));
-  // The panel redraws on every refresh, so the focus moves to the same control in the new one.
-  const focused = panel.contains(document.activeElement) ? document.activeElement : null;
-  const key = focused?.closest('.prfiles ul') ? 'list' : focused?.dataset.k;
-  panel.replaceChildren(header(), ...(error ? [el('p', 'note error', error)] : []), ...unpushedBar(), fileList(), notesBox());
-  if (key === 'list') focusBranchList();
-  else if (key) panel.querySelector(`[data-k="${key}"]`)?.focus();
+  keepFocus(panel, () => panel.replaceChildren(header(), ...(error ? [el('p', 'note error', error)] : []), ...unpushedBar(), fileList(), notesBox()));
 }
 
 function header() {

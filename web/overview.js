@@ -1,4 +1,4 @@
-import { el, get, svg } from './api.js';
+import { el, get, svg, keepFocus } from './api.js';
 import { setView, isCurrent } from './view.js';
 import { cachedView, loadView, onView, age } from './prdata.js';
 import { avatar, comment } from './threads.js';
@@ -79,11 +79,14 @@ function column(v, ...parts) {
   return doc;
 }
 
+// Building the page moves the kept comment box and draft editors, so keepFocus wraps all of it.
 function draw(v, res) {
-  // The comment box is one element that moves into the new page, and the move takes its focus.
-  const typing = v.viewer.contains(document.activeElement) && document.activeElement.matches('input, textarea') ? document.activeElement : null;
-  const at = typing && [typing.selectionStart, typing.selectionEnd];
   v.res = res;
+  keepFocus(v.viewer, () => column(v, ...content(v, res)));
+  requestAnimationFrame(() => drawEdges(v));
+}
+
+function content(v, res) {
   const words = FORGE[res.forge?.kind] || FORGE.github;
   const h1 = el('h1', null, res.title);
   h1.append(' ', el('span', 'muted', `${words.num}${res.number}`));
@@ -130,12 +133,7 @@ function draw(v, res) {
     if (write) box.append(summarySlot(v.root, res.number, res), commentFoot(v.root, res.number, res));
     parts.push(box);
   }
-  column(v, ...parts);
-  if (typing?.isConnected) {
-    typing.focus({ preventScroll: true });
-    if (at[0] != null) typing.setSelectionRange(...at);
-  }
-  requestAnimationFrame(() => drawEdges(v));
+  return parts;
 }
 
 // checks are the CI of the head: a graph per workflow run or pipeline, the end of each failed

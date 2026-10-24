@@ -1,4 +1,4 @@
-import { el } from './api.js';
+import { el, keepFocus } from './api.js';
 import { line, setView, isCurrent, LINE_HEIGHT } from './view.js';
 import { lineCount, kind } from './git.js';
 import { onKey, keyLabel } from './keys.js';
@@ -157,7 +157,7 @@ async function updateBoxes(v, change) {
   const els = [...(banner ? [banner] : []), ...[...v.boxes.values()].map(b => b.el)];
   v.end.textContent = files.length ? 'End of the changes' : 'No changes yet';
   if (els.length + 1 !== v.scroll.children.length || els.some((e, i) => v.scroll.children[i] !== e)) {
-    v.scroll.replaceChildren(...els, v.end);
+    keepFocus(v.scroll, () => v.scroll.replaceChildren(...els, v.end));
     moved = true;
   }
   if (moved) restore(v, a);
@@ -373,7 +373,7 @@ export async function drawBox(v, b) {
   if (res.error || res.binary || res.folder || !res.hunks.length) {
     const say = res.error || (res.binary ? 'Binary file changed' : res.folder ? 'Folder with its own git repository'
       : b.f.orig ? `Renamed from ${b.f.orig}, no content changes` : 'No content changes');
-    b.body.replaceChildren(...top, el('p', 'fempty', say), ...(deco.end || []), ...[...(deco.under?.values() || [])].flat());
+    keepFocus(b.body, () => b.body.replaceChildren(...top, el('p', 'fempty', say), ...(deco.end || []), ...[...(deco.under?.values() || [])].flat()));
     b.starts = [];
     v.src.drawn?.(v, b);
     return;
@@ -439,7 +439,7 @@ export async function drawBox(v, b) {
   // What has no line left, as on a deleted file, shows at the end of the box.
   for (const [key, els] of under) if (!placed.has(key)) out.push(...els);
   out.push(...(deco.end || []));
-  b.body.replaceChildren(...out);
+  keepFocus(b.body, () => b.body.replaceChildren(...out));
   b.starts = starts;
   v.src.drawn?.(v, b);
 }
