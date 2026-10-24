@@ -16,6 +16,7 @@ const maxCommentBytes = 64 << 10
 type writeRequest struct {
 	Root string `json:"root"`
 	N    int    `json:"n"`
+	At   string `json:"at"` // the head on screen, sent with a write that depends on it
 	git.NewComment
 	ID       string `json:"id"`
 	Resolved bool   `json:"resolved"`
@@ -24,7 +25,7 @@ type writeRequest struct {
 
 // write reads a write's request and checks its folder, then runs it. A refused request is 400, a
 // head that moved 409, no diff kept 428, and a forge that failed 502 with the tool's words.
-func (a *api) write(run func(req writeRequest) (any, error)) http.HandlerFunc {
+func (a *api) write(run func(req writeRequest, p openedPR) (any, error)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req writeRequest
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxCommentBytes+4<<10)).Decode(&req); err != nil {
@@ -39,11 +40,12 @@ func (a *api) write(run func(req writeRequest) (any, error)) http.HandlerFunc {
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
-		if why := refused(a.opened, req); why != "" {
-			http.Error(w, why, http.StatusConflict) // the forge would refuse it, so kijk does not ask
+		p, known := a.opened.get(req.Root, req.N)
+		if why := refused(p, known, req); why != "" {
+			http.Error(w, why, http.StatusConflict)
 			return
 		}
-		out, err := run(req)
+		out, err := run(req, p)
 		switch {
 		case errors.Is(err, git.ErrBadInput):
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -59,9 +61,9 @@ func (a *api) write(run func(req writeRequest) (any, error)) http.HandlerFunc {
 	}
 }
 
-// refused says why the forge would refuse a write, by what it last said kijk may write.
-func refused(o *openedPRs, req writeRequest) string {
-	p, known := o.get(req.Root, req.N)
+// refused says why kijk does not ask the forge: the forge would refuse the write, by what it last
+// said kijk may write, or another page loaded a newer head than the one on screen.
+func refused(p openedPR, known bool, req writeRequest) string {
 	can := p.write
 	switch {
 	case !known:
@@ -70,6 +72,8 @@ func refused(o *openedPRs, req writeRequest) string {
 		return cmp.Or(can.Note, "kijk cannot write to this pull request")
 	case req.Verdict == "approve" && !can.Approve, req.Verdict == "changes" && !can.Changes:
 		return can.Why
+	case req.At != "" && p.head != "" && req.At != p.head:
+		return p.ref + " " + git.ErrHeadMoved.Error()
 	}
 	return ""
 }
@@ -77,42 +81,36 @@ func refused(o *openedPRs, req writeRequest) string {
 // errNotShown: kijk has no diff of the pull request to put a comment on, as after a restart.
 var errNotShown = errors.New("Open the pull request again")
 
-func (a *api) prComment(req writeRequest) (any, error) {
-	head := ""
-	if req.Thread == "" {
-		p, _ := a.opened.get(req.Root, req.N)
-		if p.head == "" {
-			return nil, errNotShown
-		}
-		head = p.head
+// prComment needs the head on screen for a reply too, as the reply may start your pending review.
+func prComment(req writeRequest, p openedPR) (any, error) {
+	if p.head == "" {
+		return nil, errNotShown
 	}
-	id, err := git.AddComment(req.Root, req.N, head, req.NewComment)
+	id, err := git.AddComment(req.Root, req.N, p.head, req.NewComment)
 	return map[string]string{"id": id}, err
 }
 
-func (a *api) prEdit(req writeRequest) (any, error) {
+func prEdit(req writeRequest, _ openedPR) (any, error) {
 	return struct{}{}, git.EditComment(req.Root, req.N, req.ID, req.Body)
 }
 
-func (a *api) prDelete(req writeRequest) (any, error) {
+func prDelete(req writeRequest, _ openedPR) (any, error) {
 	return struct{}{}, git.DeleteComment(req.Root, req.N, req.ID)
 }
 
-func (a *api) prResolve(req writeRequest) (any, error) {
+func prResolve(req writeRequest, _ openedPR) (any, error) {
 	return struct{}{}, git.Resolve(req.Root, req.N, req.Thread, req.Resolved)
 }
 
 // prSummary sets the summary of your review on the forge.
-func (a *api) prSummary(req writeRequest) (any, error) {
-	p, _ := a.opened.get(req.Root, req.N)
+func prSummary(req writeRequest, p openedPR) (any, error) {
 	if p.head == "" {
 		return nil, errNotShown // a new pending review would start on a head not on screen
 	}
 	return struct{}{}, git.SetSummary(req.Root, req.N, p.head, req.Body)
 }
 
-func (a *api) prSubmit(req writeRequest) (any, error) {
-	p, _ := a.opened.get(req.Root, req.N)
+func prSubmit(req writeRequest, p openedPR) (any, error) {
 	// A verdict is for the head on screen, so kijk must know which one that is.
 	if p.head == "" && req.Verdict != "comment" {
 		return nil, errNotShown

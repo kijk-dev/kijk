@@ -97,6 +97,21 @@ func TestGithubReply(t *testing.T) {
 	if c := calls(); len(c) != 2 || !has(c[1], "review=PRR_9", "thread=PRRT_1", "body=Cap it at MaxDelay.") {
 		t.Fatalf("calls %q", c)
 	}
+
+	// A reply with no pending review starts one, at the head on screen, so not when that moved.
+	reply := gittest.Rule{Has: "addPullRequestReviewThreadReply(input", Out: `{"data":{"addPullRequestReviewThreadReply":{"comment":{"id":"C10"}}}}`}
+	review := gittest.Rule{Has: "addPullRequestReview(input", Out: `{"data":{"addPullRequestReview":{"pullRequestReview":{"id":"PRR_new"}}}}`}
+	calls = gittest.FakeToolCalls(t, "gh", reply, review, ghTarget("bbb", ""))
+	if _, err := AddComment(repo, 7, "aaa", NewComment{Thread: "PRRT_1", Body: "Cap it."}); !errors.Is(err, ErrHeadMoved) || len(calls()) != 1 {
+		t.Fatalf("head moved: %v, calls %q", err, calls())
+	}
+	calls = gittest.FakeToolCalls(t, "gh", reply, review, ghTarget("aaa", ""))
+	if _, err := AddComment(repo, 7, "aaa", NewComment{Thread: "PRRT_1", Body: "Cap it."}); err != nil {
+		t.Fatal(err)
+	}
+	if c := calls(); len(c) != 3 || !has(c[1], "pr=PR_7", "commit=aaa") || !has(c[2], "review=PRR_new", "thread=PRRT_1") {
+		t.Fatalf("calls %q", c)
+	}
 }
 
 func TestGithubEditDeleteResolve(t *testing.T) {

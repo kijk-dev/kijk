@@ -17,6 +17,7 @@ import (
 type openedPR struct {
 	split, head string // empty while kijk has no diff of it
 	write       git.Write
+	ref         string // as the forge says its number, such as "#7"
 }
 
 type openedPRs struct {
@@ -109,7 +110,8 @@ func (a *api) prView(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
-	a.opened.set(root, n, func(p *openedPR) { p.write = pr.Write })
+	_, sign := prWords(f.Kind)
+	a.opened.set(root, n, func(p *openedPR) { p.write, p.ref = pr.Write, sign+strconv.Itoa(n) })
 	out := prReply{PR: pr, Forge: f, Files: []any{}}
 	out.BodyHTML = markdownHTML(pr.Body)
 	for i := range pr.Comments {
@@ -136,7 +138,6 @@ func (a *api) prView(w http.ResponseWriter, r *http.Request) {
 	// The checks come from the forge; without the head only their graph needs the workflow file.
 	pr.ReadChecks(root, f)
 	if head == "" {
-		_, sign := prWords(f.Kind)
 		out.Error = "Cannot fetch " + sign + strconv.Itoa(n) + " from origin"
 		if err != nil {
 			out.Error += ": " + err.Error()

@@ -79,14 +79,15 @@ func githubComment(f *forge, n int, head string, c NewComment) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if c.Thread == "" && t.head != head {
+	// A new thread, or a pending review a reply would start, is placed on the head on screen.
+	if t.head != head && (c.Thread == "" || t.review == "") {
 		return "", headMoved(f, n)
 	}
 	// GitHub places a new thread by the commit of the review it goes into.
 	if c.Thread == "" && t.review != "" && t.reviewAt != head {
 		return "", olderReview(n)
 	}
-	review, err := t.pending(f, cmp.Or(head, t.head))
+	review, err := t.pending(f, head)
 	if err != nil {
 		return "", err
 	}

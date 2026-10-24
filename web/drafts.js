@@ -54,13 +54,13 @@ async function send(root, n, route, body) {
 // goes once more only when the head is still at, the one on screen; 409 means the head moved.
 async function shown(root, n, at, route, body) {
   try {
-    return await post(route, { root, n, ...body });
+    return await post(route, { root, n, at, ...body });
   } catch (err) {
     if (err.status !== 409 && err.status !== 428) throw err;
     const fresh = await loadView(root, n); // shows the new head
     if (err.status === 409) throw err;
     if (fresh.at !== at) throw new Error(`${words(fresh).num}${n} has new commits. kijk shows them now; look again first.`);
-    return post(route, { root, n, ...body });
+    return post(route, { root, n, at, ...body });
   }
 }
 

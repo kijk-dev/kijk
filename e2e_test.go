@@ -827,38 +827,6 @@ func TestBrowser(t *testing.T) {
 		b.waitFor("the reason", open+`?.querySelector('.thead + .error')?.textContent === 'gh: Resource not accessible by integration' && !`+open+`.matches('.folded')`)
 		forge.set(t, "gh-resolve.json", ghData(obj{}))
 
-		// Someone pushed since kijk showed the diff: kijk writes nothing, keeps the text, shows the new
-		// head, and moves the editor to its line there.
-		push := filepath.Join(t.TempDir(), "push")
-		run(t, t.TempDir(), "clone", "-q", origin, push)
-		run(t, push, "fetch", "-q", "origin", "refs/pull/477/head")
-		run(t, push, "checkout", "-q", "FETCH_HEAD")
-		write(t, filepath.Join(push, retry), strings.Replace(retryGo, "\t}\n\treturn err\n}", "\t}\n\t// Every attempt failed.\n\n\treturn err\n}", 1))
-		run(t, push, "commit", "-qam", "Say why")
-		run(t, push, "push", "-q", "origin", "HEAD:refs/pull/477/head")
-		theirs = gitOut(t, push, "rev-parse", "HEAD")
-		forge.set(t, "gh-target.json", target(theirs, ""))
-		forge.set(t, "gh-pr-477.json", resolved(false))
-		other := boxRow(retry, "\treturn err")
-		b.evalJS(other + `.scrollIntoView({block: 'center'})`)
-		b.hover("another line", other)
-		b.click("+", other+`.querySelector('.addc')`)
-		b.waitFor("the editor", `document.activeElement?.matches('.thr.editing textarea')`)
-		b.typeText("Wrap it.")
-		before := len(forge.calls())
-		b.press("submitNote")
-		b.waitFor("the reason, on the line's new place", `(e => e && e.querySelector('.error')?.textContent === '#477 has new commits. kijk shows them now; add your comment there.' && e.querySelector('textarea').value === 'Wrap it.' && `+
-			`e.querySelector('.thead').textContent === 'New comment · line 26' && e.previousElementSibling?.querySelector('.tx')?.textContent === '\treturn err')(document.querySelector('.thr.editing'))`)
-		if strings.Contains(strings.Join(forge.calls()[before:], "\n"), "addPullRequestReviewThread(") {
-			t.Fatal("kijk wrote a comment on a head it did not show")
-		}
-		b.waitFor("the new head", boxHas(retry, "add", "\t// Every attempt failed."))
-		b.evalJS(`document.querySelector('.thr.editing textarea').focus()`)
-		b.press("submitNote")
-		forge.waitFor(t, before, "-f body=Wrap it. -F line=26 -f path="+retry)
-		b.waitFor("the editor closed", `!document.querySelector('.thr.editing')`)
-		forge.set(t, "gh-target.json", target(theirs, "PRR_1"))
-
 		// Escape closes a new comment, and + on the same line gives its text back.
 		half := boxRow(retry, "\t\t\treturn ctx.Err()")
 		b.evalJS(half + `.scrollIntoView({block: 'center'})`)
@@ -961,6 +929,42 @@ func TestBrowser(t *testing.T) {
 		b.waitFor("posted", `!document.querySelector('.confirm') && document.querySelector('#statusbar').textContent.includes('Posted your review on #477') && `+
 			box+`.querySelector('.head').textContent === 'Your reviewno drafts yet' && `+box+`.querySelector('textarea').value === '' && `+box+`.querySelector('.mode button[aria-pressed=true]').textContent === 'Comment' && `+
 			box+`.querySelector('button.primary').disabled && window.e2eCounts.some(u => u.endsWith('name=review'))`)
+
+		// Someone pushed since kijk showed the diff: kijk writes nothing, keeps the text, shows the new
+		// head, and moves the editor to its line there. The review went out, so the comment starts a new
+		// one on the new head.
+		push := filepath.Join(t.TempDir(), "push")
+		run(t, t.TempDir(), "clone", "-q", origin, push)
+		run(t, push, "fetch", "-q", "origin", "refs/pull/477/head")
+		run(t, push, "checkout", "-q", "FETCH_HEAD")
+		write(t, filepath.Join(push, retry), strings.Replace(retryGo, "\t}\n\treturn err\n}", "\t}\n\t// Every attempt failed.\n\n\treturn err\n}", 1))
+		run(t, push, "commit", "-qam", "Say why")
+		run(t, push, "push", "-q", "origin", "HEAD:refs/pull/477/head")
+		theirs = gitOut(t, push, "rev-parse", "HEAD")
+		forge.set(t, "gh-target.json", target(theirs, ""))
+		forge.set(t, "gh-pr-477.json", pr477(theirs, main, same))
+		forge.set(t, "gh-review.json", ghData(obj{"addPullRequestReview": obj{"pullRequestReview": obj{"id": "PRR_2"}}}))
+		other := boxRow(retry, "\treturn err")
+		b.evalJS(other + `.scrollIntoView({block: 'center'})`)
+		b.hover("another line", other)
+		b.click("+", other+`.querySelector('.addc')`)
+		b.waitFor("the editor", `document.activeElement?.matches('.thr.editing textarea')`)
+		b.typeText("Wrap it.")
+		before := len(forge.calls())
+		b.press("submitNote")
+		b.waitFor("the reason, on the line's new place", `(e => e && e.querySelector('.error')?.textContent === '#477 has new commits. kijk shows them now; add your comment there.' && e.querySelector('textarea').value === 'Wrap it.' && `+
+			`e.querySelector('.thead').textContent === 'New comment · line 26' && e.previousElementSibling?.querySelector('.tx')?.textContent === '\treturn err')(document.querySelector('.thr.editing'))`)
+		if strings.Contains(strings.Join(forge.calls()[before:], "\n"), "addPullRequestReviewThread(") {
+			t.Fatal("kijk wrote a comment on a head it did not show")
+		}
+		b.waitFor("the new head", boxHas(retry, "add", "\t// Every attempt failed."))
+		b.evalJS(`document.querySelector('.thr.editing textarea').focus()`)
+		b.press("submitNote")
+		forge.waitFor(t, before, "-f body=Wrap it. -F line=26 -f path="+retry+" -f review=PRR_2")
+		if calls := strings.Join(forge.calls()[before:], "\n"); !strings.Contains(calls, "-f commit="+theirs+" -f pr=PR_477") {
+			t.Fatalf("the new review is not on the new head:\n%s", calls)
+		}
+		b.waitFor("the editor closed", `!document.querySelector('.thr.editing')`)
 
 		// On your own pull request GitHub refuses Approve and Request changes.
 		b.click("back", `document.querySelector('#prs-pr .back')`)
