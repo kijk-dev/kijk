@@ -1,10 +1,9 @@
 import { el, post, storeKey, keepFocus } from './api.js';
-import { read, pull, watch } from './prstore.js';
+import { read, pull, watch, setReviewed } from './prstore.js';
 import { avatar } from './threads.js';
 import { iconButton, plural } from './boxes.js';
 import { forgeMark, forgeWords } from './pr.js';
 import { mac } from './keys.js';
-import { setReviewed } from './viewed.js';
 
 // Writing a review: drafts on the forge, resolves, the review box and the check before posting.
 // Every write asks for the pull request again, so what shows is the forge's state.

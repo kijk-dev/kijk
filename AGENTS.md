@@ -22,7 +22,7 @@ in code, UI text and commit messages.
   the PRs tab (`prs.js` the list and an opened pull request, `review.js` the folder's own branch,
   `boxes.js` the file boxes of Branch changes and Changes, `changes.js`, `threads.js`, `drafts.js`
   what writes a review, `overview.js` with the checks graph, `prstore.js` what kijk knows about
-  pull requests, `viewed.js` the viewed marks, `since.js` what changed since your review),
+  pull requests, with the viewed marks and what changed since your review),
   `api.js`, `keys.js`, `tip.js`, `viewer.css`, and `engines/` with one file per diagram engine.
   The app side is the page around it: `app.js` (the rail), `status.js`, `app.css` and
   `index.html`. App files may import viewer files; viewer files never import app files, and a

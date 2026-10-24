@@ -1,12 +1,10 @@
 import { el, get } from './api.js';
 import { isCurrent } from './view.js';
-import { boxView, showBoxes, noBoxes, goToBox, redraw, drawBox, marksChanged, oldLineOf } from './boxes.js';
-import { pull, read, watch } from './prstore.js';
+import { boxView, showBoxes, noBoxes, goToBox, redraw, drawBox, marksChanged, oldLineOf, plural } from './boxes.js';
+import { pull, read, watch, mark, setSince } from './prstore.js';
 import { placeForge, threadCount, threadsChanged } from './threads.js';
 import { lineEditor, moveEditor, threadOpts, writable } from './drafts.js';
 import { keyLabel } from './keys.js';
-import { marksOf, setViewed, onViewed } from './viewed.js';
-import { shown, sinceBar, onSince, ownFile } from './since.js';
 
 // The Changes tab of a pull request: its forge diff in file boxes, with its threads under their
 // lines, and a + on each line that starts a comment for your review. Since your review, it shows
@@ -22,7 +20,7 @@ export function setupChanges(h) {
 
 const threadsOn = (v, path) => (v.res?.threads || []).filter(t => t.path === path);
 
-const prFile = (v, f) => ownFile(v.res)(f);
+const prFile = (v, f) => v.own?.(f);
 
 // diffOf is the diff of file f in pull request v.n: its forge diff, or since the head from.
 async function diffOf(v, f, context, from) {
@@ -80,7 +78,7 @@ function source(v) {
     viewed: f => (prFile(v, f) && v.marks?.state(prFile(v, f))) || '',
     viewedAt: f => v.marks?.at(f) || 0,
     viewable: f => !!prFile(v, f),
-    setViewed: (f, on) => !!prFile(v, f) && setViewed(root, n, v.res, prFile(v, f), on),
+    setViewed: (f, on) => !!prFile(v, f) && mark(root, n, prFile(v, f), on),
     banner: () => v.bar,
   };
 }
@@ -96,46 +94,37 @@ export async function openChanges(viewer, root, tab, keep, save) {
   v.reload = () => {}; // the forge diff does not follow the files on disk
   view = v;
   const known = pull(root, tab.n).res;
-  if (known) await show(v, known);
+  if (known) await show(v);
   else viewer.replaceChildren(el('p', 'empty', `Fetching ${v.num}${tab.n}…`));
   await read(root, tab.n);
   const why = pull(root, tab.n).why;
   if (why && isCurrent(v) && !v.scroll) noBoxes(v, why);
 }
 
+// A mark that made every file viewed moves your last review: what shows may change.
 watch(root => {
-  const res = view && isCurrent(view) && view.root === root && pull(root, view.n).res;
-  if (res && res !== view.res) show(view, res);
+  const v = view, p = v && isCurrent(v) && v.root === root && pull(root, v.n);
+  if (!p?.res) return;
+  if (p.res !== v.res || p.since?.answer !== v.answer || shownKey(p) !== v.shownKey) show(v);
+  else if (p.marks.seq !== v.marks.seq) {
+    v.marks = p.marks;
+    marksChanged(v);
+  }
 });
 
-onViewed((root, n) => {
-  if (!view || !isCurrent(view) || (root && (view.root !== root || view.n !== n)) || !view.res) return;
-  view.marks = marksOf(view.root, view.n, view.res);
-  // A mark that made every file viewed moves your last review: what shows may change.
-  if (shownKey(shown(view.root, view.n, view.res)) !== view.shownKey) show(view, view.res);
-  else marksChanged(view);
-});
+const shownKey = p => [p.from, p.since?.on, (p.files || []).map(f => f.path + f.blobs).join()].join('\n');
 
-onSince((root, n) => {
-  if (view && isCurrent(view) && view.root === root && view.n === n && view.res) show(view, view.res);
-});
-
-const shownKey = sh => [sh.from, sh.since?.on, sh.since?.answer ? 1 : 0, (sh.files || []).map(f => f.path + f.blobs).join()].join('\n');
-
-async function show(v, res) {
-  const before = v.res;
-  v.res = res;
-  v.marks = marksOf(v.root, v.n, res);
-  const sh = shown(v.root, v.n, res);
-  if (!sh.files) return; // kijk asks what changed since your review; onSince shows it
-  const moved = before && (v.from !== sh.from || v.since !== !!sh.since?.on);
-  v.since = !!sh.since?.on;
+async function show(v) {
+  const before = v.res, p = pull(v.root, v.n), res = p.res;
+  Object.assign(v, { res, marks: p.marks, own: p.own, answer: p.since?.answer, shownKey: shownKey(p) });
+  if (!p.files) return; // kijk asks what changed since your review; its answer shows them
+  const moved = before && (v.from !== p.from || v.since !== !!p.since?.on);
+  v.since = !!p.since?.on;
   // Its row is of the other diff: close it, and + on its line gives the text back.
   if (moved) v.editor = null;
-  v.shownKey = shownKey(sh);
-  v.files = sh.files;
-  v.from = sh.from;
-  v.bar = sh.since?.answer ? sinceBar(v.root, v.n, sh.since, sh.files) : null;
+  v.files = p.files;
+  v.from = p.from;
+  v.bar = p.since?.on && p.since.answer ? sinceBar(v, p.since.answer) : null;
   v.scroll?.setAttribute('aria-label', v.from ? `${v.label} since your review` : v.label);
   // The forge knows no line of the head of your last review, and GitHub takes a comment only on a
   // line of its own diff, which shows 3 lines around a change.
@@ -150,6 +139,15 @@ async function show(v, res) {
   if (moved && v.scroll && isCurrent(v)) v.scroll.scrollTop = 0;
   // A new thread or draft leaves the diff as it was, so its box would not draw again by itself.
   if (before && isCurrent(v)) redraw(v, threadsChanged(before, res, v.files.map(f => f.path)));
+}
+
+// sinceBar is the bar at the top of Changes in Since your review.
+function sinceBar(v, a) {
+  const bar = el('div', 'sincebar');
+  const back = el('button', 'tool', 'Show all changes');
+  back.onclick = () => setSince(v.root, v.n, false);
+  bar.append(el('span', null, a.note || `Since your review · ${plural(a.commits, 'commit')} · ${plural(v.files.length, 'file')}`), back);
+  return bar;
 }
 
 // openEditor opens the box for a new comment under row l of a file.

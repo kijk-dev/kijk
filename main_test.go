@@ -90,9 +90,9 @@ func TestViewerImportsNoAppFile(t *testing.T) {
 func TestPRsTabAsksThroughTheStore(t *testing.T) {
 	asks := regexp.MustCompile(`(?:^|[^.\w])get\(\s*['"](?:prs?|pr/view|pr/since)['"]`)
 	posts := regexp.MustCompile(`\bpost\(`)
-	tab := []string{"viewed.js", "since.js", "pr.js", "prs.js", "review.js", "drafts.js", "boxes.js", "changes.js", "overview.js", "threads.js"}
-	// Not yet in the store: what changed since your review, and the writes.
-	later := map[string]bool{"since.js get": true, "drafts.js post": true}
+	tab := []string{"pr.js", "prs.js", "review.js", "drafts.js", "boxes.js", "changes.js", "overview.js", "threads.js"}
+	// Not yet in the store: the writes.
+	later := map[string]bool{"drafts.js post": true}
 	files, _ := fs.Glob(webFiles, "web/*.js")
 	for _, f := range files {
 		name := path.Base(f)

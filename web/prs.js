@@ -2,15 +2,13 @@ import { el, svg, keepFocus } from './api.js';
 import { lineCount, fileRow } from './git.js';
 import { forgeMark, forgeWords, prChips } from './pr.js';
 import { onKey, keyLabel } from './keys.js';
-import { pull, read, line, own, list, askList, watch, redraw } from './prstore.js';
+import { pull, read, line, own, list, askList, watch, redraw, mark, setSince, rowCounts } from './prstore.js';
 import { iconButton, plural, markCurrent } from './boxes.js';
 import { avatar, threadCount, age } from './threads.js';
 import { goToChange, setupChanges } from './changes.js';
 import { setupOverview } from './overview.js';
 import { setupDrafts, reviewBox } from './drafts.js';
 import { wakeBranch } from './review.js';
-import { marksOf, setViewed, onViewed, listCount } from './viewed.js';
-import { shown, sinceParts, onSince, ownFile } from './since.js';
 
 // The PRs tab: the list of open pull requests, one pull request opened in the sidebar, the count
 // on the tab, and when to ask the forge again. The folder's own branch in Local mode is review.js.
@@ -159,14 +157,6 @@ export function focusPrs() {
 // askLists asks for the list, then searches again: the list may now tell that it is not all.
 const askLists = (fresh, key = folder) => askList(folder, '', fresh).then(() => { if (key === folder && query) search(); });
 
-onViewed(root => {
-  if (!root || root === folder) draw();
-});
-
-onSince(root => {
-  if (root === folder) draw();
-});
-
 // refresh asks again about what the tab shows. The list is asked too, for the count. fresh, as for
 // the refresh key, does not take the answer of a read already on its way.
 function refresh(fresh) {
@@ -270,10 +260,8 @@ function prRowEl(r) {
     l2.append(dot);
   }
   l2.append(el('span', 'who', r.number ? `${r.author} · ${age(r.createdAt)}` : `No ${words().kind} yet`));
-  const res = r.number ? pull(folder, r.number).res : null;
-  const drafts = r.number ? res?.drafts ?? r.drafts : 0;
-  const viewed = r.number && list(folder)?.forge ? listCount(folder, list(folder).forge, r.number, res) : null;
-  const yours = [drafts ? plural(drafts, 'draft') : '', viewed?.viewed ? `${viewed.viewed}/${viewed.files} viewed` : ''].filter(Boolean);
+  const c = rowCounts(folder, r);
+  const yours = [c.drafts ? plural(c.drafts, 'draft') : '', c.viewed ? `${c.viewed}/${c.files} viewed` : ''].filter(Boolean);
   if (yours.length) l2.append(el('span', 'yours', yours.join(' · ')));
   const lc = lineCount(r.add, r.del);
   if (lc) l2.append(lc);
@@ -417,8 +405,8 @@ export function overviewRow(n, res) {
   return li;
 }
 
-function prHead(n, mine, res, row) {
-  const p = res || row || {};
+function prHead(pr, mine, row) {
+  const n = pr.n, res = pr.res, p = res || row || {};
   const w = words();
   const h = el('div', 'prhead');
   const top = el('div', 'pr-top');
@@ -438,8 +426,35 @@ function prHead(n, mine, res, row) {
   const ci = res?.checks ? res.ci : p.ci;
   const chips = prChips({ ...p, ci, ciUrl: p.url && forgeKind() === 'github' ? `${p.url}/checks` : '', target: p.base }, w, line(folder)?.default || p.base);
   if (chips) h.append(chips);
-  h.append(...sinceParts(folder, n, res, yes => { if (yes) page.openTab({ kind: 'pr', n, path: '' }, true); }));
+  h.append(...sinceParts(pr, yes => { if (yes) page.openTab({ kind: 'pr', n, path: '' }, true); }));
   return h;
+}
+
+// sinceParts are the switch under a pull request's header, and the note after a rebase; pick(yes)
+// runs when the user moves it.
+function sinceParts(p, pick) {
+  const s = p.since;
+  if (!s) return [];
+  const wrap = el('div', 'prmode since');
+  const group = el('div', 'mode');
+  group.setAttribute('role', 'group');
+  group.setAttribute('aria-label', 'Which changes');
+  const a = s.answer;
+  const ago = s.time ? `\nReviewed ${age(new Date(s.time).toISOString())} ago` : '';
+  const count = a && !a.note ? `${ago ? ' · ' : '\n'}${plural(a.commits, 'new commit')}` : '';
+  const kind = forgeWords(p.res).kind;
+  for (const [yes, text, tip] of [[false, 'All changes', `All changes\nEvery file of the ${kind}`], [true, 'Since your review', `Only what changed since your review${ago}${count}`]]) {
+    const b = el('button', null, text);
+    b.setAttribute('aria-pressed', yes === s.on);
+    b.dataset.tip = tip;
+    b.onclick = () => {
+      if (yes !== s.on) setSince(folder, p.n, yes);
+      pick?.(yes);
+    };
+    group.append(b);
+  }
+  wrap.append(group);
+  return s.on && a?.note ? [wrap, el('p', 'since-note', a.note)] : [wrap];
 }
 
 // The review box is a kept element that the draw moves, so keepFocus wraps all of it.
@@ -452,17 +467,16 @@ function drawPR(n, mine) {
 function prParts(n, mine) {
   const p = pull(folder, n), res = p.res;
   const row = list(folder)?.prs.find(r => r.number === n);
-  const parts = [prHead(n, mine, res, row)];
+  const parts = [prHead(p, mine, row)];
   const why = p.why || res?.error;
   if (why) parts.push(el('p', 'note error', why));
   const wrap = el('div', 'prs-scroll prfiles');
-  const files = shown(folder, n, res).files || res?.files || [];
+  const files = p.files || res?.files || [];
   const h = el('h3', null, `Files ${files.length}`);
   const sum = files.reduce(([a, d], f) => [a + (f.add || 0), d + (f.del || 0)], [0, 0]);
   const lc = lineCount(...sum);
   if (lc) h.append(lc);
-  const marks = marksOf(folder, n, res);
-  const own = ownFile(res);
+  const { marks, own } = p;
   const viewedNow = files.filter(f => own(f) && marks.state(own(f)) === 'viewed').length;
   if (files.length) h.append(el('span', 'viewedcount', `${viewedNow} of ${files.length} viewed`));
   const ul = el('ul');
@@ -484,7 +498,7 @@ function prParts(n, mine) {
       again.dataset.tip = 'Changed since you viewed it';
       r.insertBefore(again, r.querySelector('.tc, .lc'));
     }
-    if (own(f)) r.append(viewedBox(n, res, own(f), state));
+    if (own(f)) r.append(viewedBox(n, own(f), state));
     if (f.path === selectedFile) r.classList.add('selected');
     ul.append(r);
   }
@@ -515,7 +529,7 @@ function prParts(n, mine) {
 }
 
 // viewedBox is a file row's Viewed box. It takes no Tab stop: V works on the focused row.
-function viewedBox(n, res, f, state) {
+function viewedBox(n, f, state) {
   const box = el('input', 'viewedbox');
   box.type = 'checkbox';
   box.checked = state === 'viewed';
@@ -523,7 +537,7 @@ function viewedBox(n, res, f, state) {
   box.setAttribute('aria-label', 'Viewed');
   box.dataset.tip = `Viewed\n${keyLabel('markViewed')}`;
   box.onclick = e => e.stopPropagation();
-  box.onchange = () => { if (!setViewed(folder, n, res, f, box.checked)) box.checked = !box.checked; };
+  box.onchange = () => { if (!mark(folder, n, f, box.checked)) box.checked = !box.checked; };
   return box;
 }
 
@@ -531,15 +545,14 @@ function viewedBox(n, res, f, state) {
 // row not viewed.
 function markRow(li) {
   const w = which();
-  const res = w.panel === 'pr' ? pull(folder, w.n).res : null;
-  const f = res?.files?.find(x => x.path === li.dataset.path);
-  if (!f) return;
-  const on = marksOf(folder, w.n, res).state(f) !== 'viewed';
-  if (!setViewed(folder, w.n, res, f, on)) return;
-  const marks = marksOf(folder, w.n, res);
+  const before = w.panel === 'pr' ? pull(folder, w.n) : null;
+  const f = before?.res?.files?.find(x => x.path === li.dataset.path);
+  const on = f && before.marks.state(f) !== 'viewed';
+  if (!f || !mark(folder, w.n, f, on)) return;
+  const p = pull(folder, w.n);
   const rows = [...prEl.querySelectorAll('.prfiles li')];
-  const files = (shown(folder, w.n, res).files || res.files).map(ownFile(res)).filter(Boolean);
-  const next = on && files.slice(files.indexOf(f) + 1).find(x => marks.state(x) !== 'viewed');
+  const files = (p.files || p.res.files).map(p.own).filter(Boolean);
+  const next = on && files.slice(files.indexOf(f) + 1).find(x => p.marks.state(x) !== 'viewed');
   const to = rows.find(r => r.dataset.path === (next ? next.path : f.path));
   if (!to) return;
   for (const r of rows) r.tabIndex = r === to ? 0 : -1;
