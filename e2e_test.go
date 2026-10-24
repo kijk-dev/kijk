@@ -874,6 +874,10 @@ func TestBrowser(t *testing.T) {
 		b.click("the comment box", foot+`.querySelector('input')`)
 		b.typeText("Looks good, one question on Retry-After.")
 		b.waitFor("the comment typed", foot+`.querySelector('input').value === 'Looks good, one question on Retry-After.'`)
+		// A read that started before the write answers only after it: what shows is still the write.
+		b.evalJS(`{ const f = window.fetch; let wrote; const done = new Promise(r => wrote = r);
+			window.fetch = (u, o) => { const p = f(u, o); return String(u).includes('/api/pr/view') ? p.then(r => done.then(() => r)) : String(u).includes('/api/pr/summary') ? p.finally(wrote) : p; }; }`)
+		b.press("refreshPrs")
 		b.click("Add to review", byText(".md.ov .thr.conv .foot button", "Add to review"))
 		forge.waitFor(t, n, `updatePullRequestReview(input: {pullRequestReviewId: $review, body: $body}) { pullRequestReview { id } } }","variables":{"body":"`+said+`","review":"PRR_1"}`)
 		b.waitFor("the summary in the box", box+`.querySelector('textarea').value === 'Looks good, one question on Retry-After.' && `+foot+`.querySelector('input').value === ''`)
