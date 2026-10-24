@@ -38,7 +38,7 @@ function remember(root, n, id) {
   try { localStorage.setItem(idsKey(root, n), JSON.stringify([...s].slice(-500))); } catch { /* storage blocked */ }
 }
 
-export const wroteHere = (root, n, c) => ids(root, n).has(c.id);
+const wroteHere = (root, n, c) => ids(root, n).has(c.id);
 
 // ----- Sending -----
 

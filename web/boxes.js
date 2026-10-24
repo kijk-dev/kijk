@@ -24,13 +24,13 @@ import { onKey, keyLabel } from './keys.js';
 //   viewable(f)            false when f cannot be marked viewed; optional
 //   banner()               an element above the boxes, or null; optional
 
-export const ICON = {
+const ICON = {
   plus: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>',
   chev: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>',
   doc: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/></svg>',
 };
 
-export const num = n => n.toLocaleString('en-US');
+const num = n => n.toLocaleString('en-US');
 export const plural = (n, word) => `${num(n)} ${word}${n === 1 ? '' : 's'}`;
 
 // Files whose diff nobody reads start folded.
@@ -39,7 +39,7 @@ const GENERATED = ['go.sum', 'package-lock.json', 'yarn.lock', 'pnpm-lock.yaml',
 const lines = f => (f.add || 0) + (f.del || 0);
 const generated = path => GENERATED.includes(path.split('/').pop()) || path.endsWith('.min.js');
 const heavy = f => generated(f.path) || lines(f) > BIG;
-export const HEAD = 34; // px, a box's sticky header
+const HEAD = 34; // px, a box's sticky header
 const AHEAD = 5 * LINE_HEIGHT + HEAD; // a jump puts its target this far below the top
 
 export function iconButton(svg, label, act) {
@@ -253,7 +253,7 @@ function fold(v, b, open) {
   if (open && !b.loaded) loadBox(v, b);
 }
 
-export function drawHead(v, b) {
+function drawHead(v, b) {
   const f = b.f;
   const slash = f.path.lastIndexOf('/');
   const name = f.path.slice(slash + 1);
@@ -305,7 +305,7 @@ export function redraw(v, paths) {
 
 // loadBox fetches a box's diff and draws it when it changed. A call during a fetch fetches again
 // after it, so a change that came in the meantime is not lost.
-export async function loadBox(v, b) {
+async function loadBox(v, b) {
   if (b.loading) {
     b.again = true;
     return b.loading;
@@ -446,14 +446,14 @@ export async function drawBox(v, b) {
 
 // ----- Keys: the current line, and jumps across boxes -----
 
-export function setCur(v, row) {
+function setCur(v, row) {
   v.scroll.querySelector('.ln.cur')?.classList.remove('cur');
   row.classList.add('cur');
   v.cur = { path: row.closest('.fbox').dataset.path, n: Number(row.dataset.n) };
 }
 
 // curRow is the current line: the one last clicked or moved to, else the first changed line in view.
-export function curRow(v) {
+function curRow(v) {
   const cur = v.scroll.querySelector('.ln.cur');
   if (cur) return cur;
   const top = v.scroll.scrollTop + HEAD;
@@ -480,7 +480,7 @@ function viewKey(v, e) {
 
 // step jumps to the next (dir 1) or previous (dir -1) element that pick(box) gives, across open
 // boxes, drawing a box on the way when it is not drawn yet. has(box) skips a box without drawing it.
-export async function step(v, dir, pick, has = () => true) {
+async function step(v, dir, pick, has = () => true) {
   if (!v.scroll) return;
   const at = v.scroll.scrollTop + AHEAD;
   const boxes = [...v.boxes.values()].filter(b => b.open);
