@@ -180,13 +180,16 @@ func SweepPRRefs(root string, open []int) {
 	}
 }
 
-// PRFile is a file as it is at pull request n's head, written once into dir by its blob hash, so
+// PRFile is a file as it is at a pull request's head, written once into dir by its blob hash, so
 // it can be read like a file on disk.
-func PRFile(root string, n int, path, dir string) (string, error) {
+func PRFile(root, head, path, dir string) (string, error) {
+	if !ValidHash(head) {
+		return "", ErrBadHash
+	}
 	if !filepath.IsLocal(filepath.FromSlash(path)) {
 		return "", ErrOutside
 	}
-	blob, err := Run(root, "rev-parse", "--verify", "-q", prRef(n)+":"+path)
+	blob, err := Run(root, "rev-parse", "--verify", "-q", head+":"+path)
 	if err != nil || !ValidHash(blob) {
 		return "", os.ErrNotExist
 	}

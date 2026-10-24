@@ -84,7 +84,7 @@ func (a *api) target(w http.ResponseWriter, r *http.Request) (root, path string,
 		if !ok {
 			return "", "", false
 		}
-		p, err := git.PRFile(root, n, r.URL.Query().Get("path"), a.prFiles())
+		p, err := a.prFile(root, n, r.URL.Query().Get("path"))
 		if err != nil {
 			fail(w, err)
 			return "", "", false
@@ -264,7 +264,7 @@ type rendered struct {
 
 // readAtPR reads a file an AsciiDoc file at a pull request's head includes, at that head.
 func (a *api) readAtPR(root string, n int, rel string) ([]byte, error) {
-	p, err := git.PRFile(root, n, rel, a.prFiles())
+	p, err := a.prFile(root, n, rel)
 	if err != nil {
 		return nil, err
 	}

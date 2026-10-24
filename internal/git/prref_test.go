@@ -248,11 +248,11 @@ func TestPRFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	cache := t.TempDir()
-	p1, err := PRFile(clone, 7, "retry.go", cache)
+	p1, err := PRFile(clone, head, "retry.go", cache)
 	if err != nil {
 		t.Fatal(err)
 	}
-	p2, _ := PRFile(clone, 7, "retry.go", cache)
+	p2, _ := PRFile(clone, head, "retry.go", cache)
 	if p1 != p2 || !strings.HasPrefix(p1, cache) {
 		t.Errorf("paths %q and %q", p1, p2)
 	}
@@ -260,7 +260,7 @@ func TestPRFile(t *testing.T) {
 		t.Errorf("content %q", b)
 	}
 	for _, bad := range []string{"../retry.go", "/etc/passwd", "missing.go"} {
-		if _, err := PRFile(clone, 7, bad, cache); err == nil {
+		if _, err := PRFile(clone, head, bad, cache); err == nil {
 			t.Errorf("PRFile(%q) should fail", bad)
 		}
 	}
@@ -329,7 +329,8 @@ func TestMergeBaseCacheBounded(t *testing.T) {
 // Files kept from a pull request's head go after a day, when kijk writes another.
 func TestPRFilePrunes(t *testing.T) {
 	_, clone, work := prOrigin(t)
-	if _, err := FetchPR(clone, "github", 7, rev(t, work, "retry"), "", "main"); err != nil {
+	head := rev(t, work, "retry")
+	if _, err := FetchPR(clone, "github", 7, head, "", "main"); err != nil {
 		t.Fatal(err)
 	}
 	cache := t.TempDir()
@@ -339,7 +340,7 @@ func TestPRFilePrunes(t *testing.T) {
 	if err := os.Chtimes(old, day, day); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := PRFile(clone, 7, "retry.go", cache); err != nil {
+	if _, err := PRFile(clone, head, "retry.go", cache); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(old); err == nil {

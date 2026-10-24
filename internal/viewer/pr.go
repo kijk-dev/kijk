@@ -2,6 +2,7 @@ package viewer
 
 import (
 	"cmp"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -46,14 +47,24 @@ func (o *openedPRs) set(root string, n int, change func(*openedPR)) {
 	o.m[prKey(root, n)] = p
 }
 
-// prFiles is where files at a pull request's head are kept, to read them as files on disk.
-func (a *api) prFiles() string {
+// prFile is a file as it is at pull request n's head on screen, kept in the cache to read as a
+// file on disk.
+func (a *api) prFile(root string, n int, rel string) (string, error) {
+	p, _ := a.opened.get(root, n)
+	head := p.head
+	if head == "" {
+		head = git.PRHead(root, n) // as after a restart, when a tab asks before the pull request
+	}
+	if head == "" {
+		return "", fs.ErrNotExist
+	}
+	dir := filepath.Join(os.TempDir(), "kijk-pr-files")
 	if a.cacheDir != nil {
 		if d, err := a.cacheDir(); err == nil {
-			return filepath.Join(d, "kijk", "pr-files")
+			dir = filepath.Join(d, "kijk", "pr-files")
 		}
 	}
-	return filepath.Join(os.TempDir(), "kijk-pr-files")
+	return git.PRFile(root, head, rel, dir)
 }
 
 func prNumber(w http.ResponseWriter, s string) (int, bool) {

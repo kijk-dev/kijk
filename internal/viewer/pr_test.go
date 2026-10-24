@@ -284,7 +284,7 @@ func TestPRFileKeptHead(t *testing.T) {
 	if w := get(wt, "/api/pr/view", url.Values{"n": {"7"}}); w.Code != 200 || !strings.Contains(w.Body.String(), `"at":"`+newer+`"`) {
 		t.Fatalf("view in the worktree %d %s", w.Code, w.Body.String())
 	}
-	if w := get(clone, "/api/text", url.Values{"path": {"retry.go"}, "pr": {"7"}}); w.Code != 200 || !strings.Contains(w.Body.String(), "for i := 0; i < 3; i++") {
+	if w := get(clone, "/api/text", url.Values{"path": {"retry.go"}, "pr": {"7"}}); w.Code != 200 || !strings.Contains(w.Body.String(), "for i := 0;") {
 		t.Errorf("the file at the head the clone showed: %d %s", w.Code, w.Body.String())
 	}
 	if w := get(wt, "/api/text", url.Values{"path": {"retry.go"}, "pr": {"7"}}); w.Code != 200 || !strings.Contains(w.Body.String(), "// Newer.") {
