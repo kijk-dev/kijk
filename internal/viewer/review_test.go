@@ -168,6 +168,42 @@ func TestReviewWriteOldHead(t *testing.T) {
 	}
 }
 
+// When the new head cannot be fetched, kijk shows the head it has and says why it cannot write,
+// rather than refuse each comment with "has new commits".
+func TestReviewWriteHeadNotFetched(t *testing.T) {
+	clone, head, base := prRepo(t)
+	js := func(v any) string { b, _ := json.Marshal(v); return string(b) }
+	gittest.FakeToolCalls(t, "gh", gittest.Rule{Has: "pullRequest(number", Out: prAnswer("OPEN", head, base)})
+	get, post := reviewServer(t, clone)
+	if w := get("/api/pr/view", url.Values{"n": {"7"}}); w.Code != 200 {
+		t.Fatalf("view %d %s", w.Code, w.Body.String())
+	}
+
+	newer, err := git.Run(clone, "commit-tree", head+"^{tree}", "-p", head, "-m", "More")
+	if err != nil {
+		t.Fatal(err)
+	}
+	gittest.Run(t, clone, "push", "-q", "origin", newer+":refs/pull/7/head")
+	t.Setenv("GIT_ALLOW_PROTOCOL", "https") // origin is a folder here: its fetch fails
+	calls := gittest.FakeToolCalls(t, "gh", ghTarget(newer), gittest.Rule{Has: "pullRequest(number", Out: prAnswer("OPEN", newer, base)})
+	w := get("/api/pr/view", url.Values{"n": {"7"}})
+	var v struct {
+		At    string
+		Write struct {
+			OK   bool
+			Note string
+		}
+	}
+	const why = "Cannot fetch the new commits of #7 from origin: "
+	if err := json.Unmarshal(w.Body.Bytes(), &v); w.Code != 200 || err != nil || v.At != head || v.Write.OK || !strings.HasPrefix(v.Write.Note, why) {
+		t.Fatalf("view %d %v %s", w.Code, err, w.Body.String())
+	}
+	n := len(calls())
+	if w := post("/api/pr/comment", js(map[string]any{"root": clone, "n": 7, "at": head, "path": "retry.go", "line": 4, "body": "Why 3?"})); w.Code != http.StatusConflict || !strings.HasPrefix(w.Body.String(), why) || len(calls()) != n {
+		t.Fatalf("comment: %d %s, calls %q", w.Code, w.Body.String(), calls()[n:])
+	}
+}
+
 // The server refuses what the forge would refuse, from what it knows about the pull request.
 func TestReviewWriteRules(t *testing.T) {
 	clone, head, base := prRepo(t)
