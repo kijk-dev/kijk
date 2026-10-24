@@ -160,7 +160,7 @@ export function mark(root, n, f, on) {
   const all = on && res.at && res.files.every(x => stateIn(marks)(x) === 'viewed');
   save(k, { marks, at: { ...rec.at, [f.path]: s }, seq: s, review: all ? { head: res.at, time: Date.now() } : rec.review }, res.files);
   askSince(root, n);
-  redraw(root);
+  changed(root);
   return true;
 }
 
@@ -171,13 +171,13 @@ export function setReviewed(root, n, res) {
   if (res.files?.length) save(k, rec, res.files);
   else keep(k, rec); // without files kijk cannot tell which marks still count
   askSince(root, n);
-  redraw(root);
+  changed(root);
 }
 
 // setSince moves the switch of pull request n between All changes and Since your review.
 export function setSince(root, n, on) {
   folderOf(root).pulls.get(n).sinceOn = on;
-  redraw(root);
+  changed(root);
 }
 
 // watch runs fn(root) once after each task in which something about folder root changed.
@@ -191,8 +191,15 @@ export function redraw(root) {
   (told ||= new Set()).add(root);
 }
 
+// changed draws at once what the user did, so the code after it, such as V going on to the next
+// file, finds the page as the change left it.
+function changed(root) {
+  redraw(root);
+  flush();
+}
+
 function flush() {
-  const roots = told;
+  const roots = told || [];
   told = null;
   for (const r of roots) for (const fn of watchers) fn(r);
 }
