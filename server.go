@@ -126,7 +126,7 @@ func addFolders(fl *folderList, h *hub) http.HandlerFunc {
 		}
 		res := foldersReply{Window: h.count(windowFolders) > 0}
 		var err error
-		if res.Added, err = fl.addFor(list, max(req.PR, 0)); err != nil {
+		if res.Added, err = fl.add(list, max(req.PR, 0)); err != nil {
 			res.Error = err.Error()
 		}
 		reply(w, res)

@@ -175,7 +175,7 @@ func main() {
 	}
 	addedNote := ""
 	if len(adds) > 0 {
-		added, err := fl.addFor(adds, a.pr.Number)
+		added, err := fl.add(adds, a.pr.Number)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "kijk:", err)
 			remove()
