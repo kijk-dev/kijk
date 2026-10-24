@@ -1,10 +1,14 @@
 import { el } from './api.js';
 import { openFile, openDiff, showMessage, viewScroll, setViewScroll, LINE_HEIGHT } from './view.js';
 import { openBranch } from './review.js';
+import { openChanges } from './changes.js';
+import { openOverview } from './overview.js';
 import { keyLabel, keyNames } from './keys.js';
 
-// A tab is {kind: 'file', path, source}, {kind: 'diff', mode, path, orig, hash, source} or
-// {kind: 'branch', path: '', folds}, the one Branch changes tab; plus preview and scrollTop.
+// A tab is {kind: 'file', path, source, pr}, {kind: 'diff', mode, path, orig, hash, source},
+// {kind: 'branch', path: '', folds}, the one Branch changes tab, {kind: 'pr', n, path: '', folds},
+// the Changes of pull request n, or {kind: 'overview', n, path: ''}; plus preview and scrollTop.
+// A file tab with pr shows the file at that pull request's head.
 // At most one tab is a preview; a single click replaces it, a double click keeps it.
 const bar = document.getElementById('filetabs');
 const viewer = document.getElementById('viewer');
@@ -18,7 +22,8 @@ let history = { places: [], at: -1 };
 let going = false; // set while back or forward shows a place, so that is not recorded again
 let changed = () => {};
 
-const keyOf = t => `${t.kind}:${t.mode || ''}:${t.hash || ''}:${t.path}`;
+const keyOf = t => `${t.kind}:${t.mode || ''}:${t.hash || ''}:${t.n || t.pr || ''}:${t.path}`;
+const ofPR = t => t.kind === 'branch' || t.kind === 'pr' || t.kind === 'overview';
 
 // setTabs shows another folder's saved tabs; changed runs after every change, to save and sync.
 export function setTabs(folder, saved, onChange) {
@@ -138,6 +143,8 @@ function show(i) {
   if (!t) showMessage(viewer, 'Select a file');
   else if (t.kind === 'file') openFile(viewer, root, t.path, keep, viewOptions(t));
   else if (t.kind === 'branch') openBranch(viewer, root, t, keep, () => changed());
+  else if (t.kind === 'pr') openChanges(viewer, root, t, keep, () => changed());
+  else if (t.kind === 'overview') openOverview(viewer, root, t);
   else openDiff(viewer, root, t, t.mode, 3, keep, viewOptions(t));
   record(); // after the open, so the place takes the tab's position, not the old view's
   changed();
@@ -156,6 +163,7 @@ function viewOptions(t) {
       else openDiff(viewer, root, t, t.mode, 3, undefined, viewOptions(t));
     },
     open: path => openTab({ kind: 'file', path }),
+    pr: t.pr,
   };
 }
 
@@ -188,11 +196,11 @@ function close(i) {
 
 // folderOf gives just enough parent folders to tell apart tabs whose file names clash, else ''.
 function folderOf(t) {
-  if (t.kind === 'branch') return '';
+  if (ofPR(t)) return '';
   const dirs = p => p.replace(/\/$/, '').split('/');
   const own = dirs(t.path);
   const name = own.pop();
-  const others = tabs.filter(x => x.kind !== 'branch').map(x => dirs(x.path)).filter(p => p.pop() === name && p.join('/') !== own.join('/'));
+  const others = tabs.filter(x => !ofPR(x)).map(x => dirs(x.path)).filter(p => p.pop() === name && p.join('/') !== own.join('/'));
   if (!others.length) return '';
   for (let n = 1; n <= own.length; n++) {
     const dir = own.slice(-n).join('/');
@@ -209,12 +217,13 @@ function render() {
     tab.setAttribute('aria-selected', i === active);
     tab.setAttribute('aria-keyshortcuts', `Delete ${keyNames('closeTab')}`);
     tab.tabIndex = i === active ? 0 : -1;
-    const name = t.kind === 'branch' ? 'Branch changes' : t.path;
+    const name = { branch: 'Branch changes', pr: 'Changes', overview: 'Overview' }[t.kind] || t.path;
     tab.title = t.preview ? `${name} (preview: double-click to keep)` : name;
     tab.append(el('span', null, name.replace(/\/$/, '').split('/').pop()));
     const folder = folderOf(t);
     if (folder) tab.append(el('span', 'muted', folder));
     if (t.kind === 'diff') tab.append(el('span', 'muted', t.hash ? t.hash.slice(0, 7) : t.mode));
+    if (t.n || t.pr) tab.append(el('span', 'muted', `${t.num || '#'}${t.n || t.pr}`));
     const x = el('button', 'close', '×');
     x.title = `Close (${keyLabel('closeTab')})`;
     x.tabIndex = -1; // the focused tab closes with Delete; a button inside a tab is not announced well

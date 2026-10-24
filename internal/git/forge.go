@@ -10,7 +10,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -135,7 +134,8 @@ func glabHostFiles() []string {
 
 // PRFor looks up the pull or merge request of the branch HEAD is on.
 func PRFor(root string) prStatus {
-	res := prStatus{Forge: detectForge(root)}
+	f, tool, note := forgeTool(root)
+	res := prStatus{Forge: f}
 	if res.Forge == nil {
 		return res
 	}
@@ -145,9 +145,8 @@ func PRFor(root string) prStatus {
 		return res
 	}
 	res.Create = createURL(res.Forge, branch)
-	res.Tool = map[string]string{"github": "gh", "gitlab": "glab"}[res.Forge.Kind]
-	if _, err := exec.LookPath(res.Tool); err != nil {
-		res.Note = "Install " + res.Tool + " and log in to see " + map[string]string{"gh": "pull request", "glab": "merge request"}[res.Tool] + " status"
+	res.Tool, res.Note = tool, note
+	if note != "" {
 		return res
 	}
 	var err error
@@ -267,25 +266,19 @@ func parseGithubPR(out []byte) (*pullRequest, error) {
 		return nil, err
 	}
 	p := &pullRequest{Number: v.Number, Title: v.Title, URL: webURL(v.URL), Target: v.BaseRefName}
-	switch {
-	case v.State == "MERGED":
-		p.State = "merged"
-	case v.State == "CLOSED":
-		p.State = "closed"
-	case v.IsDraft:
-		p.State = "draft"
-	default:
-		p.State = "open"
-	}
+	p.State = prState(v.State, v.IsDraft)
 	running := false
 	for _, c := range v.StatusCheckRollup {
-		name := c.Name + c.Context // a check run has a name, a commit status a context
-		switch {
-		case c.Status != "" && c.Status != "COMPLETED", c.State == "PENDING", c.State == "EXPECTED":
+		// A check run has a name, a status and a conclusion; a commit status a context and a state.
+		state := runState(c.Status, c.Conclusion)
+		if c.Context != "" {
+			state = statusState(c.State)
+		}
+		switch state {
+		case "run", "wait":
 			running = true
-		case slices.Contains([]string{"FAILURE", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE"}, c.Conclusion),
-			c.State == "FAILURE", c.State == "ERROR":
-			p.Failed = append(p.Failed, name)
+		case "bad", "cancel":
+			p.Failed = append(p.Failed, c.Name+c.Context)
 		}
 	}
 	switch {
@@ -344,25 +337,9 @@ func parseGitlabMR(out []byte) (*pullRequest, error) {
 	}
 	// The Draft chip says it already, so the title does not repeat it.
 	p := &pullRequest{Number: v.IID, Title: draftPrefixRe.ReplaceAllString(v.Title, ""), URL: webURL(v.WebURL), Target: v.TargetBranch}
-	switch {
-	case v.State == "merged":
-		p.State = "merged"
-	case v.State == "closed" || v.State == "locked":
-		p.State = "closed"
-	case v.Draft:
-		p.State = "draft"
-	default:
-		p.State = "open"
-	}
+	p.State = prState(v.State, v.Draft)
 	if pl := v.HeadPipeline; pl != nil {
-		switch pl.Status {
-		case "success":
-			p.CI = "passed"
-		case "failed":
-			p.CI = "failed"
-		case "running", "pending", "created", "preparing", "waiting_for_resource", "scheduled":
-			p.CI = "running"
-		}
+		p.CI = pipelineCI(pl.Status)
 		if p.CI != "" {
 			p.CIURL = webURL(pl.WebURL)
 		}
@@ -394,4 +371,28 @@ func webURL(s string) string {
 		return s
 	}
 	return ""
+}
+
+// Origin is the host and project path of a folder's origin, as written in its config.
+func Origin(root string) (host, path string, ok bool) {
+	raw, err := Run(root, "config", "--get", "remote.origin.url")
+	if err != nil {
+		return "", "", false
+	}
+	return parseRemote(raw)
+}
+
+// MainClone is the folder of the main clone a worktree belongs to, or root itself.
+func MainClone(root string) string {
+	out, err := Run(root, "rev-parse", "--path-format=absolute", "--show-toplevel", "--git-common-dir")
+	if err != nil {
+		return root
+	}
+	top, common, _ := strings.Cut(out, "\n")
+	if filepath.Base(common) == ".git" && filepath.Dir(common) != top {
+		if _, err := os.Stat(filepath.Dir(common)); err == nil {
+			return filepath.FromSlash(filepath.Dir(common))
+		}
+	}
+	return filepath.FromSlash(top)
 }

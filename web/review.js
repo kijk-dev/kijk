@@ -1,11 +1,13 @@
 import { el, get, storeKey } from './api.js';
-import { line, setView, isCurrent, LINE_HEIGHT } from './view.js';
-import { lineCount, ago, kind, fileRow } from './git.js';
+import { isCurrent } from './view.js';
+import { lineCount, ago, fileRow } from './git.js';
 import { forgeMark, FORGE } from './pr.js';
 import { onKey, keyLabel, mac } from './keys.js';
+import { boxView, showBoxes, noBoxes, redraw, drawBox, iconButton, setCur, curRow, goToBox, plural } from './boxes.js';
+import { threadEl, outdatedBar, threadCount, avatar } from './threads.js';
 
 // The PRs tab for the folder's own branch: the panel in the sidebar, the Branch changes view, agent
-// notes and Copy for agent. It asks no forge; the pull request is what the PR line already knows.
+// notes and Copy for agent. Its pull request's threads come from prs.js.
 
 const ICON = {
   branch: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3v12"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>',
@@ -13,25 +15,13 @@ const ICON = {
   local: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10.1 2.18a9.93 9.93 0 0 1 3.8 0"/><path d="M17.6 3.71a9.95 9.95 0 0 1 2.69 2.7"/><path d="M21.82 10.1a9.93 9.93 0 0 1 0 3.8"/><path d="M20.29 17.6a9.95 9.95 0 0 1-2.7 2.69"/><path d="M13.9 21.82a9.94 9.94 0 0 1-3.8 0"/><path d="M6.4 20.29a9.95 9.95 0 0 1-2.69-2.7"/><path d="M2.18 13.9a9.93 9.93 0 0 1 0-3.8"/><path d="M3.71 6.4a9.95 9.95 0 0 1 2.7-2.69"/></svg>',
   msg: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>',
   copy: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>',
-  plus: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>',
-  chev: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>',
-  doc: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/></svg>',
   edit: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21.17 6.81a1 1 0 0 0-3.99-3.99L3.84 16.17a2 2 0 0 0-.5.83l-1.32 4.35a.5.5 0 0 0 .62.62l4.35-1.32a2 2 0 0 0 .83-.5z"/></svg>',
   trash: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>',
 };
 
-const num = n => n.toLocaleString('en-US');
-const plural = (n, word) => `${num(n)} ${word}${n === 1 ? '' : 's'}`;
-
-// Files whose diff nobody reads start folded.
-const BIG = 2000;
-const GENERATED = ['go.sum', 'package-lock.json', 'yarn.lock', 'pnpm-lock.yaml', 'Cargo.lock'];
-const lines = f => (f.add || 0) + (f.del || 0);
-const generated = path => GENERATED.includes(path.split('/').pop()) || path.endsWith('.min.js');
-const HEAD = 34; // px, a box's sticky header
-const AHEAD = 5 * LINE_HEIGHT + HEAD; // a jump puts its target this far below the top
-
-const panel = document.getElementById('prs');
+const tabEl = document.getElementById('prs');
+const panel = document.getElementById('prs-branch');
+const shown = () => !tabEl.hidden && !panel.hidden;
 let page = null;
 let folder = null; // the open folder's key
 let agentIcon = null; // the icon of the folder's agent type
@@ -47,15 +37,19 @@ let view = null; // the Branch changes view, while it is open
 let selected = ''; // the path of the file at the top of the view
 let goal = ''; // a file to scroll to once the view is drawn
 let copyPanel = null;
+let branchPR = null; // the answer about the branch's pull request, with its threads
 
 // setupReview tells the tab about the folder view around it: announce(text), say(text),
-// push(), openFile(path) and openBranch(), which opens the Branch changes tab.
+// push(), openFile(path), openBranch(), which opens the Branch changes tab, branchHead(), what the
+// PRs tab adds to the header, and overviewRow(n), the first row of the file list.
 export function setupReview(p) {
   page = p;
 }
 
 export function setBranchFolder(key, icon) {
   closeCopy();
+  branchPR = null;
+  strips.clear();
   folder = key;
   agentIcon = icon || null;
   data = null;
@@ -72,7 +66,7 @@ export async function refreshBranch(st, pr, tgt) {
   status = st;
   prStatus = pr;
   target = tgt;
-  if (panel.hidden && !openView()) return;
+  if (!shown() && !openView()) return;
   await load();
 }
 
@@ -84,7 +78,30 @@ export function showBranchPanel(st, pr, tgt) {
   target = tgt;
   if (loading?.key === `${folder}\n${target}`) return; // the load draws the panel when it is done
   if (data) drawPanel();
-  else if (!panel.hidden) load();
+  else if (shown()) load();
+}
+
+// ownPR is the number of the branch's open pull request, or 0.
+function ownPR() {
+  const p = prStatus?.pr;
+  return p && ['open', 'draft'].includes(p.state) ? p.number : 0;
+}
+
+// wakeBranch loads the branch changes when the panel just showed without them.
+export function wakeBranch() {
+  if (!data && folder && shown() && !loading) load();
+}
+
+export function redrawBranchPanel() {
+  if (data) drawPanel();
+}
+
+// setBranchThreads takes the answer about the branch's pull request, for its threads in Local mode.
+export function setBranchThreads(res) {
+  branchPR = res;
+  if (data) drawPanel();
+  const v = openView();
+  if (v) redraw(v, [...new Set((res?.threads || []).map(t => t.path))]);
 }
 
 export function focusBranchList() {
@@ -142,7 +159,20 @@ function loadNotes() {
   if (k === notesKey) return;
   notesKey = k;
   try { notes = JSON.parse(localStorage.getItem(k)) || []; } catch { notes = []; }
+  try { copiedThreads = new Set(JSON.parse(localStorage.getItem(threadsKey())) || []); } catch { copiedThreads = new Set(); }
 }
+
+// The forge threads copied for the agent are kept by id, next to the notes.
+let copiedThreads = new Set();
+const threadsKey = () => notesKey.replace(/^kijk\.notes:/, 'kijk.copied-threads:');
+
+function saveCopiedThreads() {
+  try { localStorage.setItem(threadsKey(), JSON.stringify([...copiedThreads])); } catch { /* storage blocked */ }
+}
+
+// openThreads are the threads of the branch's pull request that still want an answer.
+const openThreads = () => (branchPR && branchPR.number === ownPR() ? branchPR.threads.filter(t => !t.resolved && !t.outdated) : []);
+const threadLines = new Map(); // thread id: the line on disk it shows under
 
 function saveNotes() {
   try {
@@ -159,13 +189,7 @@ function notesChanged(paths) {
   saveNotes();
   drawPanel();
   const v = openView();
-  if (!v) return;
-  for (const path of paths) {
-    const b = v.boxes.get(path);
-    if (!b) continue;
-    drawHead(v, b);
-    if (b.loaded) drawBox(v, b);
-  }
+  if (v) redraw(v, paths);
 }
 
 // ----- The panel -----
@@ -204,6 +228,10 @@ function header() {
   base.title = `Compared with ${data.base}`;
   meta.append(el('span', 'ref head', data.branch), arrow, base);
   h.append(top, meta);
+  const extra = page.branchHead?.() || {};
+  top.prepend(...(extra.before || []));
+  h.append(...(extra.after || []));
+  if (extra.note) h.append(el('p', 'pr-note', extra.note));
   return h;
 }
 
@@ -235,14 +263,6 @@ function unpushedBar() {
   return [bar];
 }
 
-function noteCount(n, tip) {
-  const c = el('span', 'tc open');
-  c.innerHTML = ICON.msg;
-  c.append(String(n));
-  c.dataset.tip = tip || plural(n, 'agent note');
-  return c;
-}
-
 function dashed(tip) {
   const s = el('span', 'np');
   s.innerHTML = ICON.local;
@@ -265,8 +285,8 @@ function fileList() {
     row.dataset.path = f.path;
     const counts = row.querySelector('.lc');
     if (f.notPushed) row.insertBefore(dashed(NOT_PUSHED), counts);
-    const n = notesOn(f.path).length;
-    if (n) row.insertBefore(noteCount(n), counts);
+    const tc = threadCount(threadsOn(f.path), notesOn(f.path).length);
+    if (tc) row.insertBefore(tc, counts);
     if (f.path === selected) mark(row, true);
     ul.append(row);
   }
@@ -276,16 +296,23 @@ function fileList() {
     const at = rows.indexOf(e.target.closest('li'));
     const to = { ArrowDown: at + 1, ArrowUp: at - 1, Home: 0, End: rows.length - 1 }[e.key];
     if (to !== undefined && rows[to]) {
-      goTo(rows[to].dataset.path);
+      if (rows[to].dataset.path) goTo(rows[to].dataset.path);
+      for (const r of rows) r.tabIndex = r === rows[to] ? 0 : -1;
       rows[to].focus();
     } else if (e.key === 'Enter' && rows[at]) {
-      goTo(rows[at].dataset.path, true);
+      if (rows[at].dataset.path) goTo(rows[at].dataset.path, true);
+      else rows[at].click();
     } else {
       return;
     }
     e.preventDefault();
     e.stopPropagation();
   };
+  const ov = page.overviewRow?.(ownPR());
+  if (ov) {
+    ov.tabIndex = ul.querySelector('[tabindex="0"]') ? -1 : 0;
+    ul.prepend(ov);
+  }
   wrap.append(h, ul);
   if (!data.files.length) wrap.append(el('p', 'note', 'No changes yet'));
   return wrap;
@@ -344,22 +371,10 @@ function notesBox() {
   copy.dataset.k = 'copy';
   copy.innerHTML = ICON.copy;
   copy.append('Copy for agent…');
-  copy.disabled = !notes.length;
+  copy.disabled = !notes.length && !openThreads().length;
   copy.onclick = startCopy;
   box.append(copy);
   return box;
-}
-
-function iconButton(svg, label, act) {
-  const b = el('button', 'icon-btn');
-  b.innerHTML = svg; // a fixed string
-  b.setAttribute('aria-label', label);
-  b.dataset.tip = label;
-  b.onclick = e => {
-    e.stopPropagation();
-    act();
-  };
-  return b;
 }
 
 // goTo scrolls the Branch changes view to a file's box, opening the view first when it is not.
@@ -371,207 +386,89 @@ function goTo(path, focus) {
     page.openBranch();
     return;
   }
-  const b = v.boxes.get(path);
-  if (b) v.scroll.scrollTop = b.el.offsetTop - 12;
-  if (focus) v.scroll.focus({ preventScroll: true });
+  goToBox(v, path, focus);
 }
 
-// ----- The Branch changes view: one box per file, drawn when it comes near the screen -----
+// ----- The Branch changes view: the boxes of the branch changes -----
+
+// The source of the Branch changes boxes: the branch changes, their marks for work not pushed, and
+// the notes.
+const branchSource = {
+  files: () => data?.files || [],
+  basis,
+  fetch: (f, context) => get('diff', { root: folder, path: f.path, orig: f.orig || '', mode: 'branch', target, context }),
+  headParts: f => [f.notPushed && dashed(NOT_PUSHED), threadCount(threadsOn(f.path), notesOn(f.path).length)],
+  openFile: f => page.openFile(f.path),
+  marks: res => {
+    const np = res.notPushed || [];
+    const notPushed = n => np.some(([from, to]) => n >= from && n <= to);
+    return {
+      line: l => (l.k === '+' && notPushed(l.n) ? ' np' : ''),
+      hunk: h => {
+        const added = h.lines.filter(l => l.k === '+');
+        if (!added.length || !added.every(l => notPushed(l.n))) return null;
+        const tag = el('span', 'np-tag');
+        tag.innerHTML = ICON.local;
+        tag.append('Not pushed');
+        tag.dataset.tip = "Not pushed yet\nReviewers don't see these lines";
+        return tag;
+      },
+    };
+  },
+  decorate: async (v, b, rows) => {
+    const { extra, where, file } = await place(v, b, rows);
+    const th = await placeThreads(v, b, rows, extra, file);
+    const under = new Map();
+    const end = [];
+    const put = (key, e) => under.set(key, [...(under.get(key) || []), e]);
+    const texts = new Map([...rows.filter(r => r.k !== '-'), ...extra].map(r => [r.n, r.t]));
+    const redrawBox = () => redraw(v, [b.f.path]);
+    for (const [t, at] of th.at) {
+      threadLines.set(t.id, at);
+      put(`n:${at}`, threadEl(t, { redraw: redrawBox, line: at, foot: replyStrip(t, b.f.path, at, texts.get(at)) }));
+    }
+    for (const [n, at] of where) {
+      if (texts.has(at)) put(`n:${at}`, noteEl(v, n));
+      else end.push(noteEl(v, n));
+    }
+    if (v.editor?.path === b.f.path && !v.editor.id) put(`n:${v.editor.n}`, v.editor.el);
+    return { extra, under, end, top: th.bar.length ? outdatedBar(`local:${b.f.path}`, th.bar, { redraw: redrawBox }) : [] };
+  },
+  onAdd: (v, path, n, text) => openEditor(v, path, n, text),
+  addTip: `Note for the agent\n${keyLabel('addNote')}`,
+  onTop: path => selectRow(path),
+  drawn: (v, b) => {
+    if (v.editor?.path === b.f.path) v.editor.el.querySelector('textarea')?.focus({ preventScroll: true });
+  },
+  marked: f => notesOn(f.path).length > 0 || threadsOn(f.path).length > 0,
+};
 
 // openBranch shows the Branch changes tab. tab.folds keeps the boxes the user folded or opened;
 // save stores the tab.
 export async function openBranch(viewer, root, tab, keep, save) {
-  const v = { kind: 'branch', viewer, root, tab, save, keep, boxes: new Map() };
+  const v = boxView(viewer, root, tab, keep, save, branchSource);
+  v.label = 'Branch changes';
   view = v;
-  setView(v);
   v.reload = change => { if (isCurrent(v)) load(change); };
-  v.jump = dir => {
-    step(v, dir, b => b.starts);
-    return true;
-  };
   if (root !== folder) return;
   // Draw what is known at once, then check it: the branch may have changed while the tab was hidden.
   if (data) await build(v);
   if (isCurrent(v)) await load();
 }
 
-// build draws the view of the branch changes in data; noChanges says there are none.
+// build draws the view of the branch changes in data, and scrolls to a file asked for before.
 async function build(v) {
-  const scroll = el('div', 'allfiles');
-  scroll.tabIndex = 0;
-  scroll.setAttribute('aria-label', 'Branch changes');
-  v.scroll = scroll;
-  v.end = el('p', 'fend');
-  v.viewer.replaceChildren(scroll);
-  // Two screens ahead, so a box is drawn before it shows.
-  v.near = new IntersectionObserver(entries => {
-    for (const e of entries) {
-      const b = e.target.box;
-      b.near = e.isIntersecting;
-      if (b.near && b.open && (!b.loaded || b.stale)) loadBox(v, b);
-    }
-  }, { root: scroll, rootMargin: '200% 0px' });
-  await updateView(v);
-  if (v.keep?.scrollTop) scroll.scrollTop = v.keep.scrollTop;
-  v.keep = null;
-  if (goal) {
-    goTo(goal);
-    goal = '';
-  }
-  let frame = 0;
-  scroll.addEventListener('scroll', () => {
-    cancelAnimationFrame(frame);
-    frame = requestAnimationFrame(() => {
-      const a = anchor(v);
-      if (a) selectRow(a.b.f.path);
-    });
-  });
-  scroll.addEventListener('keydown', e => viewKey(v, e));
-  scroll.addEventListener('click', e => {
-    const row = e.target.closest('.ln[data-n]');
-    if (row && !e.target.closest('button')) setCur(v, row);
-  });
+  v.goal = goal;
+  goal = '';
+  await showBoxes(v);
 }
 
 function noChanges(v) {
-  v.near?.disconnect();
-  v.scroll = null;
-  v.boxes = new Map();
-  v.editor = null;
-  v.viewer.replaceChildren(el('p', 'empty', error || 'This branch has no branch changes'));
+  noBoxes(v, error || 'This branch has no branch changes');
 }
 
-// anchor is the box at the top of the view and how far it is scrolled, so a redraw keeps it there.
-function anchor(v) {
-  const top = v.scroll.scrollTop;
-  for (const b of v.boxes.values()) {
-    if (b.el.offsetTop + b.el.offsetHeight > top + 12) return { b, offset: top - b.el.offsetTop };
-  }
-  return null;
-}
-
-function restore(v, a) {
-  if (a?.b.el.isConnected) v.scroll.scrollTop = a.b.el.offsetTop + a.offset;
-}
-
-// updateView follows the branch changes. A changed box fetches its diff when it is near the screen;
-// a commit changes no diff, but a new split point or a push changes them all.
 async function updateView(v, change) {
-  if (!v.scroll || !data) return;
-  const a = anchor(v);
-  const old = v.boxes;
-  v.boxes = new Map();
-  for (const f of data.files) {
-    let b = old.get(f.path);
-    if (b && (b.f.orig !== f.orig || b.f.status !== f.status)) b = null;
-    if (b) b.f = f;
-    else b = newBox(v, f);
-    v.boxes.set(f.path, b);
-    drawHead(v, b);
-  }
-  for (const [path, b] of old) if (v.boxes.get(path) !== b) v.near.unobserve(b.el);
-  const els = [...v.boxes.values()].map(b => b.el);
-  v.end.textContent = data.files.length ? 'End of the changes' : 'No changes yet';
-  if (els.length + 1 !== v.scroll.children.length || els.some((e, i) => v.scroll.children[i] !== e)) {
-    v.scroll.replaceChildren(...els, v.end);
-    restore(v, a);
-  }
-  const changed = b => b.basis !== basis() || change?.all || change?.paths.includes(b.f.path) || (b.f.orig && change?.paths.includes(b.f.orig));
-  const now = [];
-  for (const b of v.boxes.values()) {
-    if (!b.loaded || !changed(b)) continue;
-    if (b.near && b.open) now.push(loadBox(v, b));
-    else b.stale = true;
-  }
-  await Promise.all(now);
-}
-
-function newBox(v, f) {
-  const b = { f, el: el('section', 'fbox'), head: el('div', 'fhead'), body: el('div', 'fbody'), loaded: false, context: 3, json: '', starts: [] };
-  b.open = v.tab.folds?.[f.path] ?? !(generated(f.path) || lines(f) > BIG);
-  b.note = el('div', 'fnote');
-  // Until it is drawn, the box is as high as its diff will about be, so the scrollbar is right.
-  // The browser skips painting a box far from the screen, and then takes this height for it too.
-  const height = Math.min(lines(f) + 8, 5000) * LINE_HEIGHT;
-  b.body.style.height = `${height}px`;
-  b.el.style.containIntrinsicSize = `auto ${height + HEAD}px`;
-  b.el.append(b.head, b.note, b.body);
-  b.el.dataset.path = f.path;
-  b.el.box = b;
-  showOpen(v, b);
-  v.near.observe(b.el);
-  return b;
-}
-
-function showOpen(v, b) {
-  b.el.classList.toggle('shut', !b.open);
-  b.body.hidden = !b.open;
-  b.note.hidden = b.open || !(generated(b.f.path) || lines(b.f) > BIG);
-  if (!b.note.hidden) {
-    const show = el('button', 'more', 'Show');
-    show.onclick = () => fold(v, b, true);
-    b.note.replaceChildren(el('span', null, `${generated(b.f.path) ? 'Generated file' : 'Large diff'}, ${plural(lines(b.f), 'line')} · `), show);
-  }
-}
-
-function fold(v, b, open) {
-  b.open = open;
-  v.tab.folds = { ...v.tab.folds, [b.f.path]: open };
-  v.save();
-  drawHead(v, b);
-  showOpen(v, b);
-  if (open && !b.loaded) loadBox(v, b);
-}
-
-function drawHead(v, b) {
-  const f = b.f;
-  const slash = f.path.lastIndexOf('/');
-  const name = f.path.slice(slash + 1);
-  const chev = iconButton(ICON.chev, `${b.open ? 'Fold' : 'Open'} ${name}`, () => fold(v, b, !b.open));
-  chev.classList.add('fold');
-  chev.setAttribute('aria-expanded', b.open);
-  const path = el('span', 'fpath');
-  path.title = f.orig ? `${f.orig} → ${f.path}` : f.path;
-  path.append(el('span', 'muted', slash < 0 ? '' : f.path.slice(0, slash + 1)), el('b', f.status === 'D' ? 'deleted' : null, name));
-  const parts = [chev, el('span', `letter ${kind(f.status)}`, f.status), path];
-  if (f.notPushed) parts.push(dashed(NOT_PUSHED));
-  const lc = lineCount(f.add, f.del);
-  if (lc) parts.push(lc);
-  const n = notesOn(f.path).length;
-  if (n) parts.push(noteCount(n));
-  parts.push(el('span', 'grow'));
-  if (f.status !== 'D') parts.push(iconButton(ICON.doc, 'Open the whole file', () => page.openFile(f.path)));
-  b.head.replaceChildren(...parts);
-}
-
-// loadBox fetches a box's diff and draws it when it changed. A call during a fetch fetches again
-// after it, so a change that came in the meantime is not lost.
-async function loadBox(v, b) {
-  if (b.loading) {
-    b.again = true;
-    return b.loading;
-  }
-  b.loading = (async () => {
-    b.basis = basis();
-    b.stale = false;
-    let res;
-    try {
-      res = await get('diff', { root: v.root, path: b.f.path, orig: b.f.orig || '', mode: 'branch', target, context: b.context });
-    } catch (err) {
-      res = { error: err.message };
-    }
-    if (!isCurrent(v) || v.boxes.get(b.f.path) !== b) return;
-    const json = basis() + JSON.stringify(res); // the same diff on another branch has other notes
-    if (b.loaded && json === b.json) return;
-    b.json = json;
-    b.res = res;
-    await drawBox(v, b);
-  })();
-  try { await b.loading; } finally { b.loading = null; }
-  if (b.again) {
-    b.again = false;
-    await loadBox(v, b);
-  }
+  if (data) await showBoxes(v, change);
 }
 
 // fileLines reads a file on disk: its text per line, and its colored pieces. A file that is gone
@@ -620,19 +517,89 @@ async function place(v, b, rows) {
       extra.push({ k: ' ', n: at, t: file.texts[at - 1], x: file.pieces[at - 1] });
     }
   }
-  return { extra, where };
+  return { extra, where, file };
+}
+
+// threadsOn are the threads of the branch's pull request on a file.
+const threadsOn = path => (branchPR && branchPR.number === ownPR() ? branchPR.threads.filter(t => t.path === path) : []);
+
+// placeThreads puts each thread of the branch's pull request on the line on disk that has the text
+// its line has at the head: the same line, else the nearest one. Other threads go to the bar.
+async function placeThreads(v, b, rows, extra, file) {
+  const at = new Map();
+  const bar = [];
+  const ts = threadsOn(b.f.path);
+  const byN = new Map(rows.filter(r => r.n && r.k !== '-').map(r => [r.n, r]));
+  for (const t of ts) {
+    let line = !t.old && !t.outdated && t.text != null && byN.get(t.line)?.t === t.text ? t.line : 0;
+    if (!line && !t.old && !t.outdated && t.text != null) {
+      if (file === undefined) file = await fileLines(v.root, b.f.path);
+      line = nearest(file?.texts || [], t.text, t.line);
+    }
+    if (!line) {
+      bar.push(t);
+      continue;
+    }
+    at.set(t, line);
+    if (!byN.has(line) && !extra.some(x => x.n === line)) extra.push({ k: ' ', n: line, t: file.texts[line - 1], x: file.pieces[line - 1] });
+  }
+  return { at, bar };
+}
+
+// The reply strips of threads, kept across redraws so what is typed in one stays.
+const strips = new Map();
+
+// replyStrip is a thread's reply box in Local mode: what the user types there is an agent note.
+function replyStrip(t, path, line, text) {
+  let s = strips.get(t.id);
+  if (!s) {
+    const foot = el('div', 'foot');
+    const input = el('input');
+    input.placeholder = 'Note for the agent…';
+    const hint = el('span', 'muted hint');
+    foot.append(avatar(branchPR?.me || 'you'), input, hint);
+    s = { foot, input, hint };
+    strips.set(t.id, s);
+    input.onkeydown = e => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        const body = input.value.trim();
+        if (!body) return;
+        input.value = '';
+        notes.push({ id: newId(), path: s.path, line: s.line, text: s.text, body, at: Date.now(), copiedAt: 0 });
+        notesChanged([s.path]);
+        page.announce(`Note added on line ${s.line}`);
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        input.value = '';
+        input.blur();
+      }
+    };
+  }
+  Object.assign(s, { path, line, text });
+  const words = FORGE[prStatus?.forge?.kind] || FORGE.github;
+  s.input.setAttribute('aria-label', `Note for the agent on line ${line}`);
+  s.hint.textContent = `Reply to ${t.comments[0]?.author} in “As on ${words.name}”`;
+  return s.foot;
+}
+
+const newId = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+
+// nearest is the line of texts with text that is nearest to line near, or 0.
+function nearest(texts, text, near) {
+  if (texts[near - 1] === text) return near;
+  let line = 0;
+  for (const [i, t] of Object.entries(texts)) {
+    if (t === text && (!line || Math.abs(+i + 1 - near) < Math.abs(line - near))) line = +i + 1;
+  }
+  return line;
 }
 
 // relocate puts a note on the line of texts that has its text: the same line, else the nearest one,
 // else it is outdated and keeps its line number. It tells whether the note changed.
 function relocate(n, texts) {
-  let line = n.line;
-  if (texts[n.line - 1] !== n.text) {
-    line = 0;
-    for (const [i, t] of Object.entries(texts)) {
-      if (t === n.text && (!line || Math.abs(+i + 1 - n.line) < Math.abs(line - n.line))) line = +i + 1;
-    }
-  }
+  const line = nearest(texts, n.text, n.line);
   const outdated = !line;
   const changed = (line && line !== n.line) || !!n.outdated !== outdated;
   if (line) n.line = line;
@@ -654,104 +621,6 @@ async function placeAll() {
   });
   if (moved.size) notesChanged(moved);
   return true;
-}
-
-// hunksWith adds one-line hunks for lines with a note outside the diff's hunks, in line order.
-function hunksWith(hunks, extra) {
-  const all = hunks.map(h => ({ ...h, lines: [...h.lines] }));
-  for (const x of extra.sort((p, q) => p.n - q.n)) {
-    let delta = 0; // old line minus new line after the last hunk above
-    for (const h of all) {
-      const end = h.newStart + h.lines.filter(l => l.k !== '-').length;
-      if (end > x.n) break;
-      delta = h.oldStart + h.lines.filter(l => l.k !== '+').length - end;
-    }
-    const row = { ...x, o: x.n + delta };
-    const before = all.find(h => h.newStart + h.lines.filter(l => l.k !== '-').length === x.n);
-    if (before) before.lines.push(row);
-    else all.push({ oldStart: row.o, newStart: x.n, lines: [row] });
-  }
-  return all.sort((p, q) => p.newStart - q.newStart);
-}
-
-async function drawBox(v, b) {
-  const res = b.res;
-  const draw = b.draws = (b.draws || 0) + 1; // a newer draw of the box wins over one still waiting
-  b.loaded = true;
-  b.body.style.height = '';
-  if (res.error || res.binary || res.folder || !res.hunks.length) {
-    const say = res.error || (res.binary ? 'Binary file changed' : res.folder ? 'Folder with its own git repository'
-      : b.f.orig ? `Renamed from ${b.f.orig}, no content changes` : 'No content changes');
-    b.body.replaceChildren(el('p', 'fempty', say));
-    b.starts = [];
-    return;
-  }
-  const { extra, where } = await place(v, b, res.hunks.flatMap(h => h.lines));
-  if (!isCurrent(v) || draw !== b.draws) return;
-  const np = res.notPushed || [];
-  const notPushed = n => np.some(([from, to]) => n >= from && n <= to);
-  const hunks = hunksWith(res.hunks, extra);
-  let maxNo = 0;
-  for (const l of hunks.flatMap(h => h.lines)) maxNo = Math.max(maxNo, l.o || 0, l.n || 0);
-  b.body.style.setProperty('--gutter', `${String(maxNo).length + 2}ch`);
-  const out = [];
-  const starts = [];
-  const placed = new Set();
-  hunks.forEach((h, i) => {
-    const added = h.lines.filter(l => l.k === '+');
-    const sep = el('div', 'ln sep');
-    sep.append(el('span', 'gut'));
-    const tx = el('span', 'tx');
-    const count = k => h.lines.filter(l => l.k !== k).length;
-    tx.append(`@@ -${h.oldStart},${count('+')} +${h.newStart},${count('-')} @@`);
-    if (added.length && added.every(l => notPushed(l.n))) {
-      const tag = el('span', 'np-tag');
-      tag.innerHTML = ICON.local;
-      tag.append('Not pushed');
-      tag.dataset.tip = "Not pushed yet\nReviewers don't see these lines";
-      tx.append(tag);
-    }
-    if (i > 0 || h.newStart > 1 || h.oldStart > 1) {
-      const more = el('button', 'more', 'Show more lines');
-      more.onclick = () => {
-        b.context += 20;
-        loadBox(v, b);
-      };
-      tx.append(more);
-    }
-    sep.append(tx);
-    out.push(sep);
-    h.lines.forEach((l, j) => {
-      const local = l.k === '+' && notPushed(l.n);
-      const row = line([l.o, l.n], l.x || l.t, `${l.k === '+' ? 'add ch-add' : l.k === '-' ? 'del' : ''}${local ? ' np' : ''}`);
-      if (l.k !== ' ' && (j === 0 || h.lines[j - 1].k === ' ')) starts.push(row);
-      if (l.k !== '-') {
-        row.dataset.n = l.n;
-        row.dataset.t = l.t;
-        const add = el('button', 'addc');
-        add.innerHTML = ICON.plus;
-        add.tabIndex = -1;
-        add.setAttribute('aria-label', `Add a note on line ${l.n}`);
-        add.dataset.tip = `Note for the agent\n${keyLabel('addNote')}`;
-        add.onclick = () => openEditor(v, b.f.path, l.n, l.t);
-        row.insertBefore(add, row.lastChild);
-      }
-      if (v.cur?.path === b.f.path && v.cur.n === l.n && l.k !== '-') row.classList.add('cur');
-      out.push(row);
-      if (l.k === '-') return;
-      for (const [n, at] of where) {
-        if (at !== l.n || placed.has(n)) continue;
-        placed.add(n);
-        out.push(noteEl(v, n));
-      }
-      if (v.editor?.path === b.f.path && v.editor.n === l.n && !v.editor.id) out.push(v.editor.el);
-    });
-  });
-  // A note with no line left on disk, as on a deleted file, shows at the end of the box.
-  for (const n of where.keys()) if (!placed.has(n)) out.push(noteEl(v, n));
-  b.body.replaceChildren(...out);
-  b.starts = starts;
-  if (v.editor?.path === b.f.path) v.editor.el.querySelector('textarea')?.focus({ preventScroll: true });
 }
 
 function noteEl(v, n) {
@@ -814,7 +683,7 @@ function openEditor(v, path, n, text, note) {
       note.body = body;
       note.copiedAt = 0; // the agent has not seen the new text
     } else {
-      notes.push({ id: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, path, line: n, text, body, at: Date.now(), copiedAt: 0 });
+      notes.push({ id: newId(), path, line: n, text, body, at: Date.now(), copiedAt: 0 });
     }
     v.editor = null;
     notesChanged([path]);
@@ -849,62 +718,7 @@ function closeEditor(v) {
   if (b?.loaded) drawBox(v, b);
 }
 
-// ----- Keys: the current line, a note on it, and jumps across boxes -----
-
-function setCur(v, row) {
-  v.scroll.querySelector('.ln.cur')?.classList.remove('cur');
-  row.classList.add('cur');
-  v.cur = { path: row.closest('.fbox').dataset.path, n: Number(row.dataset.n) };
-}
-
-// curRow is the current line: the one last clicked or moved to, else the first changed line in view.
-function curRow(v) {
-  const cur = v.scroll.querySelector('.ln.cur');
-  if (cur) return cur;
-  const top = v.scroll.scrollTop + HEAD;
-  const rows = [...v.scroll.querySelectorAll('.fbox:not(.shut) .ln[data-n]')];
-  return rows.find(r => r.classList.contains('add') && offsetIn(v, r) >= top) || rows.find(r => offsetIn(v, r) >= top) || rows[0];
-}
-
-const offsetIn = (v, e) => e.getBoundingClientRect().top - v.scroll.getBoundingClientRect().top + v.scroll.scrollTop;
-
-function viewKey(v, e) {
-  if (e.target !== v.scroll || e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
-  if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
-  const rows = [...v.scroll.querySelectorAll('.fbox:not(.shut) .ln[data-n]')];
-  const cur = v.scroll.querySelector('.ln.cur');
-  const at = rows.indexOf(cur);
-  const next = cur ? rows[at + (e.key === 'ArrowDown' ? 1 : -1)] : curRow(v);
-  if (!next) return;
-  e.preventDefault();
-  setCur(v, next);
-  const y = offsetIn(v, next);
-  if (y < v.scroll.scrollTop + HEAD + 12) v.scroll.scrollTop = y - HEAD - 12;
-  else if (y + LINE_HEIGHT > v.scroll.scrollTop + v.scroll.clientHeight) v.scroll.scrollTop = y + LINE_HEIGHT - v.scroll.clientHeight;
-}
-
-// step jumps to the next (dir 1) or previous (dir -1) element that pick(box) gives, across open
-// boxes, drawing a box on the way when it is not drawn yet. has(box) skips a box without drawing it.
-async function step(v, dir, pick, has = () => true) {
-  if (!v.scroll) return;
-  const at = v.scroll.scrollTop + AHEAD;
-  const boxes = [...v.boxes.values()].filter(b => b.open);
-  for (const b of dir > 0 ? boxes : boxes.reverse()) {
-    const top = b.el.offsetTop;
-    if (dir > 0 ? top + b.el.offsetHeight < at : top > at) continue;
-    if (!b.loaded) {
-      if (!has(b)) continue;
-      await loadBox(v, b);
-      if (!isCurrent(v)) return;
-    }
-    const ys = pick(b).map(e => offsetIn(v, e));
-    const y = dir > 0 ? ys.find(y => y > at + 1) : ys.findLast(y => y < at - 1);
-    if (y != null) {
-      v.scroll.scrollTop = Math.max(0, y - AHEAD);
-      return;
-    }
-  }
-}
+// ----- Keys: a note on the current line -----
 
 const typing = () => !!document.activeElement?.closest('textarea, input');
 
@@ -917,18 +731,27 @@ onKey('addNote', () => {
   openEditor(v, row.closest('.fbox').dataset.path, Number(row.dataset.n), row.dataset.t);
 });
 
-const noteKey = dir => () => {
-  const v = openView();
-  if (!v?.scroll || typing()) return false;
-  step(v, dir, b => [...b.body.querySelectorAll('.thr.note')], b => notesOn(b.f.path).length > 0);
-};
-onKey('nextNote', noteKey(1));
-onKey('prevNote', noteKey(-1));
+
+// placeThreadsAll finds the line on disk of every open thread, also of those whose box is not
+// drawn, so the prompt has the line the thread is on now.
+async function placeThreadsAll() {
+  const key = folder;
+  const ts = openThreads().filter(t => !t.old && t.text != null);
+  const paths = [...new Set(ts.map(t => t.path))];
+  const files = await Promise.all(paths.map(path => fileLines(folder, path)));
+  if (key !== folder) return false;
+  for (const t of ts) {
+    const file = files[paths.indexOf(t.path)];
+    const line = file && nearest(file.texts, t.text, threadLines.get(t.id) || t.line);
+    if (line) threadLines.set(t.id, line);
+  }
+  return true;
+}
 
 // ----- Copy for agent -----
 
 // prompt is the text the agent gets: two fixed lines, then each note under its file and line.
-function prompt(picked) {
+function prompt(picked, threads = []) {
   const f = prStatus?.forge;
   const p = prStatus?.pr || data.pr;
   const words = FORGE[f?.kind || 'github'];
@@ -936,6 +759,14 @@ function prompt(picked) {
   const out = [`Review notes for branch ${data.branch}${pr}.`, 'Fix each one, then say what you changed.'];
   for (const n of picked) {
     out.push('', `${n.path}:${n.line}`, ...n.body.split('\n').map(l => `  ${l}`));
+  }
+  for (const t of threads) {
+    const [first, ...replies] = t.comments;
+    out.push('', `${t.path}:${threadLines.get(t.id) || t.line} (${first.author} on ${words.name})`, ...first.body.split('\n').map(l => `  ${l}`));
+    for (const c of replies) {
+      const [l1, ...more] = c.body.split('\n');
+      out.push(`  ${c.author}: ${l1}`, ...more.map(l => `  ${l}`));
+    }
   }
   return out.join('\n');
 }
@@ -945,7 +776,7 @@ function closeCopy() {
 }
 
 async function startCopy() {
-  if (!(await placeAll())) return;
+  if (!(await placeAll()) || !(await placeThreadsAll())) return;
   const button = panel.querySelector('[data-k=copy]');
   if (button) openCopy(button);
 }
@@ -972,6 +803,24 @@ function openCopy(button) {
     list.append(li);
     return { n, check };
   });
+  const words = FORGE[prStatus?.forge?.kind] || FORGE.github;
+  const threadList = el('ul');
+  const tpicks = openThreads().sort((a, b) => a.path.localeCompare(b.path) || a.line - b.line).map(t => {
+    const used = copiedThreads.has(t.id);
+    const li = el('li', used ? 'used' : '');
+    const check = el('input');
+    check.type = 'checkbox';
+    check.checked = !used;
+    const where = `${t.path}:${threadLines.get(t.id) || t.line}`;
+    check.setAttribute('aria-label', `${where}, ${t.comments[0].author} on ${words.name}`);
+    const what = el('label', 'what');
+    what.append(el('span', 'where', `${where} · ${t.comments[0].author}${used ? ' · copied' : ''}`), el('span', 'body', t.comments[0].body.split('\n')[0]));
+    what.onclick = () => { check.checked = !check.checked; update(); };
+    check.onchange = update;
+    li.append(check, what);
+    threadList.append(li);
+    return { t, check };
+  });
   const pre = el('pre');
   pre.tabIndex = 0;
   const count = el('span', 'muted');
@@ -979,30 +828,38 @@ function openCopy(button) {
   const copy = el('button', 'tool');
   const acts = el('div', 'acts');
   acts.append(count, cancel, copy);
-  box.append(el('h2', null, 'Copy for agent'), el('div', 'label', 'Agent notes'), list, pre, acts);
+  box.append(el('h2', null, 'Copy for agent'));
+  if (all.length || !tpicks.length) box.append(el('div', 'label', 'Agent notes'), list);
+  if (tpicks.length) box.append(el('div', 'label', `Threads on ${words.name}`), threadList);
+  box.append(pre, acts);
   function picked() { return picks.filter(p => p.check.checked).map(p => p.n); }
+  function pickedThreads() { return tpicks.filter(p => p.check.checked).map(p => p.t); }
   function update() {
-    const k = picked().length;
-    pre.textContent = prompt(picked());
-    count.textContent = `${k} of ${all.length} picked`;
+    const k = picked().length + pickedThreads().length;
+    pre.textContent = prompt(picked(), pickedThreads());
+    count.textContent = `${k} of ${all.length + tpicks.length} picked`;
     copy.textContent = `Copy ${k}`;
     copy.disabled = !k;
   }
   update();
-  const markCopied = list => {
+  const markCopied = (list, threads) => {
     const at = Date.now();
     for (const n of list) n.copiedAt = at;
+    for (const t of threads) copiedThreads.add(t.id);
+    if (threads.length) saveCopiedThreads();
     close();
     notesChanged(new Set(list.map(n => n.path)));
-    page.say(`Copied ${plural(list.length, 'note')}`);
-    page.announce(`Copied ${plural(list.length, 'note')}`);
+    const said = `Copied ${plural(list.length, 'note')}${threads.length ? ` and ${plural(threads.length, 'thread')}` : ''}`;
+    page.say(said);
+    page.announce(said);
     fetch('/api/count?name=agent-copy', { method: 'POST' }).catch(() => {}); // the local kijk counts, also for a remote folder
   };
   const doCopy = async () => {
     const list = picked();
-    if (!list.length) return;
+    const threads = pickedThreads();
+    if (!list.length && !threads.length) return;
     try {
-      await navigator.clipboard.writeText(prompt(list));
+      await navigator.clipboard.writeText(prompt(list, threads));
     } catch {
       // The browser refused: keep the prompt selected, so the copy key copies it.
       getSelection().selectAllChildren(pre);
@@ -1011,10 +868,10 @@ function openCopy(button) {
       page.announce(`Press ${mac ? '⌘C' : 'Ctrl+C'} to copy the prompt`);
       return;
     }
-    markCopied(list);
+    markCopied(list, threads);
   };
   const onCopy = () => {
-    if (getSelection().toString().trim() === pre.textContent.trim() && picked().length) setTimeout(() => markCopied(picked()));
+    if (getSelection().toString().trim() === pre.textContent.trim() && picked().length + pickedThreads().length) setTimeout(() => markCopied(picked(), pickedThreads()));
   };
   const outside = e => { if (!box.contains(e.target) && !e.target.closest?.('[data-k=copy]')) close(); };
   function close() {
@@ -1050,5 +907,5 @@ function openCopy(button) {
   box.style.left = `${Math.max(8, Math.min(r.left, innerWidth - box.offsetWidth - 8))}px`;
   box.style.bottom = `${innerHeight - r.top + 6}px`;
   copyPanel = { close };
-  (picks[0]?.check || copy).focus();
+  (picks[0]?.check || tpicks[0]?.check || copy).focus();
 }

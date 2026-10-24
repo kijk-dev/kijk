@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 
 	"github.com/kijk-dev/kijk/internal/git"
@@ -23,7 +24,7 @@ type Options struct {
 
 // Register adds the routes of one folder's views to mux. The caller guards mux.
 func Register(mux *http.ServeMux, rts *Roots, o Options) {
-	a := &api{roots: rts, index: newIndexCache(), hl: newHlCache()}
+	a := &api{roots: rts, index: newIndexCache(), hl: newHlCache(), cacheDir: o.CacheDir, ranges: &prRanges{m: map[string][2]string{}}}
 	if o.Web != nil {
 		ec := newEngineCache(o.CacheDir, o.Version)
 		mux.HandleFunc("GET /diagram", serveFrame(o.Web, ec))
@@ -46,6 +47,9 @@ func Register(mux *http.ServeMux, rts *Roots, o Options) {
 	mux.HandleFunc("POST /api/unstage", a.gitAction(func(req actionRequest) (string, error) { return git.Unstage(req.Root, req.Paths) }))
 	mux.HandleFunc("GET /api/graph", a.graph)
 	mux.HandleFunc("GET /api/pr", a.pr)
+	mux.HandleFunc("GET /api/prs", a.prs)
+	mux.HandleFunc("GET /api/pr/view", a.prView)
+	mux.HandleFunc("GET /api/pr/log", a.prLog)
 	mux.HandleFunc("GET /api/commit-files", a.commitFiles)
 	mux.HandleFunc("POST /api/fetch", a.gitAction(func(req actionRequest) (string, error) { return git.Fetch(req.Root) }))
 	mux.HandleFunc("POST /api/push", a.gitAction(func(req actionRequest) (string, error) { return git.Push(req.Root) }))
@@ -53,9 +57,11 @@ func Register(mux *http.ServeMux, rts *Roots, o Options) {
 }
 
 type api struct {
-	roots *Roots
-	index *indexCache
-	hl    *hlCache
+	roots    *Roots
+	index    *indexCache
+	hl       *hlCache
+	cacheDir func() (string, error)
+	ranges   *prRanges
 }
 
 // target resolves the root and path query parameters, or writes the error.
@@ -64,6 +70,19 @@ func (a *api) target(w http.ResponseWriter, r *http.Request) (root, path string,
 	if !a.roots.Has(root) {
 		http.Error(w, "This folder is not open in kijk", http.StatusForbidden)
 		return "", "", false
+	}
+	// With pr, the file is as it is at that pull request's head, not on disk.
+	if pr := r.URL.Query().Get("pr"); pr != "" {
+		n, ok := prNumber(w, pr)
+		if !ok {
+			return "", "", false
+		}
+		p, err := git.PRFile(root, n, r.URL.Query().Get("path"), a.prFiles())
+		if err != nil {
+			fail(w, err)
+			return "", "", false
+		}
+		return root, p, true
 	}
 	path, err := resolve(root, r.URL.Query().Get("path"))
 	if err != nil {
@@ -118,7 +137,7 @@ func (a *api) file(w http.ResponseWriter, r *http.Request) {
 	}
 	rel := r.URL.Query().Get("path")
 	changes, err := git.LineChanges(root, rel)
-	if err != nil {
+	if err != nil || r.URL.Query().Get("pr") != "" {
 		changes = []git.LineChange{} // no marks outside git or before the first commit
 	}
 	var lfs int64
@@ -218,7 +237,12 @@ func (a *api) markdown(w http.ResponseWriter, r *http.Request) {
 		reply(w, rendered{HTML: render.DiagramFile(src, t.Name)})
 		return
 	}
-	html, includes, err := t.Render(src, rel, func(inc string) ([]byte, error) { return readIncluded(root, inc) })
+	read := func(inc string) ([]byte, error) { return readIncluded(root, inc) }
+	if pr := r.URL.Query().Get("pr"); pr != "" {
+		n, _ := strconv.Atoi(pr) // target checked it
+		read = func(inc string) ([]byte, error) { return a.readAtPR(root, n, inc) }
+	}
+	html, includes, err := t.Render(src, rel, read)
 	if err != nil {
 		fail(w, err)
 		return
@@ -229,6 +253,15 @@ func (a *api) markdown(w http.ResponseWriter, r *http.Request) {
 type rendered struct {
 	HTML     string   `json:"html"`
 	Includes []string `json:"includes,omitempty"` // the files it shows in place, so it redraws when one changes
+}
+
+// readAtPR reads a file an AsciiDoc file at a pull request's head includes, at that head.
+func (a *api) readAtPR(root string, n int, rel string) ([]byte, error) {
+	p, err := git.PRFile(root, n, rel, a.prFiles())
+	if err != nil {
+		return nil, err
+	}
+	return readIncluded(filepath.Dir(p), filepath.Base(p))
 }
 
 // readIncluded reads a file an AsciiDoc file includes, by the same path rule as every route.
@@ -330,11 +363,23 @@ func (a *api) diff(w http.ResponseWriter, r *http.Request) {
 		context = 3
 	}
 	mode, hash := q.Get("mode"), q.Get("hash")
-	if mode == "branch" {
+	switch mode {
+	case "branch":
 		if hash = git.BranchSplit(root, q.Get("target")); hash == "" {
 			fail(w, git.ErrNoBranch)
 			return
 		}
+	case "pr":
+		n, ok := prNumber(w, q.Get("pr"))
+		if !ok {
+			return
+		}
+		r, ok := a.ranges.get(root, n)
+		if !ok {
+			http.Error(w, "Open the pull request again", http.StatusConflict)
+			return
+		}
+		hash = r[0] + ".." + r[1]
 	}
 	res, err := diff(root, q.Get("path"), q.Get("orig"), mode, hash, context)
 	if err != nil {
@@ -346,7 +391,8 @@ func (a *api) diff(w http.ResponseWriter, r *http.Request) {
 	if mode == "branch" {
 		out.NotPushed, _ = git.NotPushed(root, q.Get("path"))
 	}
-	if t := render.TypeOf(q.Get("path")); t != nil && t.Diff == render.DiffPictures {
+	// The pictures of a pull request's change are not served: they would need a revision.
+	if t := render.TypeOf(q.Get("path")); t != nil && t.Diff == render.DiffPictures && mode != "pr" {
 		switch t.Show {
 		case render.ShowImage:
 			out.Image = diffImage(root, q.Get("path"), q.Get("orig"), q.Get("mode"), q.Get("hash"))

@@ -242,3 +242,21 @@ func TestFolderRowRefreshWhenAsked(t *testing.T) {
 	}
 	next(`"add":2`)
 }
+
+// kijk <PR link> asks the folders window to open the clone on that pull request.
+func TestFolderListOpenPR(t *testing.T) {
+	useConfigDir(t)
+	p, _ := foldersPath()
+	l := newFolderList(p, &viewer.Roots{})
+	l.addFor([]savedFolder{{Path: abs("/shop")}}, 477)
+	if _, open, _, _ := l.snapshot(); open.Root != abs("/shop") || open.PR != 477 {
+		t.Fatalf("open %+v", open)
+	}
+	l.add([]savedFolder{{Path: abs("/notes")}})
+	if _, open, _, _ := l.snapshot(); open.Root != abs("/notes") || open.PR != 0 {
+		t.Fatalf("a folder alone opens no pull request: %+v", open)
+	}
+	if u := foldersURL(7717, "t", []savedFolder{{Path: "/shop"}}, 477); !strings.HasSuffix(u, "&window=folders&open=%2Fshop&pr=477") {
+		t.Errorf("url %s", u)
+	}
+}

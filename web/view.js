@@ -95,7 +95,7 @@ export function line(numbers, content, cls, key) {
 
 // viewInfo tells find and go to line what is open: a file, a diff with its rows, or rendered markdown.
 export function viewInfo() {
-  if (!current?.scroll || current.kind === 'branch') return null;
+  if (!current?.scroll || current.kind === 'boxes') return null;
   return current;
 }
 
@@ -151,19 +151,22 @@ function ruler(changes, lines) {
 // md holds the view of a tab that has a rendered view: {source, toggle, open}.
 export async function openFile(viewer, root, path, keep, md) {
   const file = { kind: 'file', root, path, chunks: new Map(), pending: new Set() };
+  // A file at a pull request's head comes from git; one on disk sends no pr.
+  if (md?.pr) file.pr = md.pr;
+  const at = q => (file.pr ? { ...q, pr: file.pr } : q);
   // Image URLs in rendered markdown carry a version: new on each open, so the page never reuses an
   // older copy, and kept across a redraw, so an image that did not change is not fetched again.
   file.versions = keep?.versions || { at: Date.now(), of: new Map() };
   // Agents touch .git all the time; a reload that changes nothing must not redraw.
   file.reload = async (force = false) => {
-    const info = await get('file', { root, path }).catch(() => null);
+    const info = await get('file', at({ root, path })).catch(() => null);
     if (current !== file || (!force && info && JSON.stringify(info) === file.json)) return;
     openFile(viewer, root, path, { scrollTop: file.scroll?.scrollTop ?? 0, info, image: file.image?.(), versions: file.versions }, md);
   };
   current = file;
   let info;
   try {
-    info = keep?.info || await get('file', { root, path });
+    info = keep?.info || await get('file', at({ root, path }));
   } catch (err) {
     if (current === file) viewer.replaceChildren(el('p', 'empty', keep && err.message === 'Not found' ? 'Deleted' : err.message));
     return;
@@ -173,6 +176,7 @@ export async function openFile(viewer, root, path, keep, md) {
   const type = typeOf(path);
   let bar = md && rendered(type) ? modeBar(file, md) : null;
   const say = text => viewer.replaceChildren(...(bar ? [bar] : []), el('p', 'empty', text));
+  if (type.show === 'image' && file.pr) return say("kijk shows a pull request's images only on the forge");
   if (type.show === 'image' && !(bar && md.source)) return openImage(viewer, file, info, bar, keep, say);
   if (info.tooLarge) return say('File too large');
   if (info.binary) return say(`Binary file, ${size(info.size)}`);
@@ -189,7 +193,7 @@ export async function openFile(viewer, root, path, keep, md) {
     for (const c of new Set([Math.floor(top / CHUNK), Math.floor((top + 100) / CHUNK)])) {
       if (c * CHUNK >= info.lines) continue;
       try {
-        file.chunks.set(c, await get('lines', { root, path, from: c * CHUNK, to: (c + 1) * CHUNK }));
+        file.chunks.set(c, await get('lines', at({ root, path, from: c * CHUNK, to: (c + 1) * CHUNK })));
       } catch { /* the view loads it again when drawn */ }
     }
     if (current !== file) return;
@@ -320,7 +324,7 @@ async function openImage(viewer, file, info, bar, keep, say) {
 async function openRendered(viewer, file, info, bar, keep, md) {
   let res;
   try {
-    res = await get('markdown', { root: file.root, path: file.path });
+    res = await get('markdown', { root: file.root, path: file.path, ...(file.pr ? { pr: file.pr } : {}) });
   } catch (err) {
     if (current === file && err.status === 413) return 'too large';
     if (current === file) viewer.replaceChildren(bar, el('p', 'empty', err.message));
@@ -479,14 +483,15 @@ function prepare(frag, file, md, doc) {
     pre.removeAttribute('class');
     pre.replaceWith(box);
     box.append(pre);
-    file.diagrams.push({ box, pre, type, text: pre.textContent, root: file.root, path: file.path, openedAt: file.versions.at });
+    file.diagrams.push({ box, pre, type, text: pre.textContent, root: file.root, path: file.path, pr: file.pr, openedAt: file.versions.at });
   }
   for (const img of frag.querySelectorAll('img')) {
     const src = img.getAttribute('src') || '';
     if (external(src)) continue;
     const box = el('span', 'md-img', `Image: ${img.getAttribute('alt') || src}`);
     const path = inFolder(src, file);
-    if (path == null || typeOf(path).show !== 'image') {
+    // The image routes serve files on disk only, which a pull request's version may not match.
+    if (path == null || typeOf(path).show !== 'image' || file.pr) {
       img.replaceWith(box);
       continue;
     }
@@ -565,7 +570,7 @@ async function load(file, c) {
   if (file.chunks.has(c) || file.pending.has(c)) return;
   file.pending.add(c);
   try {
-    const lines = await get('lines', { root: file.root, path: file.path, from: c * CHUNK, to: (c + 1) * CHUNK });
+    const lines = await get('lines', { root: file.root, path: file.path, from: c * CHUNK, to: (c + 1) * CHUNK, ...(file.pr ? { pr: file.pr } : {}) });
     file.chunks.set(c, lines);
     if (current === file) file.render();
   } finally {
@@ -802,11 +807,11 @@ async function textKey(text) {
 const themeOf = type => (type.dark && darkTheme.matches ? 'dark' : 'light');
 
 // drawContext is everything any engine needs to draw; each engine uses its part.
-function drawContext({ type, root, path }) {
+function drawContext({ type, root, path, pr }) {
   const place = splitKey(root);
   return {
     theme: themeOf(type), vars: themeVars(),
-    base: base(place.machine), root: place.root, path, // includes are read through the folder's machine
+    base: base(place.machine), root: place.root, path, pr, // includes are read through the folder's machine
     maxBytes: type.maxBytes, maxChars: type.maxChars,
   };
 }
@@ -816,7 +821,7 @@ function drawContext({ type, root, path }) {
 // time: the includes may change unseen.
 function drawDiagram(diagram, keyText) {
   const { type, root, path, openedAt } = diagram;
-  const at = type.engine.includes ? `${root}\n${path}\n${openedAt}` : '';
+  const at = type.engine.includes ? `${root}\n${path}\n${diagram.pr || ''}\n${openedAt}` : '';
   const key = `${type.name}\n${at}\n${themeOf(type)}\n${keyText}`;
   let entry = drawn.get(key);
   if (entry) {
@@ -902,7 +907,7 @@ export function setViewScroll(top) {
 // A changed image, or a diagram's changed include, redraws on its own, so the page does not move.
 export function refreshView(change) {
   if (!current?.reload) return;
-  if (current.kind === 'branch') return current.reload(change);
+  if (current.kind === 'boxes') return current.reload(change);
   for (const pic of current.pics || []) if (change.all || change.paths.includes(pic.path)) pic.reload();
   const stale = (current.diagrams || []).filter(x => x.entry?.result?.includes?.some(p => change.all || change.paths.includes(p)));
   for (const x of stale) if (drawn.get(x.entry.key) === x.entry) drawn.delete(x.entry.key);

@@ -94,16 +94,16 @@ kijk ~/code/api ~/notes
 ### Pull requests
 
 If you use the `gh` (GitHub) or `glab` (GitLab) command and are logged in, the Git tab shows the pull request or merge request of the branch. It shows the state, the checks or pipeline, and the review.
-kijk asks `gh` and `glab`. It never stores a token itself.
+kijk asks `gh` and `glab`. It never stores a token itself. The PRs tab shows more of them: see [Review a pull request](#review-a-pull-request).
 
 ### Review a branch
 
 The PRs tab shows your own branch the way a reviewer will see it, before you push. It shows when
-the branch has changes against its pull request target or the main line. Its tooltip says PRs on
-GitHub, MRs on GitLab, and Branch with no forge.
+the branch has changes against its pull request target or the main line, and in every repo on
+GitHub or GitLab. Its tooltip says PRs on GitHub, MRs on GitLab, and Branch with no forge.
 
-- The tab shows the branch, the branch it is compared with, and its pull request when the Git tab
-  knows one. kijk asks GitHub or GitLab nothing more for it.
+- **This branch**, the first row of the PRs tab, shows the branch, the branch it is compared with,
+  and its pull request when there is one. Without `gh` or `glab`, the tab opens on it at once.
 - A bar says what reviewers cannot see yet, such as "2 commits and 1 file not pushed", with Push or
   Publish.
 - **Branch changes** shows every changed file in one scroll: the commits since the branch split,
@@ -117,7 +117,40 @@ GitHub, MRs on GitLab, and Branch with no forge.
   line as it was.
 - **Copy for agent** shows the notes with a box each and the prompt they make. Copy puts the prompt
   on the clipboard, to paste into the agent, and marks the notes Copied. **Clear copied** deletes
-  them.
+  them. The open threads of the branch's pull request are in the list too, under "Threads on
+  GitHub".
+- When the branch has a pull request, a switch under its title picks **Local**, everything on
+  your machine, or **As on GitHub** (As on GitLab), only what reviewers see. In Local mode the
+  reviewers' threads show next to the agent's newer work, on the line with the same text. What you
+  type in a thread's box there is an agent note.
+
+### Review a pull request
+
+The PRs tab lists the open pull requests of the repo: **This branch**, **Review requested**,
+**Yours**, and **All open**, with a search box for a number, title, author or branch. The tab's
+icon counts the pull requests that wait for your review.
+
+- Click a pull request to open it. The sidebar shows its title, author, branches, checks and
+  approvals, and its files. **Changes** shows all of them in one scroll, as the forge shows the
+  diff. A button on each file opens the whole file as it is in the pull request.
+- Threads show under their lines. A resolved thread folds to one line; click it to read it. A
+  thread whose lines changed after it was written is in a bar at the top of its file.
+- **Overview** shows the description, the reviewers and what they said, the conversation, and
+  the checks. The checks of each GitHub workflow or GitLab pipeline are a graph: each job a pill,
+  with lines to the jobs it needs. The first three failed jobs show the last lines of their logs.
+  On your own branch, **Copy for agent** hands a failure to the agent.
+- Clicking the pull request's title in the Git tab opens it in the PRs tab.
+- `kijk https://github.com/acme/shop/pull/477` opens that pull request in a clone of the repo
+  that kijk knows: a saved folder or an agent's folder. kijk never clones a repo.
+- kijk asks GitHub or GitLab again when you open a pull request, when the window gets focus,
+  every 2 minutes while the PRs tab shows, and when you press the refresh key.
+- kijk reads pull requests only. It does not comment, approve or merge.
+
+To diff a pull request, kijk fetches its head commit into your repo as `refs/kijk/pr/<number>`,
+with no checkout. When the target branch on GitHub has commits you have not fetched, kijk puts
+them in `refs/kijk/base/<number>`, so your `origin/main` stays as it was. These refs do not show in
+`git branch`. kijk fetches again only when the pull request moved, and deletes the refs when it
+closes.
 
 ### Live updates
 
@@ -149,7 +182,9 @@ kijk uses the IntelliJ default keys.
 | PRs tab | ⌘2 | Alt+2 |
 | Note for the agent on the current line | ⌘⌥N | Ctrl+Alt+N |
 | Add the note | ⌘Enter | Ctrl+Enter |
-| Next and previous note | ⌥↓, ⌥↑ | Alt+↓, Alt+↑ |
+| Next and previous thread or note | ⌥↓, ⌥↑ | Alt+↓, Alt+↑ |
+| Ask GitHub or GitLab again (PRs tab) | ⌘⌥Y | Ctrl+Alt+Y |
+| Back to the list of pull requests | ⌥← | Alt+← |
 | Commit | ⌘K | Ctrl+K |
 | Push | ⇧⌘K | Ctrl+Shift+K |
 | Close tab | ⌘W | Ctrl+F4 |
@@ -163,7 +198,7 @@ A normal browser tab keeps some of these keys for itself. For those actions, kij
 - A [supported agent](#supported-agents). kijk finds Claude Code agents through the files in `~/.claude`, or in `CLAUDE_CONFIG_DIR` when you set it. It finds Codex agents through the app server socket in `~/.codex`, or in `CODEX_HOME` when you set it.
 - `git`. Without it, kijk shows the files but no Git tab.
 - Optional: a Chromium-based browser (Chrome, Edge, Brave, Chromium or Vivaldi), for the app window.
-- Optional: `gh` or `glab`, for the pull request line.
+- Optional: `gh` or `glab`, for the pull request line and the PRs tab.
 
 kijk runs on macOS, Linux and Windows.
 
@@ -209,7 +244,8 @@ Requirements:
   arm64. Remote machines are not supported on Windows yet.
 - OpenSSH on both machines, and `AllowTcpForwarding` on in the remote SSH server. It is on by
   default.
-- On the remote machine: `git`, and optionally `gh` or `glab` for the pull request line.
+- On the remote machine: `git`, and optionally `gh` or `glab` for the pull request line and the
+  PRs tab. kijk asks them, and fetches pull requests, on the remote machine.
 - kijk looks for Codex agents in `~/.codex` on the remote machine. When Codex uses another folder
   there, set `CODEX_HOME` where a non-interactive SSH login reads it: `~/.zshenv` for zsh,
   `~/.bashrc` for bash.
@@ -284,6 +320,7 @@ If kijk already runs, the command only opens a new window.
 | `-no-open` | Does not open a window. |
 | `-no-update-check` | Does not look for a new version. |
 | `kijk <folder>…` | Adds the folders to the folders window and opens it. |
+| `kijk <PR link>` | Opens the pull request in the folders window, in a clone of its repo that kijk knows. |
 | `kijk folders` | Opens the folders window. |
 | `kijk version` | Shows the version. |
 | `kijk update` | Installs the newest version. |
