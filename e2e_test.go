@@ -1037,6 +1037,9 @@ func TestBrowser(t *testing.T) {
 		// Someone pushed since kijk showed the diff: kijk writes nothing, keeps the text, shows the new
 		// head, and moves the editor to its line there. The review went out, so the comment starts a new
 		// one on the new head.
+		b.click("retry.go", prsRow("retry.go"))
+		b.waitFor("retry.go in Changes", boxRow(retry, "\treturn err"))
+		forge.settle()
 		push := filepath.Join(t.TempDir(), "push")
 		run(t, t.TempDir(), "clone", "-q", origin, push)
 		run(t, push, "fetch", "-q", "origin", "refs/pull/477/head")
