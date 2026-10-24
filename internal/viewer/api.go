@@ -143,9 +143,11 @@ func (a *api) file(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rel := r.URL.Query().Get("path")
-	changes, err := git.LineChanges(root, rel)
-	if err != nil || r.URL.Query().Get("pr") != "" {
-		changes = []git.LineChange{} // no marks outside git or before the first commit
+	changes := []git.LineChange{} // no marks at a pull request's head, outside git or before the first commit
+	if r.URL.Query().Get("pr") == "" {
+		if c, err := git.LineChanges(root, rel); err == nil {
+			changes = c
+		}
 	}
 	var lfs int64
 	if imageType(rel) != "" {
