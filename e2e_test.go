@@ -594,6 +594,14 @@ func TestBrowser(t *testing.T) {
 		b.click("Graph", byText(".md.ov .h2mode button", "Graph"))
 		b.waitFor("the graph again", `document.querySelector('.md.ov .dag')`)
 
+		// A failed ask says why until an answer comes, also one that the Changes asked for.
+		b.evalJS(`window.e2eFail = 1; { const f = window.fetch; window.fetch = (u, o) => String(u).includes('/api/pr/view') && window.e2eFail-- > 0 ? Promise.resolve(new Response('gh failed', {status: 502})) : f(u, o); }`)
+		b.press("refreshPrs")
+		b.waitFor("why", `document.querySelector('#prs-pr .note.error')?.textContent === 'gh failed'`)
+		b.click("retry.go in the list", prsRow("retry.go"))
+		b.waitFor("why gone after an answer", `document.querySelector('#filetabs .filetab.active')?.firstChild.textContent === 'Changes' && window.e2eFail < 0 && !document.querySelector('#prs-pr .note.error')`)
+		b.click("Overview", prsRow("Overview"))
+
 		// The list again, with the button and with Alt+←.
 		b.click("back", `document.querySelector('#prs-pr .back')`)
 		b.waitFor("the list again", `!document.querySelector('#prs-list').hidden && document.querySelector('#prs-pr').hidden`)
@@ -717,6 +725,22 @@ func TestBrowser(t *testing.T) {
 		}
 		b.click("Local", byText("#prs-pr .prmode button", "Local"))
 		b.act("the window as it was", chromedp.EmulateReset())
+
+		// A thread deleted on GitHub goes from Local mode too.
+		raw, err := os.ReadFile(filepath.Join(forge.dir, "gh-pr-482.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var noThreads obj
+		if err := json.Unmarshal(raw, &noThreads); err != nil {
+			t.Fatal(err)
+		}
+		noThreads["data"].(obj)["repository"].(obj)["pullRequest"].(obj)["reviewThreads"] = obj{"nodes": []obj{}}
+		forge.set(t, "gh-pr-482.json", noThreads)
+		b.waitFor("the thread in Local mode", asked+`?.nextElementSibling?.matches('.thr:not(.note)')`)
+		b.press("refreshPrs")
+		b.waitFor("the thread gone", asked+` && !`+asked+`.nextElementSibling?.matches('.thr:not(.note)') && `+prsRow("session.go")+`.querySelector('.tc')?.dataset.tip === '1 agent note'`)
+		forge.set(t, "gh-pr-482.json", raw)
 
 		// The PR line's title opens the PRs tab on its pull request; ↗ still goes to the website.
 		b.click("the Git tab", gitTab)
@@ -878,6 +902,8 @@ func TestBrowser(t *testing.T) {
 		b.click("Resolve", open+`.querySelector('.thead button')`)
 		b.waitFor("the reason", open+`?.querySelector('.thead + .error')?.textContent === 'gh: Resource not accessible by integration' && !`+open+`.matches('.folded')`)
 		forge.set(t, "gh-resolve.json", ghData(obj{}))
+		b.press("refreshPrs")
+		b.waitFor("the reason gone with the next answer", open+`?.matches('.thr:not(.folded)') && !`+open+`.querySelector('.thead + .error')`)
 
 		// Escape closes a new comment, and + on the same line gives its text back.
 		half := boxRow(retry, "\t\t\treturn ctx.Err()")
