@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/url"
 	"os/exec"
 	"regexp"
@@ -125,24 +126,29 @@ func graphQL[T any](tool string, f *forge, query string, vars map[string]any, ou
 	return parse(data, out)
 }
 
-// callGraphQL gives the data and the error messages of a GraphQL call. Strings go as -f, numbers
-// as -F, in name order, so a call reads the same each time.
+// callGraphQL gives the data and the error messages of a GraphQL call. gh reads it on stdin, as a
+// comment can pass a Windows command line's length; glab gets -f and -F fields in name order.
 func callGraphQL(tool string, f *forge, query string, vars map[string]any) (json.RawMessage, []string, error) {
-	args := []string{"api", "graphql", "--hostname", f.Host, "-f", "query=" + query}
-	keys := make([]string, 0, len(vars))
-	for k := range vars {
-		keys = append(keys, k)
-	}
-	slices.Sort(keys)
-	for _, k := range keys {
-		switch v := vars[k].(type) {
-		case int:
-			args = append(args, "-F", k+"="+strconv.Itoa(v))
-		default:
-			args = append(args, "-f", fmt.Sprintf("%s=%v", k, v))
+	args := []string{"api", "graphql", "--hostname", f.Host}
+	var in []byte
+	if tool == "gh" {
+		b, err := json.Marshal(map[string]any{"query": query, "variables": vars})
+		if err != nil {
+			return nil, nil, err
+		}
+		in, args = b, append(args, "--input", "-")
+	} else {
+		args = append(args, "-f", "query="+query)
+		for _, k := range slices.Sorted(maps.Keys(vars)) {
+			switch v := vars[k].(type) {
+			case int:
+				args = append(args, "-F", k+"="+strconv.Itoa(v))
+			default:
+				args = append(args, "-f", fmt.Sprintf("%s=%v", k, v))
+			}
 		}
 	}
-	b, err := runTool(tool, args...)
+	b, err := runToolIn(in, tool, args...)
 	if err != nil {
 		return nil, nil, err
 	}

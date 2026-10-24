@@ -51,7 +51,7 @@ func TestGitlabComment(t *testing.T) {
 			t.Fatalf("%s: id %q, err %v", c.name, id, err)
 		}
 		last := calls()[len(calls())-1]
-		if !has(last, "--method", "POST", mr7+"/draft_notes", "--input", "-", "-H", "Content-Type: application/json") {
+		if !last.Has("--method", "POST", mr7+"/draft_notes", "--input", "-", "-H", "Content-Type: application/json") {
 			t.Errorf("%s: call %q", c.name, last.Args)
 		}
 		if b, _ := json.Marshal(body(t, last)); string(b) != c.want {
@@ -90,9 +90,9 @@ func TestGitlabEditDeleteResolve(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := calls()[1:] // after the version
-	if len(c) != 4 || !has(c[0], "--method", "PUT", mr7+"/draft_notes/61") || body(t, c[0])["note"] != "Better." ||
-		!has(c[1], "--method", "DELETE", mr7+"/draft_notes/61") ||
-		!has(c[2], "--method", "PUT", mr7+"/discussions/ab12?resolved=true") || !has(c[3], mr7+"/discussions/ab12?resolved=false") {
+	if len(c) != 4 || !c[0].Has("--method", "PUT", mr7+"/draft_notes/61") || body(t, c[0])["note"] != "Better." ||
+		!c[1].Has("--method", "DELETE", mr7+"/draft_notes/61") ||
+		!c[2].Has("--method", "PUT", mr7+"/discussions/ab12?resolved=true") || !c[3].Has(mr7+"/discussions/ab12?resolved=false") {
 		t.Fatalf("calls %q", c)
 	}
 	// A GitLab draft id is a number, and a discussion id hex: they go into the URL.
@@ -119,8 +119,8 @@ func TestGitlabSubmit(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := calls()[1:]
-	if len(c) != 3 || !has(c[0], mr7+"/draft_notes") || has(c[0], "--method") || !has(c[1], "--method", "POST", mr7+"/draft_notes/bulk_publish") ||
-		!has(c[2], "--method", "POST", mr7+"/approve") || body(t, c[2])["sha"] != "h1" {
+	if len(c) != 3 || !c[0].Has(mr7+"/draft_notes") || c[0].Has("--method") || !c[1].Has("--method", "POST", mr7+"/draft_notes/bulk_publish") ||
+		!c[2].Has("--method", "POST", mr7+"/approve") || body(t, c[2])["sha"] != "h1" {
 		t.Fatalf("calls %q", c)
 	}
 
@@ -129,7 +129,7 @@ func TestGitlabSubmit(t *testing.T) {
 	if err := SubmitReview(repo, 7, "h1", "changes"); err != nil {
 		t.Fatal(err)
 	}
-	if c := calls(); len(c) != 2 || !has(c[1], "-f", "iid=7", "path=acme/shop") {
+	if c := calls(); len(c) != 2 || !c[1].Has("-f", "iid=7", "path=acme/shop") {
 		t.Fatalf("calls %q", c)
 	}
 
@@ -176,21 +176,21 @@ func TestGitlabSummary(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := calls()
-	if last := c[len(c)-1]; !has(last, "--method", "PUT", mr7+"/draft_notes/53") || body(t, last)["note"] != "Looks good." {
+	if last := c[len(c)-1]; !last.Has("--method", "PUT", mr7+"/draft_notes/53") || body(t, last)["note"] != "Looks good." {
 		t.Fatalf("calls %q", c)
 	}
 	calls = gittest.FakeToolCalls(t, "glab", list(`[]`), write)
 	if err := SetSummary(repo, 7, "h1", "Looks good."); err != nil {
 		t.Fatal(err)
 	}
-	if c := calls(); len(c) != 2 || !has(c[1], "--method", "POST", mr7+"/draft_notes") || body(t, c[1])["note"] != "Looks good." || body(t, c[1])["position"] != nil {
+	if c := calls(); len(c) != 2 || !c[1].Has("--method", "POST", mr7+"/draft_notes") || body(t, c[1])["note"] != "Looks good." || body(t, c[1])["position"] != nil {
 		t.Fatalf("calls %q", c)
 	}
 	calls = gittest.FakeToolCalls(t, "glab", list(have), write)
 	if err := SetSummary(repo, 7, "h1", ""); err != nil {
 		t.Fatal(err)
 	}
-	if c := calls(); len(c) != 2 || !has(c[1], "--method", "DELETE", mr7+"/draft_notes/53") {
+	if c := calls(); len(c) != 2 || !c[1].Has("--method", "DELETE", mr7+"/draft_notes/53") {
 		t.Fatalf("calls %q", c)
 	}
 }

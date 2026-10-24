@@ -770,7 +770,7 @@ func TestBrowser(t *testing.T) {
 		b.press("submitNote")
 		b.waitFor("the draft under its line", editor+`?.matches('.thr.draftonly:not(.editing)') && `+editor+`.querySelector('.cbody')?.textContent.trim() === 'Name the error.' && !`+editor+`.querySelector('.who').textContent.includes('written on')`)
 		calls := strings.Join(forge.calls()[n:], "\n")
-		if !strings.Contains(calls, "-f commit="+theirs+" -f pr=PR_477") || !strings.Contains(calls, "-f body=Name the error. -F line=10 -f path="+retry+" -f review=PRR_1 -f side=RIGHT") {
+		if !strings.Contains(calls, `{"commit":"`+theirs+`","pr":"PR_477"}`) || !strings.Contains(calls, `{"body":"Name the error.","line":10,"path":"`+retry+`","review":"PRR_1","side":"RIGHT"}`) {
 			t.Fatalf("the comment's calls:\n%s", calls)
 		}
 
@@ -783,7 +783,7 @@ func TestBrowser(t *testing.T) {
 		b.click("the reply strip", open+`.querySelector('.foot input')`)
 		b.typeText("Cap Retry-After at MaxDelay too.")
 		b.key("Enter", "\r")
-		forge.waitFor(t, n, "-f review=PRR_1 -f thread=T1")
+		forge.waitFor(t, n, `"review":"PRR_1","thread":"T1"}`)
 		b.waitFor("the reply as a draft", `(c => c?.matches('.c.mine') && c.querySelector('.chip.draft') && c.querySelector('.cbody').textContent.trim() === 'Cap Retry-After at MaxDelay too.')([...`+open+`.querySelectorAll('.c')].at(-1))`)
 		b.waitFor("the strip empty", open+`.querySelector('.foot input').value === ''`)
 
@@ -795,12 +795,12 @@ func TestBrowser(t *testing.T) {
 		b.evalJS(`document.activeElement.select()`)
 		b.typeText("Name the error: ev.ID.")
 		b.press("submitNote")
-		forge.waitFor(t, n, "-f body=Name the error: ev.ID. -f id=C50")
+		forge.waitFor(t, n, `{"body":"Name the error: ev.ID.","id":"C50"}`)
 		b.waitFor("the new text", editor+`?.querySelector('.cbody')?.textContent.trim() === 'Name the error: ev.ID.' && !`+editor+`.querySelector('textarea')`)
 		forge.after(t, "delete", "gh-pr-477.json", pr477(theirs, main, func(ts []obj) []obj { return append(ts, mine("Name the error: ev.ID.")) }))
 		b.evalJS(readme + `.scrollIntoView({block: 'center'})`)
 		b.click("Delete", readme+`.querySelector('[aria-label=Delete]')`)
-		forge.waitFor(t, n, "-f id=C40")
+		forge.waitFor(t, n, `{"id":"C40"}`)
 		b.waitFor("the website's draft gone", `!`+fileBox("README.md")+`.querySelector('.thr') && document.querySelector('#prs-pr .reviewbox .head').textContent === 'Your review1 draft'`)
 
 		// Resolve and unresolve happen at once.
@@ -813,7 +813,7 @@ func TestBrowser(t *testing.T) {
 		forge.after(t, "resolve", "gh-pr-477.json", resolved(true))
 		b.evalJS(open + `.scrollIntoView({block: 'center'})`)
 		b.click("Resolve", open+`.querySelector('.thead button')`)
-		forge.waitFor(t, n, "resolveReviewThread(input: {threadId: $thread}) { thread { id } } } -f thread=T1")
+		forge.waitFor(t, n, `resolveReviewThread(input: {threadId: $thread}) { thread { id } } }","variables":{"thread":"T1"}`)
 		b.waitFor("the thread folded", open+`?.matches('.thr.folded') && `+open+`.textContent === 'Resolved · tim: Should a 429 count as retryable? · 2 replies'`)
 		b.click("the resolved thread", open)
 		forge.after(t, "unresolve", "gh-pr-477.json", resolved(false))
@@ -875,7 +875,7 @@ func TestBrowser(t *testing.T) {
 		b.typeText("Looks good, one question on Retry-After.")
 		b.waitFor("the comment typed", foot+`.querySelector('input').value === 'Looks good, one question on Retry-After.'`)
 		b.click("Add to review", byText(".md.ov .thr.conv .foot button", "Add to review"))
-		forge.waitFor(t, n, "updatePullRequestReview(input: {pullRequestReviewId: $review, body: $body}) { pullRequestReview { id } } } -f body="+said+" -f review=PRR_1")
+		forge.waitFor(t, n, `updatePullRequestReview(input: {pullRequestReviewId: $review, body: $body}) { pullRequestReview { id } } }","variables":{"body":"`+said+`","review":"PRR_1"}`)
 		b.waitFor("the summary in the box", box+`.querySelector('textarea').value === 'Looks good, one question on Retry-After.' && `+foot+`.querySelector('input').value === ''`)
 		b.waitFor("the summary as a draft", `(c => c?.querySelector('.chip.draft') && c.querySelector('.who').textContent.includes('· sent with your review') && c.querySelector('.cbody').textContent === `+jsString(said)+`)(document.querySelector('.md.ov .thr.conv .c.mine.summary'))`)
 		shots(b, "prs-overview-review")
@@ -893,7 +893,7 @@ func TestBrowser(t *testing.T) {
 		forge.after(t, "update", "gh-pr-477.json", withSummary(full(), summary))
 		forge.after(t, "update", "gh-target.json", targetWith(theirs, "PRR_1", summary))
 		b.press("submitNote")
-		forge.waitFor(t, n, "-f body="+summary+" -f review=PRR_1")
+		forge.waitFor(t, n, `{"body":"`+summary+`","review":"PRR_1"}`)
 		b.waitFor("saved", box+`.querySelector('.saved').hidden && `+box+`.querySelector('textarea').value === `+jsString(summary))
 
 		// The check lists what goes out; Escape goes back with nothing lost.
@@ -925,7 +925,7 @@ func TestBrowser(t *testing.T) {
 		forge.after(t, "submit", "gh-target.json", target(theirs, ""))
 		n = len(forge.calls())
 		b.key("Enter", "\r")
-		forge.waitFor(t, n, "-f body="+summary+" -f event=APPROVE -f review=PRR_1")
+		forge.waitFor(t, n, `{"body":"`+summary+`","event":"APPROVE","review":"PRR_1"}`)
 		b.waitFor("posted", `!document.querySelector('.confirm') && document.querySelector('#statusbar').textContent.includes('Posted your review on #477') && `+
 			box+`.querySelector('.head').textContent === 'Your reviewno drafts yet' && `+box+`.querySelector('textarea').value === '' && `+box+`.querySelector('.mode button[aria-pressed=true]').textContent === 'Comment' && `+
 			box+`.querySelector('button.primary').disabled && window.e2eCounts.some(u => u.endsWith('name=review'))`)
@@ -960,8 +960,8 @@ func TestBrowser(t *testing.T) {
 		b.waitFor("the new head", boxHas(retry, "add", "\t// Every attempt failed."))
 		b.evalJS(`document.querySelector('.thr.editing textarea').focus()`)
 		b.press("submitNote")
-		forge.waitFor(t, before, "-f body=Wrap it. -F line=26 -f path="+retry+" -f review=PRR_2")
-		if calls := strings.Join(forge.calls()[before:], "\n"); !strings.Contains(calls, "-f commit="+theirs+" -f pr=PR_477") {
+		forge.waitFor(t, before, `{"body":"Wrap it.","line":26,"path":"`+retry+`","review":"PRR_2","side":"RIGHT"}`)
+		if calls := strings.Join(forge.calls()[before:], "\n"); !strings.Contains(calls, `{"commit":"`+theirs+`","pr":"PR_477"}`) {
 			t.Fatalf("the new review is not on the new head:\n%s", calls)
 		}
 		b.waitFor("the editor closed", `!document.querySelector('.thr.editing')`)
@@ -1091,14 +1091,14 @@ func TestBrowser(t *testing.T) {
 		b.click("Since your review", byText("#prs-pr .prmode.since .mode button", "Since your review"))
 		near := boxRow(session, "func check16() bool {")
 		b.waitFor("only the line put back", `document.querySelectorAll('#viewer .fbox').length === 1 && `+near)
-		b.evalJS(`window.e2ePosts = []; { const f = window.fetch; window.fetch = (u, o) => (String(u).includes('/api/pr/comment') && e2ePosts.push(JSON.parse(o.body)), f(u, o)); }`)
 		b.hover("a line", near)
 		b.click("+", near+`.querySelector('.addc')`)
 		b.waitFor("the editor", `document.activeElement?.matches('#viewer textarea')`)
 		b.typeText("Why 16?")
+		n = len(forge.calls())
 		b.press("submitNote")
 		at := lineOf(onMain, "func check16() bool {")
-		b.waitFor("the comment with its line in the target", fmt.Sprintf(`window.e2ePosts.length === 1 && e2ePosts[0].path === %s && e2ePosts[0].line === %d && e2ePosts[0].oldLine === %d`, jsString(session), at+10, at))
+		forge.waitFor(t, n, fmt.Sprintf(`"new_line":%d,"new_path":%q,"old_line":%d,`, at+10, session, at)) // its line in the target
 		b.noErrors()
 
 		// Below 16.3 the merge request is read only, and the box's place says why.
@@ -1446,14 +1446,15 @@ func TestBrowser(t *testing.T) {
 
 		// A comment goes on the line of the forge diff, where retry.go is new: it has no old line,
 		// though the line is unchanged since the review.
-		b.evalJS(`window.e2ePosts = []; { const f = window.fetch; window.fetch = (u, o) => (String(u).includes('/api/pr/comment') && e2ePosts.push(JSON.parse(o.body)), f(u, o)); }`)
 		ret := boxRow(retry, "\treturn err")
 		b.hover("a line", ret)
 		b.click("+", ret+`.querySelector('.addc')`)
 		b.waitFor("the editor", `document.activeElement?.matches('#viewer textarea')`)
 		b.typeText("Wrap the error.")
+		n := len(forge.calls())
 		b.press("submitNote")
-		b.waitFor("the comment on the forge's line", fmt.Sprintf(`window.e2ePosts.length === 1 && e2ePosts[0].path === %s && e2ePosts[0].line === %d && e2ePosts[0].oldLine === 0 && !e2ePosts[0].old && !document.querySelector('#viewer textarea')`, jsString(retry), lineOf(retryGo, "\treturn err")))
+		forge.waitFor(t, n, fmt.Sprintf(`{"body":"Wrap the error.","line":%d,"path":%q,"review":"PRR_1","side":"RIGHT"}`, lineOf(retryGo, "\treturn err"), retry))
+		b.waitFor("the editor closed", `!document.querySelector('#viewer textarea')`)
 
 		// Moving the switch closes an open comment; + on its line gives the text back.
 		b.hover("a line", ret)

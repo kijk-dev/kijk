@@ -229,15 +229,13 @@ func TestListPRsSearch(t *testing.T) {
 	repo := gittest.Repo(t)
 	gittest.Run(t, repo, "remote", "add", "origin", "git@github.com:acme/shop.git")
 	b, _ := os.ReadFile(filepath.Join("testdata", "forge", "github-search.json"))
-	args := fakeTool(t, "gh", string(b))
+	calls := gittest.FakeToolCalls(t, "gh", gittest.Rule{Out: string(b)})
 	res := ListPRs(repo, "webhook")
 	if res.Note != "" || len(res.PRs) != 3 || res.PRs[0].Number != 301 {
 		t.Fatalf("res = %+v", res)
 	}
-	a := strings.Join(args(), " ")
-	if !strings.Contains(a, "-f text=repo:acme/shop is:pr is:open webhook") || !strings.Contains(a, "-f author=repo:acme/shop is:pr is:open author:webhook") ||
-		!strings.Contains(a, "-f branch=repo:acme/shop is:pr is:open head:webhook") || !strings.Contains(a, "--hostname github.com") {
-		t.Errorf("gh was called with %s", a)
+	if c := calls()[0]; !c.Has("--hostname", "github.com", "text=repo:acme/shop is:pr is:open webhook", "author=repo:acme/shop is:pr is:open author:webhook", "branch=repo:acme/shop is:pr is:open head:webhook") {
+		t.Errorf("gh was called with %q", c)
 	}
 }
 

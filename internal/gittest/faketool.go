@@ -7,12 +7,13 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 )
 
-// Rule is one answer of a fake tool: the first rule whose Has is in the arguments gives what the
-// tool prints to stdout and stderr and its exit status. An empty Has matches every call.
+// Rule is one answer of a fake tool: the first rule whose Has is in the arguments or stdin gives
+// what the tool prints to stdout and stderr and its exit status. An empty Has matches every call.
 type Rule struct {
 	Has  string
 	Out  string
@@ -76,6 +77,24 @@ func FakeToolCalls(t *testing.T, name string, rules ...Rule) (calls func() []Cal
 	}
 }
 
+// Has says whether the call holds each of the arguments, in any order. A GraphQL call with its
+// variables on stdin holds each variable as name=value too.
+func (c Call) Has(args ...string) bool {
+	all := slices.Clone(c.Args)
+	var in struct{ Variables map[string]any }
+	if json.Unmarshal([]byte(c.Stdin), &in) == nil {
+		for k, v := range in.Variables {
+			all = append(all, fmt.Sprintf("%s=%v", k, v))
+		}
+	}
+	for _, a := range args {
+		if !slices.Contains(all, a) {
+			return false
+		}
+	}
+	return true
+}
+
 func copyFile(from, to string) error {
 	in, err := os.Open(from)
 	if err != nil {
@@ -118,7 +137,7 @@ func RunFakeTool() {
 	if b, err := os.ReadFile(filepath.Join(dir, "rules.json")); err == nil {
 		json.Unmarshal(b, &rules)
 	}
-	all := strings.Join(args, " ")
+	all := strings.Join(args, " ") + " " + call.Stdin
 	for _, r := range rules {
 		if strings.Contains(all, r.Has) {
 			fmt.Print(r.Out)

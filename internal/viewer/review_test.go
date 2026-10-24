@@ -80,8 +80,8 @@ func TestReviewRoutes(t *testing.T) {
 	if w := post("/api/pr/comment", comment); w.Code != 200 || w.Body.String() != "{\"id\":\"C9\"}\n" {
 		t.Fatalf("comment %d %s", w.Code, w.Body.String())
 	}
-	if last := calls()[len(calls())-1]; !strings.Contains(strings.Join(last.Args, " "), "-f body=Why 3? -F line=4 -f path=retry.go -f review=PRR_9 -f side=RIGHT") {
-		t.Fatalf("call %q", last.Args)
+	if last := calls()[len(calls())-1]; !last.Has("body=Why 3?", "line=4", "path=retry.go", "review=PRR_9", "side=RIGHT") {
+		t.Fatalf("call %q", last)
 	}
 	for _, c := range []struct {
 		route string
@@ -99,7 +99,7 @@ func TestReviewRoutes(t *testing.T) {
 			t.Errorf("%s: %d %s", c.route, w.Code, w.Body.String())
 		}
 	}
-	if c := calls(); !strings.Contains(strings.Join(c[len(c)-3].Args, " "), "-f body=Looks good. -f review=PRR_9") || !strings.Contains(strings.Join(c[len(c)-1].Args, " "), "-f event=APPROVE -f review=PRR_9") {
+	if c := calls(); !c[len(c)-3].Has("body=Looks good.", "review=PRR_9") || !c[len(c)-1].Has("event=APPROVE", "review=PRR_9") {
 		t.Fatalf("summary and submit %q", c[len(c)-3:])
 	}
 
