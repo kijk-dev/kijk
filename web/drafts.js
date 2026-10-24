@@ -1,5 +1,5 @@
 import { el, post, storeKey } from './api.js';
-import { loadView } from './prdata.js';
+import { freshView } from './prdata.js';
 import { avatar } from './threads.js';
 import { iconButton, plural } from './boxes.js';
 import { FORGE, forgeMark } from './pr.js';
@@ -46,7 +46,7 @@ export const wroteHere = (root, n, c) => ids(root, n).has(c.id);
 
 async function send(root, n, route, body) {
   const res = await post(`pr/${route}`, { root, n, ...body });
-  await loadView(root, n).catch(() => {});
+  await freshView(root, n).catch(() => {});
   return res;
 }
 
@@ -57,7 +57,7 @@ async function shown(root, n, at, route, body) {
     return await post(route, { root, n, at, ...body });
   } catch (err) {
     if (err.status !== 409 && err.status !== 428) throw err;
-    const fresh = await loadView(root, n); // shows the new head
+    const fresh = await freshView(root, n); // shows the new head
     if (err.status === 409) throw err;
     if (fresh.at !== at) throw new Error(`${words(fresh).num}${n} has new commits. kijk shows them now; look again first.`);
     return post(route, { root, n, at, ...body });
@@ -67,7 +67,7 @@ async function shown(root, n, at, route, body) {
 async function addComment(root, n, at, c) {
   const res = await shown(root, n, at, 'pr/comment', c);
   remember(root, n, res.id);
-  await loadView(root, n).catch(() => {});
+  await freshView(root, n).catch(() => {});
 }
 
 // ----- Text boxes -----
@@ -317,7 +317,7 @@ function setReview(root, n, patch) {
 // saveSummary sets the summary on the forge: GitHub's pending review body, GitLab's draft note.
 async function saveSummary(root, n, at, body) {
   await shown(root, n, at, 'pr/summary', { body });
-  await loadView(root, n).catch(() => {});
+  await freshView(root, n).catch(() => {});
   hooks.announce?.('Summary saved');
 }
 
@@ -582,7 +582,7 @@ function openCheck(root, n, res) {
       note.textContent = `Everyone on the ${w.kind} sees it at once.`;
       ok.disabled = cancel.disabled = false;
       hooks.announce?.(err.message);
-      loadView(root, n).catch(() => {});
+      freshView(root, n).catch(() => {});
       return;
     }
     setReview(root, n, { verdict: 'comment' });
@@ -592,7 +592,7 @@ function openCheck(root, n, res) {
     hooks.say?.(said);
     hooks.announce?.(said);
     fetch('/api/count?name=review', { method: 'POST' }).catch(() => {}); // the local kijk counts, also for a remote folder
-    await loadView(root, n).catch(() => {});
+    await freshView(root, n).catch(() => {});
     hooks.reviewed?.(root, n);
   };
   ok.onclick = postIt;

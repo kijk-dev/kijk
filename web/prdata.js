@@ -9,18 +9,23 @@ const key = (root, n) => `${root}\n${n}`;
 
 export const cachedView = (root, n) => views.get(key(root, n));
 
-export function loadView(root, n) {
+// loadView asks for pull request n, or joins the call in flight.
+export const loadView = (root, n) => calls.get(key(root, n)) || ask(root, n);
+
+// freshView asks again after the call in flight, whose answer may be from before a write. Calls
+// run one after the other, so an older answer never shows after a newer one.
+export const freshView = (root, n) => ask(root, n, calls.get(key(root, n)));
+
+function ask(root, n, after) {
   const k = key(root, n);
-  if (!calls.has(k)) {
-    const call = get('pr/view', { root, n }).then(res => {
-      views.set(k, res);
-      for (const fn of listeners) fn(root, n, res);
-      return res;
-    });
-    calls.set(k, call);
-    call.finally(() => calls.delete(k)).catch(() => {});
-  }
-  return calls.get(k);
+  const call = (after || Promise.resolve()).catch(() => {}).then(() => get('pr/view', { root, n })).then(res => {
+    views.set(k, res);
+    for (const fn of listeners) fn(root, n, res);
+    return res;
+  });
+  calls.set(k, call);
+  call.finally(() => { if (calls.get(k) === call) calls.delete(k); }).catch(() => {});
+  return call;
 }
 
 // onView runs fn(root, n, answer) after each new answer.

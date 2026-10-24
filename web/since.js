@@ -1,5 +1,5 @@
 import { el, get } from './api.js';
-import { loadView, onView, age } from './prdata.js';
+import { loadView, freshView, onView, age } from './prdata.js';
 import { plural } from './boxes.js';
 import { reviewOf } from './viewed.js';
 import { FORGE } from './pr.js';
@@ -36,7 +36,7 @@ function ask(root, n, from, at, k) {
     if (res.at !== at) {
       // The server has a newer head than the page: show it first, which asks again. The entry stays
       // pending until then, so a draw meanwhile does not ask again.
-      const wait = loadView(root, n).catch(() => {}).finally(() => {
+      const wait = freshView(root, n).catch(() => {}).finally(() => {
         if (answers.get(k) !== wait) return;
         answers.delete(k);
         tell(root, n);
