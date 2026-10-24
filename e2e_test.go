@@ -572,8 +572,10 @@ func TestBrowser(t *testing.T) {
 		b.waitFor("the end of the failed log", `document.querySelector('.md.ov .joblog .jlhead b')?.textContent === 'test (windows)' && document.querySelector('.md.ov .joblog pre')?.textContent.endsWith('--- FAIL: TestBackoffJitter (0.00s)') && !document.querySelector('.md.ov .joblog button')`)
 		b.waitFor("the conversation", `document.querySelector('.md.ov .thr.conv .cbody')?.textContent.trim() === 'Do we want the attempt number in the delivery log?'`)
 		shots(b, "prs-overview")
-		b.click("List", byText(".md.ov .h2mode button", "List"))
+		b.evalJS(byText(".md.ov .h2mode button", "List") + `.focus()`)
+		b.key("Enter", "\r")
 		b.waitFor("the checks as a list", `!document.querySelector('.md.ov .dag') && document.querySelectorAll('.md.ov .ovlist.jobs li').length === 3`)
+		b.waitFor("the focus still on List", `document.activeElement?.matches('.md.ov .h2mode button') && document.activeElement.textContent === 'List'`)
 		b.click("Graph", byText(".md.ov .h2mode button", "Graph"))
 		b.waitFor("the graph again", `document.querySelector('.md.ov .dag')`)
 
@@ -1466,6 +1468,13 @@ func TestBrowser(t *testing.T) {
 		b.click("+", ret+`.querySelector('.addc')`)
 		b.waitFor("the editor", `document.activeElement?.matches('#viewer textarea')`)
 		b.typeText("Keep me.")
+		// A new answer about #477 draws the view again while the comment is typed: the keys still go in.
+		n = forge.settle()
+		b.press("refreshPrs")
+		forge.waitFor(t, n, "pullRequest(number")
+		forge.settle()
+		b.typeText(" Twice.")
+		b.waitFor("the editor kept its focus", `document.activeElement?.matches('#viewer textarea') && document.activeElement.value === 'Keep me. Twice.'`)
 
 		// Show all changes in the bar goes back.
 		b.click("Show all changes", bar+`.querySelector('button')`)
@@ -1473,7 +1482,7 @@ func TestBrowser(t *testing.T) {
 		b.waitFor("the comment closed", `!document.querySelector('#viewer textarea') && `+ret)
 		b.hover("a line", ret)
 		b.click("+", ret+`.querySelector('.addc')`)
-		b.waitFor("its text back", `document.activeElement?.matches('#viewer textarea') && document.activeElement.value === 'Keep me.'`)
+		b.waitFor("its text back", `document.activeElement?.matches('#viewer textarea') && document.activeElement.value === 'Keep me. Twice.'`)
 		b.key("Escape", kb.Escape)
 		b.waitFor("closed", `!document.querySelector('#viewer textarea')`)
 
@@ -1487,7 +1496,9 @@ func TestBrowser(t *testing.T) {
 		merged := push(false)
 		b.press("refreshPrs")
 		b.waitFor("the switch says two commits", since+`?.dataset.tip.endsWith(' · 2 new commits')`)
-		b.click("Since your review", since)
+		b.evalJS(since + `.focus()`)
+		b.key("Enter", "\r")
+		b.waitFor("the focus still on the switch", `document.activeElement === `+since+` && `+since+`.getAttribute('aria-pressed') === 'true'`)
 		b.waitFor("billing.go left out", bar+`?.firstChild.textContent === 'Since your review · 2 commits · 1 file' && `+boxes+` === `+jsString(retry)+` && `+rows+` === `+jsString(retry))
 
 		// Marking the last file not viewed makes every file viewed: the switch hides, all changes show.
