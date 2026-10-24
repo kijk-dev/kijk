@@ -133,11 +133,8 @@ async function show(v, res) {
   if (!sh.files) return; // kijk asks what changed since your review; onSince shows it
   const moved = before && (v.from !== sh.from || v.since !== !!sh.since?.on);
   v.since = !!sh.since?.on;
-  if (moved && v.editor) {
-    // Its row is of the other diff: close it, and + on its line gives the text back.
-    v.editor.keep();
-    v.editor = null;
-  }
+  // Its row is of the other diff: close it, and + on its line gives the text back.
+  if (moved) v.editor = null;
   v.shownKey = shownKey(sh);
   v.files = sh.files;
   v.from = sh.from;

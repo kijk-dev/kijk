@@ -74,13 +74,21 @@ async function addComment(root, n, at, c) {
 
 const ctrlEnter = e => e.key === 'Enter' && (mac ? e.metaKey : e.ctrlKey);
 
+// unsent keeps what is typed for a new comment or agent note until it is added, by view, file and
+// the text of its line, so + on that line gives it back, also after the view closed or the line moved.
+const unsent = new Map();
+
+// unsentKey names the text of a new comment or note on a line of view's file path.
+export const unsentKey = (view, path, l) => `${view}\n${path}\n${l.k === '-' ? '-' : '+'}${l.t}`;
+
 // textBox is a text box with its buttons: ok(text) runs on the button or Ctrl+Enter and may throw
-// to show why, cancel() on Cancel or Escape. The text stays when ok fails.
-function textBox(label, text, okText, ok, cancel) {
+// to show why, cancel() on Cancel or Escape. The text stays when ok fails, and under keep in unsent.
+export function textBox(label, text, okText, ok, cancel, keep) {
   const wrap = el('div', 'editbox');
   const area = el('textarea');
   area.setAttribute('aria-label', label);
-  area.value = text;
+  area.value = (keep && unsent.get(keep)) || text;
+  if (keep) area.oninput = () => (area.value.trim() ? unsent.set(keep, area.value) : unsent.delete(keep));
   const error = el('p', 'error');
   error.hidden = true;
   const acts = el('div', 'acts');
@@ -97,6 +105,7 @@ function textBox(label, text, okText, ok, cancel) {
     error.hidden = true;
     try {
       await ok(body);
+      unsent.delete(keep);
     } catch (err) {
       error.textContent = err.message;
       error.hidden = false;
@@ -121,14 +130,10 @@ function textBox(label, text, okText, ok, cancel) {
   return wrap;
 }
 
-// unsent keeps the text of a new comment closed with Escape, by file and line, until it is added.
-const unsent = new Map();
-
 // lineEditor is the box under row l of file f where a new comment is written; done() closes it, and
 // toForge(row), when set, gives the forge diff's row of a row's line. move(row, at) changes the head.
 export function lineEditor(root, n, res, f, l, done, toForge) {
   const ed = { text: l.t };
-  const kept = () => `${root}\n${n}\n${f.path}\n${ed.key}`;
   const box = el('div', 'thr draftonly editing');
   const head = el('div', 'thead');
   const title = el('span');
@@ -140,19 +145,9 @@ export function lineEditor(root, n, res, f, l, done, toForge) {
     if (!ed.row) throw new Error('This line is not in the diff now. Copy your text and add it on another line.');
     const r = (await toForge?.(ed.row)) || ed.row;
     await addComment(root, n, ed.at, { path: f.path, orig: f.orig || '', line: ed.line, old: ed.old, oldLine: r.k === ' ' ? r.o : 0, body });
-    unsent.delete(kept());
     hooks.announce?.(`Comment added to your review on line ${ed.line}`);
     done();
-  }, () => {
-    ed.keep();
-    done();
-  });
-  // keep holds the text not added yet, so + on the same line gives it back.
-  ed.keep = () => {
-    const left = text.querySelector('textarea').value;
-    if (left.trim()) unsent.set(kept(), left);
-    else unsent.delete(kept());
-  };
+  }, done, unsentKey(`${root}\n${n}`, f.path, l));
   c.append(who, text);
   box.append(head, c);
   ed.el = box;
@@ -167,7 +162,6 @@ export function lineEditor(root, n, res, f, l, done, toForge) {
     text.querySelector('textarea').setAttribute('aria-label', `Comment on line ${ed.line}`);
   };
   ed.move(l, res.at);
-  text.querySelector('textarea').value = unsent.get(kept()) || '';
   text.focus();
   return ed;
 }

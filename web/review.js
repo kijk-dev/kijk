@@ -3,6 +3,7 @@ import { isCurrent } from './view.js';
 import { lineCount, ago, fileRow } from './git.js';
 import { forgeMark, FORGE } from './pr.js';
 import { keyLabel, mac } from './keys.js';
+import { textBox, unsentKey } from './drafts.js';
 import { boxView, showBoxes, noBoxes, redraw, drawBox, iconButton, goToBox, plural } from './boxes.js';
 import { threadEl, outdatedBar, threadCount, avatar, sent } from './threads.js';
 
@@ -659,21 +660,11 @@ function openEditor(v, path, n, text, note) {
   const c = el('div', 'c');
   const who = el('div', 'who');
   who.append(agentMark(), el('b', null, 'Agent note'), el('span', 'muted', `· line ${n}`));
-  const area = el('textarea');
-  area.setAttribute('aria-label', `Note for the agent on line ${n}`);
-  area.placeholder = 'Note for the agent';
-  area.value = note?.body || '';
-  const acts = el('div', 'acts');
-  const hint = el('span', 'muted');
-  hint.append(el('kbd', null, mac ? '⌘' : 'Ctrl'), ' ', el('kbd', null, 'Enter'), note ? ' saves it' : ' adds it');
-  const cancel = el('button', 'tool', 'Cancel');
-  const ok = el('button', 'tool', note ? 'Save' : 'Add note');
-  acts.append(hint, cancel, ok);
-  c.append(who, area, acts);
-  box.append(c);
-  const submit = () => {
-    const body = area.value.trim();
-    if (!body) return;
+  const close = () => {
+    closeEditor(v);
+    v.scroll.focus({ preventScroll: true });
+  };
+  const edit = textBox(`Note for the agent on line ${n}`, note?.body || '', note ? 'Save' : 'Add note', body => {
     if (note) {
       note.body = body;
       note.copiedAt = 0; // the agent has not seen the new text
@@ -684,23 +675,10 @@ function openEditor(v, path, n, text, note) {
     notesChanged([path]);
     page.announce(note ? 'Note saved' : `Note added on line ${n}`);
     v.scroll.focus({ preventScroll: true });
-  };
-  const close = () => {
-    closeEditor(v);
-    v.scroll.focus({ preventScroll: true });
-  };
-  ok.onclick = submit;
-  cancel.onclick = close;
-  area.onkeydown = e => {
-    if (e.key === 'Enter' && (mac ? e.metaKey : e.ctrlKey)) {
-      e.preventDefault();
-      submit();
-    } else if (e.key === 'Escape') {
-      e.preventDefault();
-      e.stopPropagation();
-      close();
-    }
-  };
+  }, close, note ? '' : unsentKey(notesKey, path, { k: '+', t: text }));
+  edit.querySelector('textarea').placeholder = 'Note for the agent';
+  c.append(who, edit);
+  box.append(c);
   v.editor = { path, n, id: note?.id, el: box };
   const b = v.boxes.get(path);
   if (b?.loaded) drawBox(v, b);
