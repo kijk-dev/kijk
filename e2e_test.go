@@ -1107,7 +1107,11 @@ func TestBrowser(t *testing.T) {
 		repo, origin := reviewRepo(t)
 		forge := newFakeForge(t)
 		reviewForge(t, forge, repo, origin, false)
-		other := filepath.Join(t.TempDir(), "review-other")
+		tmp, err := filepath.EvalSymlinks(t.TempDir()) // as kijk keeps the folder
+		if err != nil {
+			t.Fatal(err)
+		}
+		other := filepath.Join(tmp, "review-other")
 		run(t, repo, "worktree", "add", "-q", "-b", "other", other, "origin/main")
 		claude := t.TempDir()
 		claudeAgent(t, claude, repo, "Fix the login", "idle")

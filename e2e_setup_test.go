@@ -178,12 +178,22 @@ func (p page) waitFor(what, js string) {
 
 func (p page) waitLong(d time.Duration, what, js string) {
 	p.t.Helper()
+	// Not chromedp.Poll: it runs in the frame's last-made JS world, which in Brave is Shields' own
+	// world, where the page's globals do not exist.
 	ctx, cancel := context.WithTimeout(p.ctx, d+5*time.Second)
 	defer cancel()
-	poll := chromedp.Poll[bool]("!!("+js+")", chromedp.WithPollingTimeout(d), chromedp.WithPollingInterval(100*time.Millisecond))
-	if _, err := chromedp.Run(ctx, poll); err != nil {
-		p.fail("waiting for %s: %v", what, err)
+	var last error
+	for end := time.Now().Add(d); time.Now().Before(end); time.Sleep(100 * time.Millisecond) {
+		ok, err := chromedp.Run(ctx, chromedp.Evaluate[bool]("!!("+js+")"))
+		if err == nil && ok {
+			return
+		}
+		last = err
 	}
+	if last != nil {
+		p.fail("waiting for %s: %v", what, last)
+	}
+	p.fail("waiting for %s: timeout", what)
 }
 
 func evalJS[T any](p page, js string) T {
