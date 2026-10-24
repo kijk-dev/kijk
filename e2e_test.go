@@ -1262,6 +1262,11 @@ func TestBrowser(t *testing.T) {
 			return `(` + check(path) + ` && !` + fileBox(path) + `.matches('.viewed') && !` + check(path) + `.checked)`
 		}
 		shut := func(path string) string { return fileBox(path) + `?.matches('.shut')` }
+		// drawn is true once the browser drew a box's lines. It skips a box off the screen, and one that
+		// just came on it for a frame or two: then a click on a line hits what is under it.
+		drawn := func(path string) string {
+			return fileBox(path) + `?.querySelector('.fbody').checkVisibility({contentVisibilityAuto: true})`
+		}
 		// still is true once an element is where it was at the poll before, so a click lands on it.
 		still := func(el string) string {
 			return `(r => { const y = Math.round(r.top); const same = window.e2eY === y; window.e2eY = y; return same })(` + el + `.getBoundingClientRect())`
@@ -1310,6 +1315,7 @@ func TestBrowser(t *testing.T) {
 		b.press("markViewed")
 		b.waitFor("retry.go viewed", viewed(retry)+` && `+shut(retry))
 		// On a viewed file, V clears the mark.
+		b.waitFor("the lines of README.md drawn", drawn(readme))
 		b.click("a line of README.md", boxRow(readme, "Webhooks retry five times."))
 		b.press("markViewed")
 		b.waitFor("README.md not viewed", notViewed(readme)+` && !`+shut(readme))
