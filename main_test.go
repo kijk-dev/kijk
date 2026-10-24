@@ -84,3 +84,30 @@ func TestViewerImportsNoAppFile(t *testing.T) {
 		t.Fatalf("found only %d JavaScript files", len(files))
 	}
 }
+
+// TestPRsTabAsksThroughTheStore checks that only prstore.js asks the forge about pull requests,
+// so every answer goes through its one rule of which answer is newer.
+func TestPRsTabAsksThroughTheStore(t *testing.T) {
+	asks := regexp.MustCompile(`(?:^|[^.\w])get\(\s*['"](?:prs?|pr/view|pr/since)['"]`)
+	posts := regexp.MustCompile(`\bpost\(`)
+	tab := []string{"viewed.js", "since.js", "pr.js", "prs.js", "review.js", "drafts.js", "boxes.js", "changes.js", "overview.js", "threads.js"}
+	// Not yet in the store: what changed since your review, and the writes.
+	later := map[string]bool{"since.js get": true, "drafts.js post": true}
+	files, _ := fs.Glob(webFiles, "web/*.js")
+	for _, f := range files {
+		name := path.Base(f)
+		if name == "prstore.js" {
+			continue
+		}
+		b, err := fs.ReadFile(webFiles, f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if asks.Match(b) && !later[name+" get"] {
+			t.Errorf("%s asks the forge about pull requests; ask through prstore.js", f)
+		}
+		if slices.Contains(tab, name) && posts.Match(b) && !later[name+" post"] {
+			t.Errorf("%s writes to the forge; write through prstore.js", f)
+		}
+	}
+}

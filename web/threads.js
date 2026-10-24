@@ -1,5 +1,4 @@
 import { el, svg } from './api.js';
-import { age } from './prdata.js';
 import { plural } from './boxes.js';
 
 // Forge threads as boxes under their lines: open threads with a tinted header, resolved ones folded
@@ -13,6 +12,16 @@ const ICON = {
 
 const opened = new Set(); // resolved threads the user opened
 const shown = new Set(); // file boxes whose outdated threads show
+
+// age is how long ago an ISO time was, short: 5m, 3h, 2d, 1w.
+export function age(iso) {
+  const s = Math.max(0, (Date.now() - Date.parse(iso)) / 1000);
+  if (!Number.isFinite(s)) return '';
+  if (s < 3600) return `${Math.max(1, Math.floor(s / 60))}m`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h`;
+  if (s < 7 * 86400) return `${Math.floor(s / 86400)}d`;
+  return `${Math.floor(s / (7 * 86400))}w`;
+}
 
 // avatar is a name's first letter on a color from the name; kijk loads no pictures from the forge.
 export function avatar(name) {

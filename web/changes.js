@@ -1,7 +1,7 @@
 import { el, get } from './api.js';
 import { isCurrent } from './view.js';
 import { boxView, showBoxes, noBoxes, goToBox, redraw, drawBox, marksChanged, oldLineOf } from './boxes.js';
-import { cachedView, loadView, onView } from './prdata.js';
+import { pull, read, watch } from './prstore.js';
 import { placeForge, threadCount, threadsChanged } from './threads.js';
 import { lineEditor, moveEditor, threadOpts, writable } from './drafts.js';
 import { keyLabel } from './keys.js';
@@ -32,7 +32,7 @@ async function diffOf(v, f, context, from) {
     return await get('diff', q);
   } catch (err) {
     if (err.status !== 409) throw err;
-    await loadView(v.root, v.n); // kijk restarted and lost where the forge diff starts
+    await read(v.root, v.n); // kijk restarted and lost where the forge diff starts
     return get('diff', q);
   }
 }
@@ -95,18 +95,17 @@ export async function openChanges(viewer, root, tab, keep, save) {
   Object.assign(v.src, source(v));
   v.reload = () => {}; // the forge diff does not follow the files on disk
   view = v;
-  const known = cachedView(root, tab.n);
+  const known = pull(root, tab.n).res;
   if (known) await show(v, known);
   else viewer.replaceChildren(el('p', 'empty', `Fetching ${v.num}${tab.n}…`));
-  try {
-    await loadView(root, tab.n);
-  } catch (err) {
-    if (isCurrent(v) && !v.scroll) noBoxes(v, err.message);
-  }
+  await read(root, tab.n);
+  const why = pull(root, tab.n).why;
+  if (why && isCurrent(v) && !v.scroll) noBoxes(v, why);
 }
 
-onView((root, n, res) => {
-  if (view && isCurrent(view) && view.root === root && view.n === n) show(view, res);
+watch(root => {
+  const res = view && isCurrent(view) && view.root === root && pull(root, view.n).res;
+  if (res && res !== view.res) show(view, res);
 });
 
 onViewed((root, n) => {

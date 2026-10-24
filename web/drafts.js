@@ -1,5 +1,5 @@
 import { el, post, storeKey, keepFocus } from './api.js';
-import { freshView, onView } from './prdata.js';
+import { read, pull, watch } from './prstore.js';
 import { avatar } from './threads.js';
 import { iconButton, plural } from './boxes.js';
 import { forgeMark, forgeWords } from './pr.js';
@@ -44,7 +44,7 @@ const wroteHere = (root, n, c) => ids(root, n).has(c.id);
 
 async function send(root, n, route, body) {
   const res = await post(`pr/${route}`, { root, n, ...body });
-  await freshView(root, n).catch(() => {});
+  await read(root, n, true);
   return res;
 }
 
@@ -55,9 +55,10 @@ async function shown(root, n, at, route, body) {
     return await post(route, { root, n, at, ...body });
   } catch (err) {
     if (err.status !== 409 && err.status !== 428) throw err;
-    const fresh = await freshView(root, n); // shows the new head
+    await read(root, n, true); // shows the new head
     if (err.status === 409) throw err;
-    if (fresh.at !== at) throw new Error(`${forgeWords(fresh).num}${n} has new commits. kijk shows them now; look again first.`);
+    const fresh = pull(root, n).res;
+    if (fresh?.at !== at) throw new Error(`${forgeWords(fresh).num}${n} has new commits. kijk shows them now; look again first.`);
     return post(route, { root, n, at, ...body });
   }
 }
@@ -65,7 +66,7 @@ async function shown(root, n, at, route, body) {
 async function addComment(root, n, at, c) {
   const res = await shown(root, n, at, 'pr/comment', c);
   remember(root, n, res.id);
-  await freshView(root, n).catch(() => {});
+  await read(root, n, true);
 }
 
 // ----- Text boxes -----
@@ -177,7 +178,7 @@ export function moveEditor(ed, rows, at) {
 // ----- What a thread box needs to write -----
 
 const editors = new Map(); // a draft being edited: its text box
-// A thread or draft whose write the forge refused: {why, redraw}, until the next answer.
+// A write the forge refused: {why, redraw, root, n, res}, until an answer newer than res.
 const failed = new Map();
 const strips = new Map(); // the reply strips of forge mode, kept across redraws so what is typed stays
 
@@ -204,7 +205,7 @@ export function threadOpts(root, n, res, redraw) {
         redraw();
         box.focus();
       }),
-      iconButton(ICON.trash, 'Delete', () => tried(key(c.id), redraw, async () => {
+      iconButton(ICON.trash, 'Delete', () => tried(root, n, c.id, redraw, async () => {
         await send(root, n, 'comment/delete', { id: c.id });
         hooks.announce?.('Draft deleted');
       }).catch(() => {})), // the thread shows why
@@ -217,29 +218,30 @@ export function threadOpts(root, n, res, redraw) {
     drafts,
     error,
     reply: t => replyStrip(root, n, res, t),
-    resolve: (t, on) => tried(key(t.id), redraw, async () => {
+    resolve: (t, on) => tried(root, n, t.id, redraw, async () => {
       await send(root, n, 'resolve', { thread: t.id, resolved: on });
       hooks.announce?.(on ? 'Thread resolved' : 'Thread open again');
     }),
   };
 }
 
-onView((root, n) => {
+watch(root => {
   for (const [k, f] of failed) {
-    if (!k.startsWith(`${root}\n${n}\n`)) continue;
+    if (f.root !== root || pull(root, f.n).res === f.res) continue;
     failed.delete(k);
     f.redraw();
   }
 });
 
-// tried runs a write; when the forge refuses it, its reason is kept under k and drawn.
-async function tried(k, redraw, write) {
+// tried runs a write about id; when the forge refuses it, its reason is kept and drawn.
+async function tried(root, n, id, redraw, write) {
+  const k = `${root}\n${n}\n${id}`;
   const had = failed.delete(k);
   try {
     await write();
     if (had) redraw();
   } catch (err) {
-    failed.set(k, { why: err.message, redraw });
+    failed.set(k, { why: err.message, redraw, root, n, res: pull(root, n).res });
     hooks.announce?.(err.message);
     redraw();
     throw err;
@@ -318,7 +320,7 @@ function setReview(root, n, patch) {
 // saveSummary sets the summary on the forge: GitHub's pending review body, GitLab's draft note.
 async function saveSummary(root, n, at, body) {
   await shown(root, n, at, 'pr/summary', { body });
-  await freshView(root, n).catch(() => {});
+  await read(root, n, true);
   hooks.announce?.('Summary saved');
 }
 
@@ -583,7 +585,7 @@ function openCheck(root, n, res) {
       note.textContent = `Everyone on the ${w.kind} sees it at once.`;
       ok.disabled = cancel.disabled = false;
       hooks.announce?.(err.message);
-      freshView(root, n).catch(() => {});
+      read(root, n, true);
       return;
     }
     setReview(root, n, { verdict: 'comment' });
@@ -593,7 +595,7 @@ function openCheck(root, n, res) {
     hooks.say?.(said);
     hooks.announce?.(said);
     fetch('/api/count?name=review', { method: 'POST' }).catch(() => {}); // the local kijk counts, also for a remote folder
-    await freshView(root, n).catch(() => {});
+    await read(root, n, true);
     hooks.reviewed?.(root, n);
   };
   ok.onclick = postIt;

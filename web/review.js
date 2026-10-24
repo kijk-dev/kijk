@@ -5,10 +5,11 @@ import { forgeMark, forgeWords, ownPR } from './pr.js';
 import { keyLabel, mac } from './keys.js';
 import { textBox, unsentKey } from './drafts.js';
 import { boxView, showBoxes, noBoxes, redraw, drawBox, iconButton, goToBox, plural } from './boxes.js';
+import { pull, line, own, watch } from './prstore.js';
 import { threadEl, outdatedBar, threadCount, avatar, sent, threadsChanged } from './threads.js';
 
 // The PRs tab for the folder's own branch: the panel in the sidebar, the Branch changes view, agent
-// notes and Copy for agent. Its pull request's threads come from prs.js.
+// notes and Copy for agent. Its pull request's threads come from the store.
 
 const ICON = {
   branch: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3v12"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>',
@@ -26,9 +27,6 @@ const shown = () => !tabEl.hidden && !panel.hidden;
 let page = null;
 let folder = null; // the open folder's key
 let agentIcon = null; // the icon of the folder's agent type
-let status = null; // the folder's git status
-let prStatus = null; // the PR line's answer
-let target = ''; // the open PR's target branch
 let data = null; // the last /api/branch answer
 let error = '';
 let loading = null; // the /api/branch call in flight: {key, call}
@@ -38,18 +36,21 @@ let view = null; // the Branch changes view, while it is open
 let selected = ''; // the path of the file at the top of the view
 let goal = ''; // a file to scroll to once the view is drawn
 let copyPanel = null;
-let branchPR = null; // the answer about the branch's pull request, with its threads
+let drawnPR = null; // the answer whose threads the boxes show
 
-// setupReview tells the tab about the folder view around it: announce(text), say(text),
-// push(), openFile(path), openBranch(), which opens the Branch changes tab, branchHead(), what the
-// PRs tab adds to the header, and overviewRow(n), the first row of the file list.
+// setupReview tells the tab about the folder view around it: announce(text), say(text), push(),
+// openFile(path), openBranch(), which opens the Branch changes tab, branchHead(), what the PRs tab
+// adds to the header, overviewRow(n), the first row of the file list, and status(), git's status.
 export function setupReview(p) {
   page = p;
 }
 
+const target = () => ownPR(line(folder))?.target || ''; // the open PR's target branch
+const branchPR = () => pull(folder, own(folder)).res; // with the threads of Local mode
+
 export function setBranchFolder(key, icon) {
   closeCopy();
-  branchPR = null;
+  drawnPR = null;
   strips.clear();
   folder = key;
   agentIcon = icon || null;
@@ -63,42 +64,27 @@ export function setBranchFolder(key, icon) {
 
 // refreshBranch runs with each git status refresh. It asks for the branch changes only while the
 // PRs tab or the Branch changes view shows them.
-export async function refreshBranch(st, pr) {
-  status = st;
-  prStatus = pr;
-  target = ownPR(pr)?.target || '';
+export async function refreshBranch() {
   if (!shown() && !openView()) return;
   await load();
 }
 
-// showBranchPanel draws the panel again after the git status or the PR line learned more, and
-// asks for the branch changes when the panel just showed without them.
-export function showBranchPanel(st, pr) {
-  status = st || status;
-  prStatus = pr;
-  target = ownPR(pr)?.target || '';
-  if (loading?.key === `${folder}\n${target}`) return; // the load draws the panel when it is done
+// After the git status, the PR line or the threads changed: the panel draws again, or asks for
+// the branch changes when it just showed without them.
+watch(root => {
+  if (!folder || root !== folder) return;
+  const res = branchPR(), before = drawnPR;
+  drawnPR = res;
+  const v = openView();
+  if (v && res !== before) redraw(v, threadsChanged(before, res, [...v.boxes.keys()]));
+  if (loading?.key === `${folder}\n${target()}`) return; // the load draws the panel when it is done
   if (data) drawPanel();
   else if (shown()) load();
-}
+});
 
 // wakeBranch loads the branch changes when the panel just showed without them.
 export function wakeBranch() {
   if (!data && folder && shown() && !loading) load();
-}
-
-export function redrawBranchPanel() {
-  if (data) drawPanel();
-}
-
-// setBranchThreads takes the answer about the branch's own pull request, for its threads in Local
-// mode, or null when it has none.
-export function setBranchThreads(res) {
-  const before = branchPR;
-  branchPR = res;
-  if (data) drawPanel();
-  const v = openView();
-  if (v) redraw(v, threadsChanged(before, res, [...v.boxes.keys()]));
 }
 
 export function focusBranchList() {
@@ -114,9 +100,9 @@ const openView = () => (view && isCurrent(view) ? view : null);
 
 // fetchBranch shares one call between the status refresh and the view's reload of the same change.
 function fetchBranch() {
-  const key = `${folder}\n${target}`;
+  const key = `${folder}\n${target()}`;
   if (loading?.key !== key) {
-    const call = get('branch', { root: folder, target }).catch(err => err);
+    const call = get('branch', { root: folder, target: target() }).catch(err => err);
     loading = { key, call };
     call.finally(() => { if (loading?.call === call) loading = null; });
   }
@@ -124,9 +110,9 @@ function fetchBranch() {
 }
 
 async function load(change) {
-  const key = `${folder}\n${target}`;
+  const key = `${folder}\n${target()}`;
   const res = await fetchBranch();
-  if (key !== `${folder}\n${target}`) return;
+  if (key !== `${folder}\n${target()}`) return;
   if (res instanceof Error && res.status === 404) {
     // On another branch, such as the main line, nothing of this branch may show or be added to.
     closeCopy();
@@ -168,7 +154,7 @@ function saveCopiedThreads() {
 }
 
 // openThreads are the threads of the branch's pull request that still want an answer.
-const openThreads = () => (branchPR ? sent(branchPR.threads).filter(t => !t.resolved && !t.outdated) : []);
+const openThreads = () => (branchPR() ? sent(branchPR().threads).filter(t => !t.resolved && !t.outdated) : []);
 const threadLines = new Map(); // thread id: the line on disk it shows under
 
 function saveNotes() {
@@ -202,9 +188,9 @@ function drawPanel() {
 function header() {
   const h = el('div', 'prhead');
   const top = el('div', 'pr-top');
-  const f = prStatus?.forge;
-  const p = prStatus?.pr || data.pr;
-  const words = forgeWords(prStatus);
+  const f = line(folder)?.forge;
+  const p = line(folder)?.pr || data.pr;
+  const words = forgeWords(line(folder));
   if (f) top.append(forgeMark(f.kind));
   if (p) {
     const title = el(p.url ? 'a' : 'span', 'pr-title', p.title);
@@ -243,7 +229,7 @@ function unpushedBar() {
     t.append(`${what} not pushed. `, el('span', 'then', "Reviewers don't see them yet."));
   }
   bar.append(t);
-  if (status?.remote) {
+  if (page.status()?.remote) {
     const b = el('button', 'tool', d.upstream ? 'Push' : 'Publish');
     b.dataset.k = 'push';
     b.title = `${d.upstream ? `Push to ${d.upstream}` : 'Publish this branch to origin'} (${keyLabel('push')})`;
@@ -302,7 +288,7 @@ function fileList() {
     e.preventDefault();
     e.stopPropagation();
   };
-  const ov = page.overviewRow?.(ownPR(prStatus)?.number || 0, branchPR);
+  const ov = page.overviewRow?.(own(folder), branchPR());
   if (ov) {
     ov.tabIndex = ul.querySelector('[tabindex="0"]') ? -1 : 0;
     ul.prepend(ov);
@@ -390,7 +376,7 @@ function goTo(path, focus) {
 const branchSource = {
   files: () => data?.files || [],
   basis,
-  fetch: (f, context) => get('diff', { root: folder, path: f.path, orig: f.orig || '', mode: 'branch', target, context }),
+  fetch: (f, context) => get('diff', { root: folder, path: f.path, orig: f.orig || '', mode: 'branch', target: target(), context }),
   headParts: f => [f.notPushed && dashed(NOT_PUSHED), threadCount(threadsOn(f.path), notesOn(f.path).length)],
   openFile: f => page.openFile(f.path),
   marks: res => {
@@ -514,7 +500,7 @@ async function place(v, b, rows) {
 }
 
 // threadsOn are the threads of the branch's pull request on a file.
-const threadsOn = path => (branchPR ? sent(branchPR.threads).filter(t => t.path === path) : []);
+const threadsOn = path => (branchPR() ? sent(branchPR().threads).filter(t => t.path === path) : []);
 
 // placeThreads puts each thread of the branch's pull request on the line on disk that has the text
 // its line has at the head: the same line, else the nearest one. Other threads go to the bar.
@@ -543,14 +529,14 @@ async function placeThreads(v, b, rows, extra, file) {
 const strips = new Map();
 
 // replyStrip is a thread's reply box in Local mode: what the user types there is an agent note.
-function replyStrip(t, path, line, text) {
+function replyStrip(t, path, at, text) {
   let s = strips.get(t.id);
   if (!s) {
     const foot = el('div', 'foot');
     const input = el('input');
     input.placeholder = 'Note for the agent…';
     const hint = el('span', 'muted hint');
-    foot.append(avatar(branchPR?.me || 'you'), input, hint);
+    foot.append(avatar(branchPR()?.me || 'you'), input, hint);
     s = { foot, input, hint };
     strips.set(t.id, s);
     input.onkeydown = e => {
@@ -570,9 +556,9 @@ function replyStrip(t, path, line, text) {
       }
     };
   }
-  Object.assign(s, { path, line, text });
-  const words = forgeWords(prStatus);
-  s.input.setAttribute('aria-label', `Note for the agent on line ${line}`);
+  Object.assign(s, { path, line: at, text });
+  const words = forgeWords(line(folder));
+  s.input.setAttribute('aria-label', `Note for the agent on line ${at}`);
   s.hint.textContent = `Reply to ${t.comments[0]?.author} in “As on ${words.name}”`;
   return s.foot;
 }
@@ -694,8 +680,8 @@ function closeEditor(v) {
 
 // prompt is the text the agent gets: two fixed lines, then each note under its file and line.
 function prompt(picked, threads = []) {
-  const p = prStatus?.pr || data.pr;
-  const words = forgeWords(prStatus);
+  const p = line(folder)?.pr || data.pr;
+  const words = forgeWords(line(folder));
   const pr = p ? ` (${words.short} ${words.num}${p.number})` : '';
   const out = [`Review notes for branch ${data.branch}${pr}.`, 'Fix each one, then say what you changed.'];
   for (const n of picked) {
@@ -744,7 +730,7 @@ function openCopy(button) {
     list.append(li);
     return { n, check };
   });
-  const words = forgeWords(prStatus);
+  const words = forgeWords(line(folder));
   const threadList = el('ul');
   const tpicks = openThreads().sort((a, b) => a.path.localeCompare(b.path) || a.line - b.line).map(t => {
     const used = copiedThreads.has(t.id);

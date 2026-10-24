@@ -1,15 +1,15 @@
-import { el, get, svg, keepFocus } from './api.js';
+import { el, svg, keepFocus } from './api.js';
 import { lineCount, fileRow } from './git.js';
-import { forgeMark, forgeWords, prChips, ownPR } from './pr.js';
+import { forgeMark, forgeWords, prChips } from './pr.js';
 import { onKey, keyLabel } from './keys.js';
-import { cachedView, loadView, freshView, onView, age } from './prdata.js';
+import { pull, read, line, own, list, askList, watch, redraw } from './prstore.js';
 import { iconButton, plural, markCurrent } from './boxes.js';
-import { avatar, threadCount } from './threads.js';
+import { avatar, threadCount, age } from './threads.js';
 import { goToChange, setupChanges } from './changes.js';
 import { setupOverview } from './overview.js';
 import { setupDrafts, reviewBox } from './drafts.js';
-import { setBranchThreads, showBranchPanel, redrawBranchPanel, wakeBranch } from './review.js';
-import { marksOf, setViewed, onViewed, listCount, sweep } from './viewed.js';
+import { wakeBranch } from './review.js';
+import { marksOf, setViewed, onViewed, listCount } from './viewed.js';
 import { shown, sinceParts, onSince, ownFile } from './since.js';
 
 // The PRs tab: the list of open pull requests, one pull request opened in the sidebar, the count
@@ -35,28 +35,26 @@ const prEl = document.getElementById('prs-pr');
 let page = null;
 let folder = null;
 let saved = { open: 'list', mode: 'local' }; // what the tab shows, kept per folder
-let list = null; // the last /api/prs answer
-let listCall = null;
-let st = null; // the folder's git status
-let line = null; // the PR line's answer
 let query = '';
-let found = []; // rows the forge's search found for query
 let searchTimer = 0;
 let allOpen = false;
 let selectedFile = '';
 let lastAsk = 0;
 let timer = 0;
-const failed = new Map(); // pull request number: why kijk could not read it
+let ownSeen = 0; // the own pull request the tab last asked about
 
 // setupPrs tells the tab about the page: announce(text), say(text), openTab(tab, pin), save(),
-// setCount(n), openBranch(), openFile(n, path) and focusBranch().
+// setCount(n), openBranch(), openFile(n, path), focusBranch() and status(), the git status.
 export function setupPrs(p) {
   page = p;
   setupChanges({ onTop: (n, path) => selectFile(path), openFile: p.openFile });
-  setupDrafts({ announce: p.announce, say: p.say, reviewed: root => { if (root === folder) loadList(); } });
+  setupDrafts({ announce: p.announce, say: p.say, reviewed: root => { if (root === folder) askLists(true); } });
   setupOverview({
-    branch: () => ({ branch: st?.branch, base: st?.total?.base?.replace(/^origin\//, ''), ahead: st?.ahead, forge: line?.forge, create: line?.create }),
-    own: n => n === ownNumber() && onBranch(),
+    branch: () => {
+      const st = page.status(), l = line(folder);
+      return { branch: st?.branch, base: st?.total?.base?.replace(/^origin\//, ''), ahead: st?.ahead, forge: l?.forge, create: l?.create };
+    },
+    own: n => n === own(folder) && onBranch(),
     say: p.say,
     announce: p.announce,
   });
@@ -66,15 +64,10 @@ export function setPrsFolder(key, state) {
   folder = key;
   saved = { open: 'list', mode: 'local', ...state };
   wanted = null;
-  list = null;
-  listCall = null;
-  st = null;
-  line = null;
   query = '';
-  found = [];
   allOpen = false;
-  failed.clear();
   lastAsk = 0;
+  ownSeen = 0;
   listEl.replaceChildren();
   prEl.replaceChildren();
   page?.setCount(0);
@@ -82,39 +75,36 @@ export function setPrsFolder(key, state) {
 
 export const prsState = () => ({ open: saved.open, mode: saved.mode });
 
-const words = () => forgeWords(line?.forge ? line : list);
-const forgeKind = () => line?.forge?.kind || list?.forge?.kind || '';
-const ownNumber = () => ownPR(line)?.number || 0;
+const words = () => forgeWords(line(folder)?.forge ? line(folder) : list(folder));
+const forgeKind = () => line(folder)?.forge?.kind || list(folder)?.forge?.kind || '';
 // A list needs the forge and its tool; a note on the PR line without a PR says the tool is missing.
-const maybeList = () => !!line?.forge && !(line.note && !line.pr);
-const hasList = () => maybeList() && !list?.note;
-const onBranch = () => !!st?.total;
+const maybeList = () => !!line(folder)?.forge && !(line(folder).note && !line(folder).pr);
+const hasList = () => maybeList() && !list(folder)?.note;
+const onBranch = () => !!page.status()?.total;
 
 // which is what the tab shows: the list, the own branch in Local mode, or a pull request.
 function which() {
   const o = saved.open;
-  if (o === 'branch' && onBranch()) return ownNumber() && saved.mode === 'forge' && hasList() ? { panel: 'pr', n: ownNumber(), mine: true } : { panel: 'branch' };
+  if (o === 'branch' && onBranch()) return own(folder) && saved.mode === 'forge' && hasList() ? { panel: 'pr', n: own(folder), mine: true } : { panel: 'branch' };
   if (typeof o === 'number' && o > 0 && hasList()) return { panel: 'pr', n: o, mine: false };
   if (maybeList() || !onBranch()) return { panel: 'list' };
   return { panel: 'branch' };
 }
 
-// prsStatus runs after each git status and PR line refresh of the open folder.
-export function prsStatus(status, pr) {
-  st = status || st;
-  const was = ownNumber();
-  line = pr;
-  if (ownNumber() !== was) {
-    // As after git switch: Local mode shows the new one's threads, and kijk asks about it now.
-    setBranchThreads(cachedView(folder, ownNumber()) || null);
-    lastAsk = 0;
-  }
-  showBranchPanel(status, pr);
+// prsStatus runs after each git status refresh of the open folder.
+export const prsStatus = () => redraw(folder);
+
+watch(root => {
+  if (root !== folder || !folder) return;
+  if (own(folder) !== ownSeen) lastAsk = 0; // as after git switch: kijk asks about the new one now
+  ownSeen = own(folder);
   // The tab may have shown before kijk knew the forge, and then asked nothing.
-  if (!tabEl.hidden && !lastAsk && line?.forge) refresh();
-  else if (maybeList() && !list && !listCall) loadList();
+  if (!tabEl.hidden && !lastAsk && line(folder)?.forge) refresh();
+  else if (maybeList() && !list(folder)) askLists();
+  const l = list(folder);
+  page.setCount(!l || l.note ? 0 : l.prs.filter(r => r.requested && r.number !== own(folder)).length);
   draw();
-}
+});
 
 // prsShown says the PRs tab showed or hid; it asks the forge only while the tab shows.
 export function prsShown(on) {
@@ -142,7 +132,7 @@ export function openPR(n) {
 let wanted = null;
 
 function open(item) {
-  if (item === ownNumber() && onBranch()) item = 'branch';
+  if (item === own(folder) && onBranch()) item = 'branch';
   saved.open = item;
   page.save();
   wanted = item === 'list' ? null : item;
@@ -154,7 +144,7 @@ function setMode(mode) {
   page.save();
   draw();
   showPrsItem();
-  if (mode === 'forge' && ownNumber()) load(ownNumber());
+  if (mode === 'forge' && own(folder)) read(folder, own(folder));
 }
 
 export function focusPrs() {
@@ -166,38 +156,8 @@ export function focusPrs() {
 
 // ----- Asking the forge -----
 
-async function loadList() {
-  const key = folder;
-  const call = get('prs', { root: folder }).catch(err => ({ note: err.message, prs: [] }));
-  listCall = call;
-  const res = await call;
-  if (key !== folder || listCall !== call) return;
-  listCall = null;
-  list = res;
-  if (!res.note && res.forge && res.total <= res.prs.length) sweep(key, res.forge, res.prs.map(r => r.number));
-  page.setCount(res.note ? 0 : res.prs.filter(r => r.requested && r.number !== ownNumber()).length);
-  draw();
-  redrawBranchPanel();
-  if (query) search();
-}
-
-async function load(n, fresh) {
-  const key = folder;
-  try {
-    await (fresh ? freshView : loadView)(folder, n);
-  } catch (err) {
-    if (key !== folder) return;
-    failed.set(n, err.message);
-    draw();
-  }
-}
-
-onView((root, n, res) => {
-  if (root !== folder) return;
-  failed.delete(n);
-  if (n === ownNumber()) setBranchThreads(res);
-  draw();
-});
+// askLists asks for the list, then searches again: the list may now tell that it is not all.
+const askLists = (fresh, key = folder) => askList(folder, '', fresh).then(() => { if (key === folder && query) search(); });
 
 onViewed(root => {
   if (!root || root === folder) draw();
@@ -210,12 +170,12 @@ onSince(root => {
 // refresh asks again about what the tab shows. The list is asked too, for the count. fresh, as for
 // the refresh key, does not take the answer of a read already on its way.
 function refresh(fresh) {
-  if (!folder || !line?.forge) return;
+  if (!folder || !line(folder)?.forge) return;
   lastAsk = Date.now();
   const w = which();
-  if (w.panel === 'pr') load(w.n, fresh);
-  else if (ownNumber()) load(ownNumber(), fresh); // the threads in Local mode
-  if (maybeList()) loadList();
+  if (w.panel === 'pr') read(folder, w.n, fresh);
+  else if (own(folder)) read(folder, own(folder), fresh); // the threads in Local mode
+  if (maybeList()) askLists(fresh);
 }
 
 addEventListener('focus', () => {
@@ -225,23 +185,17 @@ addEventListener('focus', () => {
 // search asks the forge too when it has more open pull requests than the list holds.
 function search() {
   clearTimeout(searchTimer);
-  found = [];
-  if (!query || !list || list.total <= list.prs.length) return;
+  const l = list(folder);
+  if (!query || !l || l.total <= l.prs.length) return;
   const q = query, key = folder;
-  searchTimer = setTimeout(async () => {
-    let res;
-    try { res = await get('prs', { root: folder, q }); } catch { return; }
-    if (key !== folder || q !== query) return;
-    found = res.prs || [];
-    draw();
-  }, 300);
+  searchTimer = setTimeout(() => { if (key === folder && q === query) askList(folder, q, true); }, 300);
 }
 
 // ----- Drawing -----
 
 function draw() {
   if (!folder) return;
-  if (saved.open === ownNumber() && onBranch()) {
+  if (saved.open === own(folder) && onBranch()) {
     if (wanted === saved.open) wanted = 'branch';
     saved.open = 'branch';
   }
@@ -249,9 +203,9 @@ function draw() {
   if (wanted !== null && (wanted === 'branch' ? w.panel === 'branch' || w.mine : w.panel === 'pr' && w.n === wanted)) {
     wanted = null;
     showPrsItem();
-    if (w.panel === 'pr') load(w.n);
+    if (w.panel === 'pr') read(folder, w.n);
   }
-  if (list?.note) wanted = null; // no list: the item cannot show
+  if (list(folder)?.note) wanted = null; // no list: the item cannot show
   listEl.hidden = w.panel !== 'list';
   branchEl.hidden = w.panel !== 'branch';
   prEl.hidden = w.panel !== 'pr';
@@ -275,7 +229,6 @@ function searchBox() {
       e.stopPropagation();
       input.value = '';
       query = '';
-      found = [];
       draw();
     } else if (e.key === 'ArrowDown') {
       e.preventDefault();
@@ -304,9 +257,9 @@ function prRowEl(r) {
   l1.append(svg(!r.number ? ICON.branch : r.draft ? ICON.draft : ICON.pr, `prstate${r.draft ? ' draft' : ''}`));
   if (r.number) l1.append(el('span', 'prnum', `${words().num}${r.number}`));
   l1.append(el('span', 'prt', r.title));
-  if (!r.number && line?.create) {
+  if (!r.number && line(folder)?.create) {
     const a = el('a', 'pr-link', 'Create ↗');
-    Object.assign(a, { href: line.create, target: '_blank', rel: 'noopener', title: `Create a ${words().kind} on ${words().name}` });
+    Object.assign(a, { href: line(folder).create, target: '_blank', rel: 'noopener', title: `Create a ${words().kind} on ${words().name}` });
     a.onclick = e => e.stopPropagation();
     l1.append(a);
   }
@@ -317,8 +270,9 @@ function prRowEl(r) {
     l2.append(dot);
   }
   l2.append(el('span', 'who', r.number ? `${r.author} · ${age(r.createdAt)}` : `No ${words().kind} yet`));
-  const drafts = r.number ? cachedView(folder, r.number)?.drafts ?? r.drafts : 0;
-  const viewed = r.number && list?.forge ? listCount(folder, list.forge, r.number) : null;
+  const res = r.number ? pull(folder, r.number).res : null;
+  const drafts = r.number ? res?.drafts ?? r.drafts : 0;
+  const viewed = r.number && list(folder)?.forge ? listCount(folder, list(folder).forge, r.number, res) : null;
   const yours = [drafts ? plural(drafts, 'draft') : '', viewed?.viewed ? `${viewed.viewed}/${viewed.files} viewed` : ''].filter(Boolean);
   if (yours.length) l2.append(el('span', 'yours', yours.join(' · ')));
   const lc = lineCount(r.add, r.del);
@@ -331,10 +285,10 @@ function prRowEl(r) {
 
 // thisBranch is the row of the folder's own branch: its pull request, or the branch alone.
 function thisBranch() {
-  const n = ownNumber();
-  const row = list?.prs.find(r => r.number === n);
+  const n = own(folder), l = list(folder), st = page.status();
+  const row = l?.prs.find(r => r.number === n);
   if (row) return row;
-  if (n) return { number: n, title: line.pr.title, author: list?.me || 'you', createdAt: '', ci: line.pr.ci, add: st.total.add, del: st.total.del };
+  if (n) return { number: n, title: line(folder).pr.title, author: l?.me || 'you', createdAt: '', ci: line(folder).pr.ci, add: st.total.add, del: st.total.del };
   return { number: 0, title: st.branch || 'This branch', add: st.total.add, del: st.total.del };
 }
 
@@ -346,41 +300,42 @@ function matches(r, q) {
 function drawList() {
   if (!listEl.firstChild) listEl.append(searchBox(), el('div', 'prs-scroll'));
   const input = listEl.querySelector('.prsearch input');
-  const w = words();
-  input.placeholder = list?.total ? `Search all ${list.total} open ${w.kind}s` : `Search open ${w.kind}s`;
+  const w = words(), l = list(folder);
+  input.placeholder = l?.total ? `Search all ${l.total} open ${w.kind}s` : `Search open ${w.kind}s`;
   input.setAttribute('aria-label', `Search open ${w.kind}s`);
   input.disabled = !hasList();
   const scroll = listEl.querySelector('.prs-scroll');
   const focused = listEl.contains(document.activeElement) && document.activeElement.closest('li.prrow')?.dataset.n;
   const parts = [];
-  const rows = list?.prs || [];
-  const mine = ownNumber();
+  const rows = l?.prs || [];
+  const mine = own(folder);
   const ul = items => {
     const u = el('ul');
     u.append(...items.map(prRowEl));
     return u;
   };
   if (query) {
+    const found = list(folder, query)?.prs || [];
     const hits = [...rows.filter(r => matches(r, query)), ...found.filter(r => !rows.some(x => x.number === r.number))];
     parts.push(section('Found', hits.length), ul(hits));
     if (!hits.length) parts.push(el('p', 'prmore', `No open ${w.kind} matches “${query}”.`));
   } else {
     if (onBranch()) parts.push(section('This branch', ''), ul([thisBranch()]));
-    if (list?.note || (line?.forge && !maybeList())) {
-      parts.push(el('p', 'note', list?.note || line.note)); // the tool is missing or not logged in
-    } else if (!list) {
+    if (l?.note || (line(folder)?.forge && !maybeList())) {
+      parts.push(el('p', 'note', l?.note || line(folder).note)); // the tool is missing or not logged in
+    } else if (!l) {
       parts.push(el('p', 'note', 'Loading…'));
     } else {
       const asked = rows.filter(r => r.requested && r.number !== mine);
-      const yours = rows.filter(r => r.author === list.me && r.number !== mine);
+      const yours = rows.filter(r => r.author === l.me && r.number !== mine);
       parts.push(section('Review requested', asked.length), ul(asked));
       parts.push(section('Yours', yours.length), ul(yours));
-      parts.push(section('All open', list.total, allOpen, () => {
+      parts.push(section('All open', l.total, allOpen, () => {
         allOpen = !allOpen;
         draw();
       }));
       if (allOpen) parts.push(ul(rows));
-      if (allOpen && list.total > rows.length) parts.push(el('p', 'prmore', `Search above to find any of the ${list.total}.`));
+      if (allOpen && l.total > rows.length) parts.push(el('p', 'prmore', `Search above to find any of the ${l.total}.`));
     }
   }
   scroll.replaceChildren(...parts);
@@ -438,9 +393,9 @@ function modeSwitch(active) {
 export function branchHead() {
   const out = { before: [], after: [], note: '' };
   if (maybeList()) out.before.push(backButton());
-  if (ownNumber() && hasList()) out.after.push(modeSwitch('local'));
+  if (own(folder) && hasList()) out.after.push(modeSwitch('local'));
   // Without a list, the tab says why: the tool is missing or not logged in.
-  if (line?.forge) out.note = list?.note || (!maybeList() ? line.note : '') || '';
+  if (line(folder)?.forge) out.note = list(folder)?.note || (!maybeList() ? line(folder).note : '') || '';
   return out;
 }
 
@@ -481,7 +436,7 @@ function prHead(n, mine, res, row) {
   h.append(top, meta);
   if (mine) h.append(modeSwitch('forge'));
   const ci = res?.checks ? res.ci : p.ci;
-  const chips = prChips({ ...p, ci, ciUrl: p.url && forgeKind() === 'github' ? `${p.url}/checks` : '', target: p.base }, w, line?.default || p.base);
+  const chips = prChips({ ...p, ci, ciUrl: p.url && forgeKind() === 'github' ? `${p.url}/checks` : '', target: p.base }, w, line(folder)?.default || p.base);
   if (chips) h.append(chips);
   h.append(...sinceParts(folder, n, res, yes => { if (yes) page.openTab({ kind: 'pr', n, path: '' }, true); }));
   return h;
@@ -495,10 +450,10 @@ function drawPR(n, mine) {
 }
 
 function prParts(n, mine) {
-  const res = cachedView(folder, n);
-  const row = list?.prs.find(r => r.number === n);
+  const p = pull(folder, n), res = p.res;
+  const row = list(folder)?.prs.find(r => r.number === n);
   const parts = [prHead(n, mine, res, row)];
-  const why = failed.get(n) || res?.error;
+  const why = p.why || res?.error;
   if (why) parts.push(el('p', 'note error', why));
   const wrap = el('div', 'prs-scroll prfiles');
   const files = shown(folder, n, res).files || res?.files || [];
@@ -576,15 +531,15 @@ function viewedBox(n, res, f, state) {
 // row not viewed.
 function markRow(li) {
   const w = which();
-  const res = w.panel === 'pr' ? cachedView(folder, w.n) : null;
+  const res = w.panel === 'pr' ? pull(folder, w.n).res : null;
   const f = res?.files?.find(x => x.path === li.dataset.path);
   if (!f) return;
   const on = marksOf(folder, w.n, res).state(f) !== 'viewed';
   if (!setViewed(folder, w.n, res, f, on)) return;
   const marks = marksOf(folder, w.n, res);
   const rows = [...prEl.querySelectorAll('.prfiles li')];
-  const list = (shown(folder, w.n, res).files || res.files).map(ownFile(res)).filter(Boolean);
-  const next = on && list.slice(list.indexOf(f) + 1).find(x => marks.state(x) !== 'viewed');
+  const files = (shown(folder, w.n, res).files || res.files).map(ownFile(res)).filter(Boolean);
+  const next = on && files.slice(files.indexOf(f) + 1).find(x => marks.state(x) !== 'viewed');
   const to = rows.find(r => r.dataset.path === (next ? next.path : f.path));
   if (!to) return;
   for (const r of rows) r.tabIndex = r === to ? 0 : -1;
@@ -602,7 +557,7 @@ function selectFile(path) {
 }
 
 onKey('refreshPrs', () => {
-  if (!folder || !line?.forge) return false;
+  if (!folder || !line(folder)?.forge) return false;
   refresh(true);
   page.announce(`Asking ${words().name} again`);
 });

@@ -1,5 +1,6 @@
 import { el, get } from './api.js';
-import { loadView, freshView, onView, age } from './prdata.js';
+import { read } from './prstore.js';
+import { age } from './threads.js';
 import { plural } from './boxes.js';
 import { reviewOf } from './viewed.js';
 import { forgeWords } from './pr.js';
@@ -21,22 +22,22 @@ const key = (root, n) => `${root}\n${n}`;
 export const onSince = fn => listeners.add(fn);
 const tell = (root, n) => { for (const fn of listeners) fn(root, n); };
 
-function ask(root, n, from, at, k) {
+function ask(root, n, res, from, k) {
   if (answers.size > 100) for (const [k2, a] of answers) if (!a.then) answers.delete(k2);
   const once = () => get('pr/since', { root, n, from });
   // The call stays in answers until it is done, so a draw meanwhile does not ask again.
   const call = once().catch(async err => {
     if (err.status !== 409) throw err;
-    await loadView(root, n); // kijk restarted and lost the forge diff
+    await read(root, n); // kijk restarted and lost the forge diff
     return once();
   });
   answers.set(k, call);
-  call.then(res => {
+  call.then(a => {
     if (answers.get(k) !== call) return;
-    if (res.at !== at) {
+    if (a.at !== res.at) {
       // The server has a newer head than the page: show it first, which asks again. The entry stays
       // pending until then, so a draw meanwhile does not ask again.
-      const wait = freshView(root, n).catch(() => {}).finally(() => {
+      const wait = read(root, n, true).finally(() => {
         if (answers.get(k) !== wait) return;
         answers.delete(k);
         tell(root, n);
@@ -44,26 +45,23 @@ function ask(root, n, from, at, k) {
       answers.set(k, wait);
       return;
     }
-    answers.set(k, res);
+    answers.set(k, a);
     tell(root, n);
   }, err => {
     if (answers.get(k) !== call) return;
-    answers.set(k, { error: err.message, files: [], failed: true });
+    answers.set(k, { error: err.message, files: [], failed: res });
     tell(root, n);
   });
 }
-
-// A failed answer holds until the next answer about its pull request.
-onView((root, n) => {
-  for (const [k, a] of answers) if (a.failed && k.startsWith(`${key(root, n)}\n`)) answers.delete(k);
-});
 
 // sinceOf is null when pull request n has no last review, is at its head, or no file of it changed
 // since; else {on, from, time, answer}, where answer is null while kijk asks.
 function sinceOf(root, n, res) {
   const r = res?.at && res.forge ? reviewOf(root, n, res.forge) : null;
   const k = r?.head && r.head !== res.at && `${key(root, n)}\n${r.head}\n${res.at}`;
-  if (k && !answers.has(k)) ask(root, n, r.head, res.at, k);
+  // A failed answer holds until the next answer about its pull request.
+  if (k && answers.get(k)?.failed && answers.get(k).failed !== res) answers.delete(k);
+  if (k && !answers.has(k)) ask(root, n, res, r.head, k);
   const a = k && answers.get(k);
   if (!k || (a && !a.then && !why(a) && !a.files.length)) {
     on.delete(key(root, n));

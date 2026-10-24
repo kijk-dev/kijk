@@ -1,7 +1,7 @@
 import { el, get, svg, keepFocus } from './api.js';
 import { setView, isCurrent } from './view.js';
-import { cachedView, loadView, onView, age } from './prdata.js';
-import { avatar, comment } from './threads.js';
+import { pull, read, watch } from './prstore.js';
+import { avatar, comment, age } from './threads.js';
 import { forgeWords } from './pr.js';
 import { mac } from './keys.js';
 import { threadOpts, writable, summarySlot, commentFoot } from './drafts.js';
@@ -14,7 +14,7 @@ import { threadOpts, writable, summarySlot, commentFoot } from './drafts.js';
 let hooks = {};
 let view = null;
 let asList = false; // the checks show as a list, not graphs
-const logs = new Map(); // job id: its last lines, or the reason there are none
+const logs = new Map(); // job id: its last lines, or why there are none and the answer it was asked under
 
 const ICON = {
   check: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>',
@@ -45,20 +45,17 @@ export async function openOverview(viewer, root, tab) {
   setView(v);
   view = v;
   if (!tab.n) return drawBranch(v);
-  const known = cachedView(root, tab.n);
+  const known = pull(root, tab.n).res;
   if (known) draw(v, known);
   else viewer.replaceChildren(el('p', 'empty', `Fetching ${tab.num || '#'}${tab.n}…`));
-  try {
-    await loadView(root, tab.n);
-  } catch (err) {
-    if (isCurrent(v) && !v.res) viewer.replaceChildren(el('p', 'empty', err.message));
-  }
+  await read(root, tab.n);
+  const why = pull(root, tab.n).why;
+  if (why && isCurrent(v) && !v.res) viewer.replaceChildren(el('p', 'empty', why));
 }
 
-onView((root, n, res) => {
-  // A log that could not be read, as while its run still went, is asked for again.
-  for (const [id, l] of logs) if (l.error) logs.delete(id);
-  if (view && isCurrent(view) && view.root === root && view.n === n) draw(view, res);
+watch(root => {
+  const res = view && isCurrent(view) && view.root === root && pull(root, view.n).res;
+  if (res && res !== view.res) draw(view, res);
 });
 
 function ref(name, cls) {
@@ -284,6 +281,8 @@ function jobLog(v, res, j, own, words) {
   head.append(jobIcon('bad'), el('b', null, j.name), el('span', 'muted', `failed${j.time ? ` after ${j.time}` : ''} · last lines of the log`));
   const pre = el('pre');
   pre.tabIndex = 0;
+  // A log that could not be read, as while its run still went, is asked for again with a new answer.
+  if (logs.get(j.id)?.error && logs.get(j.id).res !== res) logs.delete(j.id);
   const known = logs.get(j.id);
   if (known?.lines) pre.textContent = known.lines.join('\n');
   else pre.textContent = known?.error || 'Reading the log…';
@@ -304,7 +303,7 @@ function jobLog(v, res, j, own, words) {
     logs.set(j.id, { loading: true });
     get('pr/log', { root: v.root, job: j.id })
       .then(r => logs.set(j.id, { lines: r.lines }))
-      .catch(err => logs.set(j.id, { error: err.message }))
+      .catch(err => logs.set(j.id, { error: err.message, res }))
       .then(() => { if (isCurrent(v) && v.res) draw(v, v.res); });
   }
   return box;

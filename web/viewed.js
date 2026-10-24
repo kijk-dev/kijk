@@ -1,5 +1,4 @@
 import { splitKey } from './api.js';
-import { cachedView, onView } from './prdata.js';
 
 // Viewed marks: per file, the blobs of its diff when you marked it, so a file that changed since
 // shows, and the number of its last mark change. One record per machine, forge repo and pull
@@ -94,9 +93,8 @@ addEventListener('storage', e => {
   if (e.key === null || e.key.startsWith(PREFIX)) for (const fn of listeners) fn(null);
 });
 
-// listCount is {viewed, files} for a row of the list: from the last answer kijk has, else as kept.
-export function listCount(root, forge, n) {
-  const res = cachedView(root, n);
+// listCount is {viewed, files} for a row of the list: from res, the last answer kijk has, else as kept.
+export function listCount(root, forge, n, res) {
   if (res?.files?.length) {
     const m = marksOf(root, n, res);
     return { viewed: m.count, files: m.files };
@@ -115,12 +113,12 @@ export function sweep(root, forge, open) {
   }
 }
 
-// A new answer keeps the counts for the list, when there are marks.
-onView((root, n, res) => {
+// keepCounts keeps the counts for the list from a new answer, when there are marks.
+export function keepCounts(root, n, res) {
   if (!res.forge || !res.files?.length) return;
   const k = repoKey(root, res.forge) + n;
   const rec = read(k);
   if (!rec) return;
   const m = marksOf(root, n, res);
   if (m.count !== rec.viewed || m.files !== rec.files) save(k, rec, res.files);
-});
+}
