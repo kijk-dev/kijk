@@ -966,6 +966,12 @@ func TestBrowser(t *testing.T) {
 		}
 		b.waitFor("the editor closed", `!document.querySelector('.thr.editing')`)
 
+		// kijk cannot fetch a newer head: it shows the head it has and says why it cannot write.
+		run(t, origin, "update-ref", "-d", "refs/pull/477/head")
+		forge.set(t, "gh-pr-477.json", pr477(strings.Repeat("e", 40), main, same))
+		b.press("refreshPrs")
+		b.waitFor("why kijk cannot write", box+`?.querySelector('.hint')?.textContent.startsWith('Cannot fetch the new commits of #477 from origin: ') && `+boxHas(retry, "add", "\t// Every attempt failed."))
+
 		// On your own pull request GitHub refuses Approve and Request changes.
 		b.click("back", `document.querySelector('#prs-pr .back')`)
 		b.click("this branch", prRow(482))

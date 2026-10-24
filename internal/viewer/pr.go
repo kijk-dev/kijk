@@ -1,6 +1,7 @@
 package viewer
 
 import (
+	"cmp"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -111,7 +112,8 @@ func (a *api) prView(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, sign := prWords(f.Kind)
-	a.opened.set(root, n, func(p *openedPR) { p.write, p.ref = pr.Write, sign+strconv.Itoa(n) })
+	ref := sign + strconv.Itoa(n)
+	a.opened.set(root, n, func(p *openedPR) { p.write, p.ref = pr.Write, ref })
 	out := prReply{PR: pr, Forge: f, Files: []any{}}
 	out.BodyHTML = markdownHTML(pr.Body)
 	for i := range pr.Comments {
@@ -132,16 +134,23 @@ func (a *api) prView(w http.ResponseWriter, r *http.Request) {
 	}
 	out.Fetched, err = git.FetchPR(root, f.Kind, n, pr.HeadOid, pr.BaseOid, pr.Base)
 	head := git.PRHead(root, n)
+	if head == "" {
+		out.Error = "Cannot fetch " + ref + " from origin"
+		if err != nil {
+			out.Error += ": " + err.Error()
+		}
+	}
+	// A write goes to the forge's head, so kijk writes only when it shows that head.
+	if err != nil && head != pr.HeadOid {
+		pr.Write = git.Write{Note: cmp.Or(out.Error, "Cannot fetch the new commits of "+ref+" from origin: "+err.Error())}
+		a.opened.set(root, n, func(p *openedPR) { p.write = pr.Write })
+	}
 	if head != "" {
 		pr.HeadOid = head
 	}
 	// The checks come from the forge; without the head only their graph needs the workflow file.
 	pr.ReadChecks(root, f)
 	if head == "" {
-		out.Error = "Cannot fetch " + sign + strconv.Itoa(n) + " from origin"
-		if err != nil {
-			out.Error += ": " + err.Error()
-		}
 		reply(w, out)
 		return
 	}
