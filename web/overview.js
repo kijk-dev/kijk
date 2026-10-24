@@ -9,8 +9,8 @@ import { threadOpts, writable, summarySlot, commentFoot } from './drafts.js';
 // The Overview tab of a pull request: title, reviewers, description, checks as graphs and the
 // conversation. Tab n 0 is the folder's own branch before it has a pull request.
 
-// hooks: branch(): {branch, base, ahead, forge, create}, forge as in the PR line's answer; own(n), whether n is the branch's pull
-// request; say(text) and announce(text).
+// hooks: branch(): {branch, base, ahead, forge, create}, with forge as in the PR line's answer;
+// own(n), whether n is the branch's pull request; say(text) and announce(text).
 let hooks = {};
 let view = null;
 let asList = false; // the checks show as a list, not graphs

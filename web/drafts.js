@@ -177,7 +177,8 @@ export function moveEditor(ed, rows, at) {
 // ----- What a thread box needs to write -----
 
 const editors = new Map(); // a draft being edited: its text box
-const failed = new Map(); // a thread or draft whose write the forge refused: {why, redraw}, until the next answer
+// A thread or draft whose write the forge refused: {why, redraw}, until the next answer.
+const failed = new Map();
 const strips = new Map(); // the reply strips of forge mode, kept across redraws so what is typed stays
 
 // threadOpts are the parts of a thread box that write: who wrote each draft where, its text box and
