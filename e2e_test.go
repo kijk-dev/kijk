@@ -214,6 +214,8 @@ func TestBrowser(t *testing.T) {
 		fold := fileBox("README.md") + `.querySelector('.fold')`
 		b.click("the README.md chevron", fold)
 		b.waitFor("README.md folded", fileBox("README.md")+`.classList.contains('shut')`)
+		b.act("reload", chromedp.Reload())
+		b.waitFor("README.md still folded", fileBox("README.md")+`?.classList.contains('shut') && !`+fileBox(session)+`.classList.contains('shut')`)
 		b.click("the README.md chevron", fold)
 		b.waitFor("README.md open", `!`+fileBox("README.md")+`.classList.contains('shut')`)
 
