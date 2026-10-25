@@ -1,5 +1,6 @@
 import { el, h, patch } from './api.js';
-import { line, setView, isCurrent, LINE_HEIGHT } from './view.js';
+import { line, pairRows, splitRow, setView, isCurrent, LINE_HEIGHT } from './view.js';
+import { diffLayout } from './layout.js';
 import { lineCount, kind } from './git.js';
 import { onKey, keyLabel } from './keys.js';
 
@@ -61,7 +62,22 @@ export function boxView(viewer, root, tab, keep, save, src) {
     step(v, dir, b => b.starts);
     return true;
   };
+  v.relayout = () => relayout(v);
   return v;
+}
+
+// relayout draws the boxes in the other layout: those near the screen now, the others when they come
+// near. The box at the top stays there.
+async function relayout(v) {
+  if (!v.scroll) return;
+  const a = anchor(v);
+  const now = [];
+  for (const b of v.boxes.values()) {
+    if (b.loaded && b.near) now.push(drawBox(v, b));
+    else if (b.loaded) b.redo = true;
+  }
+  await Promise.all(now);
+  if (isCurrent(v)) restore(v, a);
 }
 
 // showBoxes draws the boxes of the source's files, building the scroll the first time.
@@ -183,6 +199,7 @@ function newBox(v, f) {
   b.body.style.height = `${height}px`;
   b.el.style.containIntrinsicSize = `auto ${height + HEAD}px`;
   b.el.append(b.head, b.note, b.body);
+  b.body.addEventListener('scroll', () => b.body.style.setProperty('--sx', `${b.body.scrollLeft}px`));
   b.el.dataset.path = f.path;
   b.el.box = b;
   showOpen(v, b);
@@ -354,14 +371,18 @@ export async function drawBox(v, b) {
   if (res.error || res.binary || res.folder || !res.hunks.length) {
     const say = res.error || (res.binary ? 'Binary file changed' : res.folder ? 'Folder with its own git repository'
       : b.f.orig ? `Renamed from ${b.f.orig}, no content changes` : 'No content changes');
+    b.body.classList.remove('halves');
     patch(b.body, deco.top, h('p', 'fempty', say), deco.end, [...under.values()]);
     b.starts = [];
     return;
   }
   const add = v.src.add;
-  const k = JSON.stringify([deco.extra, add && [add.old, add.near, add.label, add.tip]]);
-  if (b.rows?.json !== b.json || b.rows.k !== k) b.rows = { json: b.json, k, ...diffRows(v, b, hunksWith(res.hunks, deco.extra || [])) };
+  const split = diffLayout() === 'split';
+  const k = JSON.stringify([deco.extra, add && [add.old, add.near, add.label, add.tip], split]);
+  if (b.rows?.json !== b.json || b.rows.k !== k) b.rows = { json: b.json, k, ...diffRows(v, b, hunksWith(res.hunks, deco.extra || []), split) };
+  b.body.classList.toggle('halves', split);
   b.body.style.setProperty('--gutter', b.rows.gutter);
+  b.body.style.setProperty('--cols', b.rows.cols);
   const out = [deco.top];
   const placed = new Set();
   for (const r of b.rows.rows) {
@@ -369,7 +390,8 @@ export async function drawBox(v, b) {
     for (const key of r.keys) {
       if (placed.has(key) || !under.has(key)) continue;
       placed.add(key);
-      out.push(under.get(key));
+      // In split, what is under a line sits under its half: the new side's right, the old side's left.
+      out.push(split ? h('div', { key: `side:${key}`, class: `side ${key[0] === 'n' ? 'r' : 'l'}` }, under.get(key)) : under.get(key));
     }
   }
   // What has no line left, as on a deleted file, shows at the end of the box.
@@ -378,15 +400,20 @@ export async function drawBox(v, b) {
   b.starts = b.rows.starts;
 }
 
-// diffRows makes a box's rows. drawBox keeps them while the diff, the extra lines and the + stay,
-// so most draws only move what is under them. A row's keys name what goes under it: 'n:12', 'o:7'.
-function diffRows(v, b, hunks) {
+// diffRows makes a box's rows. drawBox keeps them while the diff, the extra lines, the + and the
+// layout stay, so most draws only move what is under them. A row's keys name what goes under it:
+// 'n:12', 'o:7'. In split, a line's own half carries its data and its +.
+function diffRows(v, b, hunks, split) {
   const marks = v.src.marks?.(b.res) || {};
   const add = v.src.add;
-  let maxNo = 0;
-  for (const l of hunks.flatMap(h => h.lines)) maxNo = Math.max(maxNo, l.o || 0, l.n || 0);
+  let maxNo = 0, cols = 0;
+  for (const l of hunks.flatMap(h => h.lines)) {
+    maxNo = Math.max(maxNo, l.o || 0, l.n || 0);
+    cols = Math.max(cols, l.t.replaceAll('\t', '    ').length);
+  }
   const rows = [];
   const starts = [];
+  const cls = l => `${l.k === '+' ? 'add ch-add' : l.k === '-' ? 'del' : ''}${marks.line?.(l) || ''}`;
   hunks.forEach((hk, i) => {
     const count = k => hk.lines.filter(l => l.k !== k).length;
     const more = i > 0 || hk.newStart > 1 || hk.oldStart > 1;
@@ -398,27 +425,39 @@ function diffRows(v, b, hunks) {
     rows.push({ keys: [], el: h('div', { key: `sep:${i}`, class: 'ln sep' }, h('span', 'gut'),
       h('span', 'tx', `@@ -${hk.oldStart},${count('+')} +${hk.newStart},${count('-')} @@`, marks.hunk?.(hk), more && h('button', { class: 'more', onclick }, 'Show more lines'))) });
     const changes = hk.lines.flatMap((l, j) => (l.k === ' ' ? [] : [j]));
-    const near = j => !add.near || changes.some(c => Math.abs(c - j) <= add.near);
-    hk.lines.forEach((l, j) => {
-      const row = line([l.o, l.n], l.x || l.t, `${l.k === '+' ? 'add ch-add' : l.k === '-' ? 'del' : ''}${marks.line?.(l) || ''}`);
-      if (l.k !== ' ' && (j === 0 || hk.lines[j - 1].k === ' ')) starts.push(row);
-      row.dataset.k = l.k;
-      row.dataset.t = l.t;
-      if (l.o) row.dataset.o = l.o;
-      if (l.k !== '-') row.dataset.n = l.n;
-      if (add && (l.k !== '-' || add.old) && (l.k !== ' ' || near(j))) {
+    const index = new Map(hk.lines.map((l, j) => [l, j]));
+    const near = l => !add.near || changes.some(c => Math.abs(c - index.get(l)) <= add.near);
+    const own = (e, l) => {
+      e.dataset.k = l.k;
+      e.dataset.t = l.t;
+      if (l.o) e.dataset.o = l.o;
+      if (l.k !== '-') e.dataset.n = l.n;
+      if (add && (l.k !== '-' || add.old) && (l.k !== ' ' || near(l))) {
         const plus = el('button', 'addc'); // the scroll's click listener runs it
         plus.innerHTML = ICON.plus;
         plus.tabIndex = -1;
         plus.setAttribute('aria-label', `${add.label || 'Add a note on line'} ${l.k === '-' ? l.o : l.n}`);
         plus.dataset.tip = add.tip;
-        row.insertBefore(plus, row.lastChild);
+        e.insertBefore(plus, e.lastChild);
       }
-      if (v.cur?.path === b.f.path && v.cur.n === l.n && l.k !== '-') row.classList.add('cur');
-      rows.push({ el: row, keys: [l.k !== '-' && `n:${l.n}`, l.k !== '+' && `o:${l.o}`].filter(Boolean) });
+      if (v.cur?.path === b.f.path && v.cur.n === l.n && l.k !== '-') e.classList.add('cur');
+    };
+    pairRows(hk.lines, split).forEach((r, j, all) => {
+      let row;
+      if (split) {
+        row = splitRow(r, null, cls);
+        if (r.l && r.l !== r.r) own(row.firstChild, r.l);
+        if (r.r) own(row.lastChild, r.r);
+      } else {
+        const l = r.r || r.l;
+        row = line([l.o, l.n], l.x || l.t, cls(l));
+        own(row, l);
+      }
+      if (r.l !== r.r && (j === 0 || all[j - 1].l === all[j - 1].r)) starts.push(row);
+      rows.push({ el: row, keys: [r.r && `n:${r.r.n}`, r.l && `o:${r.l.o}`].filter(Boolean) });
     });
   });
-  return { rows, starts, gutter: `${String(maxNo).length + 2}ch` };
+  return { rows, starts, cols, gutter: `${String(maxNo).length + 2}ch` };
 }
 
 const rowOf = row => ({ k: row.dataset.k, o: Number(row.dataset.o) || 0, n: Number(row.dataset.n) || 0, t: row.dataset.t });

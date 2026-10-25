@@ -131,7 +131,7 @@ main { display: flex; flex-direction: column; min-width: 0; }
 #tabbar:has(> #filetabs[hidden]) { display: none; }
 #filetabs { flex: 1; min-width: 0; display: flex; overflow-x: auto; scrollbar-width: thin; }
 #difflayout { flex: none; display: flex; align-items: center; padding: 0 8px; }
-main:not(:has(#viewer > .scroll.diff)) #difflayout { display: none; }
+main:not(:has(#viewer > .scroll.diff, #viewer > .allfiles)) #difflayout { display: none; }
 .filetab { display: flex; align-items: center; gap: 6px; padding: 4px 4px 4px 12px; border-right: 1px solid var(--border); border-bottom: 2px solid transparent; cursor: pointer; white-space: nowrap; font-size: 12px; color: var(--muted); }
 .filetab:hover { color: var(--text); }
 .filetab.active { background: var(--bg); color: var(--text); border-bottom-color: var(--modified); }
@@ -682,6 +682,19 @@ button.pill:hover { background: color-mix(in srgb, var(--modified) 22%, var(--se
 }
 .addc svg { width: 14px; height: 14px; stroke-width: 2.5; }
 .ln:hover .addc { display: flex; }
+
+/* Split: the + sits on its half's line number, and what is under a line sits under its half. A box is
+   as wide as its longest line needs in a half, so its scrollbar reaches the end of that line. */
+.srow .addc { left: calc(var(--gutter) - 19px); }
+.fbody.halves .ln.sep .gut { width: var(--gutter); }
+.fbody.halves { position: relative; }
+.fbody.halves::after {
+  content: ""; position: absolute; top: 0; left: 0; height: 1px; visibility: hidden;
+  width: max(100%, calc(50% + var(--cols) * 1ch + 2ch + var(--gutter)));
+}
+.fbody .side { position: sticky; left: 0; width: 50cqi; }
+.fbody .side.r { left: 50cqi; margin-left: 50cqi; }
+.fbody .side .thr { width: min(700px, calc(50cqi - 40px)); }
 
 /* A thread is a box under its line, set apart from the code, with a notch that points up at the line.
    An agent note is the same box with dashed edges: it never leaves kijk. */
