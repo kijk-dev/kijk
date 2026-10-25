@@ -72,6 +72,14 @@ _Avoid_: preview (a preview tab is the tab a single click opens), visual mode
 The text of a file that has a rendered view, with line numbers and syntax colors where kijk knows the language. The source view of the diff of an SVG image or a diagram file is its line diff.
 _Avoid_: raw, code view
 
+**Unified diff**:
+A line diff in one column: each block of removed lines above the lines added in its place, each row with an old and a new line number. It is how every line diff shows until the user picks split.
+_Avoid_: inline diff
+
+**Split diff**:
+A line diff in two halves: the old file on the left and the new file on the right, each with its own line numbers. A removed line faces the added line at the same place in its block, and a line with no partner faces an empty, hatched cell. The user picks unified or split once, for every line diff. A view too narrow for two halves shows unified.
+_Avoid_: side-by-side diff (side by side is the picture diff of an image or a diagram), two-pane diff
+
 **Change**:
 One file entry in the Git tab: a file that differs, with git's status letter (added, modified, deleted, renamed, untracked, conflict).
 _Avoid_: using "change" for a whole body of work

@@ -402,7 +402,7 @@ export async function drawBox(v, b) {
 
 // diffRows makes a box's rows. drawBox keeps them while the diff, the extra lines, the + and the
 // layout stay, so most draws only move what is under them. A row's keys name what goes under it:
-// 'n:12', 'o:7'. In split, a line's own half carries its data and its +.
+// 'n:12', 'o:7'.
 function diffRows(v, b, hunks, split) {
   const marks = v.src.marks?.(b.res) || {};
   const add = v.src.add;

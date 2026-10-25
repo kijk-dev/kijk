@@ -85,6 +85,8 @@ kijk ~/code/api ~/notes
 ### Git
 
 - The Git tab lists the changed files with `+N −N` line counts. Click a file to see its diff, or review with the arrow keys and Space to stage.
+- A diff shows unified or split. The Unified / Split switch at the right end of the tab strip picks one layout for every diff, also for Branch changes and the Changes of a pull request. kijk remembers it.
+- Split puts the old file on the left and the new file on the right. A removed line faces the line that replaced it, and the words that changed are underlined. Long lines do not wrap: scroll sideways, and both halves move together. A view narrower than about 700 pixels shows unified.
 - A changed image shows the before and after pictures side by side. An SVG image can switch to its line diff.
 - A changed Mermaid, PlantUML or Excalidraw file shows the before and after diagrams side by side, with a switch to its line diff.
 - A branch graph shows your branch, the main line and the pull request target, with the commits that are not pushed yet.
