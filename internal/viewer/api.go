@@ -59,7 +59,7 @@ func Register(mux *http.ServeMux, rts *Roots, o Options) {
 	mux.HandleFunc("POST /api/pr/submit", a.write(prSubmit))
 	mux.HandleFunc("GET /api/commit-files", a.commitFiles)
 	mux.HandleFunc("POST /api/fetch", a.gitAction(func(req actionRequest) (string, error) { return git.Fetch(req.Root) }))
-	mux.HandleFunc("POST /api/push", a.gitAction(func(req actionRequest) (string, error) { return git.Push(req.Root) }))
+	mux.HandleFunc("POST /api/push", a.gitAction(func(req actionRequest) (string, error) { return git.Push(req.Root, req.Lease) }))
 	mux.HandleFunc("POST /api/commit", a.gitAction(func(req actionRequest) (string, error) { return git.Commit(req.Root, req.Message) }))
 }
 
@@ -437,6 +437,7 @@ type actionRequest struct {
 	Root    string   `json:"root"`
 	Paths   []string `json:"paths"`
 	Message string   `json:"message"`
+	Lease   string   `json:"lease"` // a force push: the upstream commit the page showed
 }
 
 // gitAction runs a git command that changes the repository. On failure the reply body is git's output.

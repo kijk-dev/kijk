@@ -136,6 +136,59 @@ func TestBrowser(t *testing.T) {
 		p.noErrors()
 	})
 
+	t.Run("force push", func(t *testing.T) {
+		p := p.on(t)
+		p.selectAgent("Fix the login bug", "api")
+		p.click("the Git tab", gitTab)
+		// A branch rewritten after it was pushed, as by a rebase.
+		run(t, api, "checkout", "-qb", "feat")
+		t.Cleanup(func() { run(t, api, "checkout", "-q", "main") })
+		run(t, api, "commit", "-q", "--allow-empty", "-m", "Trim the user name")
+		run(t, api, "push", "-q", "-u", "origin", "feat")
+		shown, _ := git.Run(api, "rev-parse", "HEAD")
+		run(t, api, "commit", "-q", "--amend", "--allow-empty", "-m", "Trim the user name first")
+		onOrigin := func() string { h, _ := git.Run(origin, "rev-parse", "feat"); return h }
+
+		btn := `document.querySelector('#push-btn')`
+		p.waitFor("Force push…", btn+`.textContent === 'Force push…' && !`+btn+`.disabled && `+btn+`.title.includes('have split, as after a rebase')`)
+		shots(p, "force-push-button")
+		p.click("Force push…", btn)
+		dialog := `document.querySelector('.confirm[role=dialog]')`
+		p.waitFor("the dialog", dialog+`?.querySelector('h2').textContent === 'Force push to origin/feat?' && `+
+			dialog+`.querySelector('li').textContent === 'Removes1 commit that only origin/feat has' && `+
+			dialog+`.querySelector('.acts .muted').textContent === 'Git stops if origin/feat moved since your last fetch.' && `+
+			dialog+`.querySelector('button.primary').textContent === 'Force push'`)
+		shots(p, "force-push")
+		p.click("Cancel", dialog+`.querySelector('.acts .tool')`)
+		p.waitFor("the dialog closed", `!document.querySelector('.confirm')`)
+		if onOrigin() != shown {
+			p.fail("Cancel pushed")
+		}
+
+		// Someone pushed since kijk showed origin/feat: git stops, and the dialog says why.
+		main, _ := git.Run(origin, "rev-parse", "main")
+		run(t, origin, "update-ref", "refs/heads/feat", main)
+		p.evalJS(`window.e2ePush = []; { const f = window.fetch; window.fetch = (u, o) => (String(u).includes('/api/push') && e2ePush.push(JSON.parse(o.body)), f(u, o)); }`)
+		p.press("push")
+		p.click("Force push", dialog+`?.querySelector('button.primary')`)
+		p.waitFor("git stopped", dialog+`?.querySelector('.error:not([hidden])')?.textContent.includes('origin/feat moved since kijk showed it') && !`+dialog+`.querySelector('button.primary').disabled`)
+		if onOrigin() != main {
+			p.fail("their commit was replaced")
+		}
+		p.key("Escape", kb.Escape)
+		p.waitFor("the dialog closed", `!document.querySelector('.confirm')`)
+
+		run(t, origin, "update-ref", "refs/heads/feat", shown)
+		p.click("Force push…", btn)
+		p.click("Force push", dialog+`?.querySelector('button.primary')`)
+		p.waitFor("pushed, nothing left to push", `!document.querySelector('.confirm') && `+btn+`.textContent === 'Push' && `+btn+`.disabled`)
+		p.waitFor("the lease was the commit on screen", `e2ePush.length === 2 && e2ePush.every(b => b.lease === `+jsString(shown)+`)`)
+		if head, _ := git.Run(api, "rev-parse", "HEAD"); onOrigin() != head {
+			p.fail("origin/feat is not the rewritten branch")
+		}
+		p.noErrors()
+	})
+
 	t.Run("find", func(t *testing.T) {
 		p := p.on(t)
 		p.selectAgent("Add the cart", "shop")
