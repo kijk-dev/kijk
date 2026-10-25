@@ -83,6 +83,7 @@ async function build(v) {
       const b = e.target.box;
       b.near = e.isIntersecting;
       if (b.near && b.open && (!b.loaded || b.stale)) loadBox(v, b);
+      else if (b.near && b.redo) drawBox(v, b);
     }
   }, { root: scroll, rootMargin: '200% 0px' });
   await updateBoxes(v);
@@ -277,7 +278,8 @@ export function redraw(v, paths) {
     const b = v.boxes.get(path);
     if (!b) continue;
     drawHead(v, b);
-    if (b.loaded) drawBox(v, b);
+    if (b.loaded && b.near) drawBox(v, b);
+    else if (b.loaded) b.redo = true; // drawn when it comes near, so a change costs only the boxes in view
   }
 }
 
@@ -342,6 +344,7 @@ function hunksWith(hunks, extra) {
 export async function drawBox(v, b) {
   const res = b.res;
   const draw = b.draws = (b.draws || 0) + 1; // a newer draw of the box wins over one still waiting
+  b.redo = false;
   b.loaded = true;
   b.body.style.height = '';
   const rows = res.hunks ? res.hunks.flatMap(h => h.lines) : [];
@@ -463,9 +466,9 @@ async function step(v, dir, pick, has = () => true) {
   for (const b of dir > 0 ? boxes : boxes.reverse()) {
     const top = b.el.offsetTop;
     if (dir > 0 ? top + b.el.offsetHeight < at : top > at) continue;
-    if (!b.loaded) {
+    if (!b.loaded || b.redo) {
       if (!has(b)) continue;
-      await loadBox(v, b);
+      await (b.loaded ? drawBox(v, b) : loadBox(v, b));
       if (!isCurrent(v)) return;
     }
     const ys = pick(b).map(e => offsetIn(v, e));

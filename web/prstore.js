@@ -164,6 +164,7 @@ export const askLine = root => ask(root, folderOf(root).line, () => get('pr', { 
 // list drops the viewed marks of the pull requests that are not open.
 export function askList(root, q = '', fresh) {
   const lists = folderOf(root).lists;
+  for (const k of lists.keys()) if (k && k !== q) lists.delete(k); // one search shows at a time
   if (!lists.has(q)) lists.set(q, answer(null));
   const a = lists.get(q);
   if (a.call && !fresh) return a.call;
