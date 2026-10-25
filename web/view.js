@@ -40,7 +40,9 @@ function virtual(scroll, count, width, top, drawRange) {
   space.style.width = width;
   space.append(rows);
   scroll.append(space);
+  let at = -1; // the scrollTop the rows were drawn for
   const draw = () => {
+    at = scroll.scrollTop;
     const first = Math.max(0, Math.floor(scroll.scrollTop / LINE_HEIGHT) - 20);
     const last = Math.min(count, first + 400, Math.ceil((scroll.scrollTop + scroll.clientHeight) / LINE_HEIGHT) + 20);
     rows.style.transform = `translateY(${first * LINE_HEIGHT}px)`;
@@ -51,7 +53,8 @@ function virtual(scroll, count, width, top, drawRange) {
     cancelAnimationFrame(frame);
     frame = requestAnimationFrame(draw);
   };
-  scroll.addEventListener('scroll', render);
+  // A sideways scroll brings no row into view, so it draws nothing again.
+  scroll.addEventListener('scroll', () => { if (scroll.scrollTop !== at) render(); });
   new ResizeObserver(render).observe(scroll);
   scroll.scrollTop = top;
   draw();
