@@ -1,14 +1,15 @@
-import { el, get, storeKey, keepFocus } from './api.js';
+import { el, h, patch, get, storeKey, icon } from './api.js';
 import { isCurrent } from './view.js';
-import { lineCount, ago, fileRow } from './git.js';
+import { lineCount, ago, kind } from './git.js';
 import { forgeMark, forgeWords, ownPR } from './pr.js';
 import { keyLabel, mac } from './keys.js';
 import { textBox, unsentKey } from './drafts.js';
 import { boxView, showBoxes, noBoxes, redraw, drawBox, iconButton, goToBox, plural } from './boxes.js';
+import { pull, line, own, watch, type } from './prstore.js';
 import { threadEl, outdatedBar, threadCount, avatar, sent, threadsChanged } from './threads.js';
 
 // The PRs tab for the folder's own branch: the panel in the sidebar, the Branch changes view, agent
-// notes and Copy for agent. Its pull request's threads come from prs.js.
+// notes and Copy for agent. Its pull request's threads come from the store.
 
 const ICON = {
   branch: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3v12"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>',
@@ -26,9 +27,6 @@ const shown = () => !tabEl.hidden && !panel.hidden;
 let page = null;
 let folder = null; // the open folder's key
 let agentIcon = null; // the icon of the folder's agent type
-let status = null; // the folder's git status
-let prStatus = null; // the PR line's answer
-let target = ''; // the open PR's target branch
 let data = null; // the last /api/branch answer
 let error = '';
 let loading = null; // the /api/branch call in flight: {key, call}
@@ -36,69 +34,60 @@ let notes = []; // the agent notes of this folder and branch
 let notesKey = '';
 let view = null; // the Branch changes view, while it is open
 let selected = ''; // the path of the file at the top of the view
+let onOverview = false; // the arrows put the list's Tab stop on the Overview row
+let pushing = false;
 let goal = ''; // a file to scroll to once the view is drawn
 let copyPanel = null;
-let branchPR = null; // the answer about the branch's pull request, with its threads
+let drawnPR = null; // the answer whose threads the boxes show
 
-// setupReview tells the tab about the folder view around it: announce(text), say(text),
-// push(), openFile(path), openBranch(), which opens the Branch changes tab, branchHead(), what the
-// PRs tab adds to the header, and overviewRow(n), the first row of the file list.
+// setupReview tells the tab about the folder view around it: announce(text), say(text), push(),
+// openFile(path), openBranch(), which opens the Branch changes tab, branchHead(), what the PRs tab
+// adds to the header, overviewRow(n), the first row of the file list, and status(), git's status.
 export function setupReview(p) {
   page = p;
 }
 
-export function setBranchFolder(key, icon) {
+const target = () => ownPR(line(folder))?.target || ''; // the open PR's target branch
+const branchPR = () => pull(folder, own(folder)).res; // with the threads of Local mode
+
+export function setBranchFolder(key, agent) {
   closeCopy();
-  branchPR = null;
-  strips.clear();
+  drawnPR = null;
   folder = key;
-  agentIcon = icon || null;
+  agentIcon = agent || null;
   data = null;
   error = '';
   notes = [];
   notesKey = '';
   selected = '';
-  panel.replaceChildren();
+  onOverview = false;
+  pushing = false;
+  patch(panel);
 }
 
 // refreshBranch runs with each git status refresh. It asks for the branch changes only while the
 // PRs tab or the Branch changes view shows them.
-export async function refreshBranch(st, pr) {
-  status = st;
-  prStatus = pr;
-  target = ownPR(pr)?.target || '';
+export async function refreshBranch() {
   if (!shown() && !openView()) return;
   await load();
 }
 
-// showBranchPanel draws the panel again after the git status or the PR line learned more, and
-// asks for the branch changes when the panel just showed without them.
-export function showBranchPanel(st, pr) {
-  status = st || status;
-  prStatus = pr;
-  target = ownPR(pr)?.target || '';
-  if (loading?.key === `${folder}\n${target}`) return; // the load draws the panel when it is done
+// After the git status, the PR line or the threads changed: the panel draws again, or asks for
+// the branch changes when it just showed without them.
+watch(root => {
+  if (!folder || root !== folder) return;
+  const res = branchPR(), before = drawnPR;
+  drawnPR = res;
+  const v = openView();
+  if (v && res !== before) redraw(v, threadsChanged(before, res, [...v.boxes.keys()]));
+  if (loading?.key === `${folder}\n${target()}`) return; // the load draws the panel when it is done
   if (data) drawPanel();
   else if (shown()) load();
-}
+});
 
 // wakeBranch loads the branch changes when the panel just showed without them.
 export function wakeBranch() {
   if (!data && folder && shown() && !loading) load();
-}
-
-export function redrawBranchPanel() {
-  if (data) drawPanel();
-}
-
-// setBranchThreads takes the answer about the branch's own pull request, for its threads in Local
-// mode, or null when it has none.
-export function setBranchThreads(res) {
-  const before = branchPR;
-  branchPR = res;
-  if (data) drawPanel();
-  const v = openView();
-  if (v) redraw(v, threadsChanged(before, res, [...v.boxes.keys()]));
 }
 
 export function focusBranchList() {
@@ -114,9 +103,9 @@ const openView = () => (view && isCurrent(view) ? view : null);
 
 // fetchBranch shares one call between the status refresh and the view's reload of the same change.
 function fetchBranch() {
-  const key = `${folder}\n${target}`;
+  const key = `${folder}\n${target()}`;
   if (loading?.key !== key) {
-    const call = get('branch', { root: folder, target }).catch(err => err);
+    const call = get('branch', { root: folder, target: target() }).catch(err => err);
     loading = { key, call };
     call.finally(() => { if (loading?.call === call) loading = null; });
   }
@@ -124,9 +113,9 @@ function fetchBranch() {
 }
 
 async function load(change) {
-  const key = `${folder}\n${target}`;
+  const key = `${folder}\n${target()}`;
   const res = await fetchBranch();
-  if (key !== `${folder}\n${target}`) return;
+  if (key !== `${folder}\n${target()}`) return;
   if (res instanceof Error && res.status === 404) {
     // On another branch, such as the main line, nothing of this branch may show or be added to.
     closeCopy();
@@ -168,7 +157,7 @@ function saveCopiedThreads() {
 }
 
 // openThreads are the threads of the branch's pull request that still want an answer.
-const openThreads = () => (branchPR ? sent(branchPR.threads).filter(t => !t.resolved && !t.outdated) : []);
+const openThreads = () => (branchPR() ? sent(branchPR().threads).filter(t => !t.resolved && !t.outdated) : []);
 const threadLines = new Map(); // thread id: the line on disk it shows under
 
 function saveNotes() {
@@ -193,68 +182,42 @@ function notesChanged(paths) {
 
 function drawPanel() {
   if (!folder) return;
-  if (!data) return panel.replaceChildren(el('p', 'note', error || 'Loading…'));
-  const top = panel.querySelector('.prs-scroll')?.scrollTop;
-  keepFocus(panel, () => panel.replaceChildren(header(), ...(error ? [el('p', 'note error', error)] : []), ...unpushedBar(), fileList(), notesBox()));
-  if (top) panel.querySelector('.prs-scroll').scrollTop = top;
+  if (!data) return patch(panel, h('p', 'note', error || 'Loading…'));
+  patch(panel, header(), error && h('p', 'note error', error), unpushedBar(), fileList(), notesBox());
 }
 
 function header() {
-  const h = el('div', 'prhead');
-  const top = el('div', 'pr-top');
-  const f = prStatus?.forge;
-  const p = prStatus?.pr || data.pr;
-  const words = forgeWords(prStatus);
-  if (f) top.append(forgeMark(f.kind));
-  if (p) {
-    const title = el(p.url ? 'a' : 'span', 'pr-title', p.title);
-    if (p.url) Object.assign(title, { href: p.url, target: '_blank', rel: 'noopener', title: `Open on ${words.name}` });
-    top.append(el('span', 'pr-num', `${words.num}${p.number}`), title);
-  } else {
-    const icon = el('span', 'branchmark');
-    icon.innerHTML = ICON.branch;
-    top.append(icon, el('span', 'pr-title', data.branch));
-  }
-  const meta = el('div', 'prmeta');
-  const arrow = el('span', 'arrow');
-  arrow.innerHTML = ICON.arrow;
-  const base = el('span', 'ref lane-main', data.base.replace(/^origin\//, ''));
-  base.title = `Compared with ${data.base}`;
-  meta.append(el('span', 'ref head', data.branch), arrow, base);
-  h.append(top, meta);
+  const f = line(folder)?.forge, p = line(folder)?.pr || data.pr, words = forgeWords(line(folder));
   const extra = page.branchHead?.() || {};
-  top.prepend(...(extra.before || []));
-  h.append(...(extra.after || []));
-  if (extra.note) h.append(el('p', 'pr-note', extra.note));
-  return h;
+  return h('div', { key: 'head', class: 'prhead' },
+    h('div', 'pr-top', extra.before, f && forgeMark(f.kind), p
+      ? [h('span', 'pr-num', `${words.num}${p.number}`),
+        h(p.url ? 'a' : 'span', { class: 'pr-title', ...(p.url && { href: p.url, target: '_blank', rel: 'noopener', title: `Open on ${words.name}` }) }, p.title)]
+      : [h('span', { class: 'branchmark', html: ICON.branch }), h('span', 'pr-title', data.branch)]),
+    h('div', 'prmeta', h('span', 'ref head', data.branch), h('span', { class: 'arrow', html: ICON.arrow }),
+      h('span', { class: 'ref lane-main', title: `Compared with ${data.base}` }, data.base.replace(/^origin\//, ''))),
+    extra.after, extra.note && h('p', 'pr-note', extra.note));
 }
 
 // unpushedBar says what reviewers cannot see yet.
 function unpushedBar() {
   const d = data;
-  if (d.upstream && !d.ahead && !d.uncommitted) return [];
-  const bar = el('div', 'unpushed');
-  bar.innerHTML = ICON.local;
-  const t = el('span', 't');
-  if (!d.upstream) {
-    t.append('This branch is not pushed yet. ', el('span', 'then', "Reviewers don't see it."));
-  } else {
-    const what = [d.ahead && plural(d.ahead, 'commit'), d.uncommitted && plural(d.uncommitted, 'file')].filter(Boolean).join(' and ');
-    t.append(`${what} not pushed. `, el('span', 'then', "Reviewers don't see them yet."));
-  }
-  bar.append(t);
-  if (status?.remote) {
-    const b = el('button', 'tool', d.upstream ? 'Push' : 'Publish');
-    b.dataset.k = 'push';
-    b.title = `${d.upstream ? `Push to ${d.upstream}` : 'Publish this branch to origin'} (${keyLabel('push')})`;
-    b.disabled = !!d.upstream && !d.ahead;
-    b.onclick = () => {
-      b.disabled = true;
-      page.push();
-    };
-    bar.append(b);
-  }
-  return [bar];
+  if (d.upstream && !d.ahead && !d.uncommitted) return null;
+  const what = [d.ahead && plural(d.ahead, 'commit'), d.uncommitted && plural(d.uncommitted, 'file')].filter(Boolean).join(' and ');
+  const push = () => {
+    pushing = true;
+    drawPanel();
+    page.push().finally(() => {
+      pushing = false;
+      drawPanel();
+    });
+  };
+  return h('div', { key: 'unpushed', class: 'unpushed' }, icon(ICON.local),
+    h('span', 't', d.upstream ? [`${what} not pushed. `, h('span', 'then', "Reviewers don't see them yet.")] : ['This branch is not pushed yet. ', h('span', 'then', "Reviewers don't see it.")]),
+    page.status()?.remote && h('button', {
+      key: 'push', class: 'tool', disabled: pushing || (!!d.upstream && !d.ahead), onclick: push,
+      title: `${d.upstream ? `Push to ${d.upstream}` : 'Publish this branch to origin'} (${keyLabel('push')})`,
+    }, d.upstream ? 'Push' : 'Publish'));
 }
 
 function dashed(tip) {
@@ -267,108 +230,78 @@ function dashed(tip) {
 const NOT_PUSHED = "Not pushed yet\nReviewers don't see this file";
 
 function fileList() {
-  const wrap = el('div', 'prs-scroll prfiles');
-  const h = el('h3', null, `Branch changes ${data.files.length}`);
-  const sum = data.files.reduce(([a, d], f) => [a + (f.add || 0), d + (f.del || 0)], [0, 0]);
-  const lc = lineCount(...sum);
-  if (lc) h.append(lc);
-  const ul = el('ul');
-  ul.setAttribute('aria-label', 'Branch changes');
-  for (const f of data.files) {
-    const row = fileRow(f, () => goTo(f.path));
-    row.dataset.path = f.path;
-    const counts = row.querySelector('.lc');
-    if (f.notPushed) row.insertBefore(dashed(NOT_PUSHED), counts);
-    const tc = threadCount(threadsOn(f.path), notesOn(f.path).length);
-    if (tc) row.insertBefore(tc, counts);
-    if (f.path === selected) mark(row, true);
-    ul.append(row);
-  }
-  if (!ul.querySelector('[tabindex="0"]') && ul.firstChild) ul.firstChild.tabIndex = 0;
-  ul.onkeydown = e => {
-    const rows = [...ul.children];
-    const at = rows.indexOf(e.target.closest('li'));
-    const to = { ArrowDown: at + 1, ArrowUp: at - 1, Home: 0, End: rows.length - 1 }[e.key];
-    if (to !== undefined && rows[to]) {
-      if (rows[to].dataset.path) goTo(rows[to].dataset.path);
-      for (const r of rows) r.tabIndex = r === rows[to] ? 0 : -1;
-      rows[to].focus();
-    } else if (e.key === 'Enter' && rows[at]) {
-      if (rows[at].dataset.path) goTo(rows[at].dataset.path, true);
-      else rows[at].click();
-    } else {
-      return;
-    }
-    e.preventDefault();
-    e.stopPropagation();
-  };
-  const ov = page.overviewRow?.(ownPR(prStatus)?.number || 0, branchPR);
-  if (ov) {
-    ov.tabIndex = ul.querySelector('[tabindex="0"]') ? -1 : 0;
-    ul.prepend(ov);
-  }
-  wrap.append(h, ul);
-  if (!data.files.length) wrap.append(el('p', 'note', 'No changes yet'));
-  return wrap;
+  const files = data.files;
+  const sum = files.reduce(([a, d], f) => [a + (f.add || 0), d + (f.del || 0)], [0, 0]);
+  const stop = onOverview ? '' : files.some(f => f.path === selected) ? selected : files[0]?.path ?? '';
+  return h('div', { key: 'files', class: 'prs-scroll prfiles' },
+    h('h3', null, `Branch changes ${files.length}`, lineCount(...sum)),
+    h('ul', { attrs: { 'aria-label': 'Branch changes' }, onkeydown: rowKeys },
+      page.overviewRow?.(own(folder), branchPR(), stop === ''),
+      files.map(f => fileItem(f, f.path === stop))),
+    !files.length && h('p', 'note', 'No changes yet'));
 }
 
-function mark(row, on) {
-  row.classList.toggle('selected', on);
-  row.tabIndex = on ? 0 : -1;
-  if (on) row.setAttribute('aria-current', 'true');
-  else row.removeAttribute('aria-current');
+// fileItem is a row of the file list, as fileRow draws it in the Git tab; stop says it holds the Tab stop.
+function fileItem(f, stop) {
+  const name = f.path.replace(/\/$/, ''), slash = name.lastIndexOf('/'), k = kind(f.status), on = f.path === selected;
+  return h('li', {
+    key: f.path, class: `item${on ? ' selected' : ''}`, tabIndex: stop ? 0 : -1, title: f.orig ? `${f.orig} → ${f.path}` : f.path,
+    data: { path: f.path }, attrs: on ? { 'aria-current': 'true' } : {}, onclick: () => goTo(f.path),
+  }, h('span', `letter ${k}`, f.status), h('span', `name ${k}`, name.slice(slash + 1)), h('span', 'dir', slash > 0 ? name.slice(0, slash) : ''),
+  f.notPushed && dashed(NOT_PUSHED), threadCount(threadsOn(f.path), notesOn(f.path).length), lineCount(f.add, f.del));
+}
+
+// rowKeys moves in the file list: a file the arrows reach shows at once.
+function rowKeys(e) {
+  const rows = [...e.currentTarget.children];
+  const at = rows.indexOf(e.target.closest('li'));
+  const to = { ArrowDown: at + 1, ArrowUp: at - 1, Home: 0, End: rows.length - 1 }[e.key];
+  if (to !== undefined && rows[to]) {
+    const path = rows[to].dataset.path;
+    onOverview = !path;
+    if (path) goTo(path);
+    drawPanel();
+    rows[to].focus();
+  } else if (e.key === 'Enter' && rows[at]) {
+    if (rows[at].dataset.path) goTo(rows[at].dataset.path, true);
+    else rows[at].click();
+  } else {
+    return;
+  }
+  e.preventDefault();
+  e.stopPropagation();
 }
 
 function selectRow(path) {
   if (path === selected) return;
   selected = path;
-  for (const row of panel.querySelectorAll('.prfiles li')) {
-    mark(row, row.dataset.path === path);
-    if (row.dataset.path === path) row.scrollIntoView({ block: 'nearest' });
-  }
+  onOverview = false;
+  drawPanel();
+  panel.querySelector('.prfiles li.selected')?.scrollIntoView({ block: 'nearest' });
 }
 
 function notesBox() {
-  const box = el('div', 'reviewbox');
-  const head = el('div', 'head');
   const copied = notes.filter(n => n.copiedAt).length;
-  head.append(el('b', null, 'Agent notes'), el('span', 'muted', notes.length ? `${notes.length}${copied ? ` · ${copied} copied` : ''}` : 'none yet'));
-  if (copied) {
-    const clear = el('button', 'all', 'Clear copied');
-    clear.dataset.k = 'clear';
-    clear.title = 'Delete the notes you copied';
-    clear.onclick = () => {
-      const gone = notes.filter(n => n.copiedAt);
-      notes = notes.filter(n => !n.copiedAt);
-      notesChanged(new Set(gone.map(n => n.path)));
-      page.announce('Copied notes deleted');
-    };
-    head.append(clear);
-  }
-  box.append(head);
   const gone = notes.filter(n => !inBranch(n.path));
-  if (gone.length) {
-    const ul = el('ul', 'gone');
-    for (const n of gone) {
-      const li = el('li');
-      li.append(el('span', 'where', `${n.path}:${n.line} · file no longer changed`), el('span', 'body', n.body));
-      li.append(iconButton(ICON.trash, 'Delete', () => {
-        notes = notes.filter(x => x !== n);
-        notesChanged([n.path]);
-      }));
-      ul.append(li);
-    }
-    box.append(ul);
-  }
-  if (!notes.length) box.append(el('p', 'hint', 'Hover a line and press + to leave a note for the agent.'));
-  const copy = el('button', 'tool wide');
-  copy.dataset.k = 'copy';
-  copy.innerHTML = ICON.copy;
-  copy.append('Copy for agent…');
-  copy.disabled = !notes.length && !openThreads().length;
-  copy.onclick = startCopy;
-  box.append(copy);
-  return box;
+  const clear = () => {
+    const paths = new Set(notes.filter(n => n.copiedAt).map(n => n.path));
+    notes = notes.filter(n => !n.copiedAt);
+    notesChanged(paths);
+    page.announce('Copied notes deleted');
+  };
+  const drop = n => () => {
+    notes = notes.filter(x => x !== n);
+    notesChanged([n.path]);
+  };
+  return h('div', { key: 'notes', class: 'reviewbox' },
+    h('div', 'head', h('b', null, 'Agent notes'), h('span', 'muted', notes.length ? `${notes.length}${copied ? ` · ${copied} copied` : ''}` : 'none yet'),
+      copied > 0 && h('button', { key: 'clear', class: 'all', title: 'Delete the notes you copied', onclick: clear }, 'Clear copied')),
+    gone.length > 0 && h('ul', { key: 'gone', class: 'gone' }, gone.map(n => h('li', { key: n.id },
+      h('span', 'where', `${n.path}:${n.line} · file no longer changed`), h('span', 'body', n.body), iconButton(ICON.trash, 'Delete', drop(n))))),
+    !notes.length && h('p', 'hint', 'Hover a line and press + to leave a note for the agent.'),
+    h('button', {
+      key: 'copy', class: 'tool wide', html: `${ICON.copy}Copy for agent…`, data: { k: 'copy' }, disabled: !notes.length && !openThreads().length, onclick: startCopy,
+    }));
 }
 
 // goTo scrolls the Branch changes view to a file's box, opening the view first when it is not.
@@ -390,7 +323,7 @@ function goTo(path, focus) {
 const branchSource = {
   files: () => data?.files || [],
   basis,
-  fetch: (f, context) => get('diff', { root: folder, path: f.path, orig: f.orig || '', mode: 'branch', target, context }),
+  fetch: (f, context) => get('diff', { root: folder, path: f.path, orig: f.orig || '', mode: 'branch', target: target(), context }),
   headParts: f => [f.notPushed && dashed(NOT_PUSHED), threadCount(threadsOn(f.path), notesOn(f.path).length)],
   openFile: f => page.openFile(f.path),
   marks: res => {
@@ -419,20 +352,17 @@ const branchSource = {
     const redrawBox = () => redraw(v, [b.f.path]);
     for (const [t, at] of th.at) {
       threadLines.set(t.id, at);
-      put(`n:${at}`, threadEl(t, { redraw: redrawBox, line: at, foot: replyStrip(t, b.f.path, at, texts.get(at)) }));
+      put(`n:${at}`, threadEl(t, { redraw: redrawBox, line: at, foot: replyStrip(v, t, at, texts.get(at)) }));
     }
     for (const [n, at] of where) {
       if (texts.has(at)) put(`n:${at}`, noteEl(v, n));
       else end.push(noteEl(v, n));
     }
-    if (v.editor?.path === b.f.path && !v.editor.id) put(`n:${v.editor.n}`, v.editor.el);
+    if (v.editor?.path === b.f.path && !v.editor.note) put(`n:${v.editor.n}`, noteEditor(v));
     return { extra, under, end, top: th.bar.length ? outdatedBar(`local:${b.f.path}`, th.bar, { redraw: redrawBox }) : [] };
   },
   add: { on: (v, path, l) => openEditor(v, path, l.n, l.t), tip: `Note for the agent\n${keyLabel('addNote')}` },
   onTop: path => selectRow(path),
-  drawn: (v, b) => {
-    if (v.editor?.path === b.f.path) v.editor.el.querySelector('textarea')?.focus({ preventScroll: true });
-  },
   marked: f => notesOn(f.path).length > 0 || threadsOn(f.path).length > 0,
 };
 
@@ -514,7 +444,7 @@ async function place(v, b, rows) {
 }
 
 // threadsOn are the threads of the branch's pull request on a file.
-const threadsOn = path => (branchPR ? sent(branchPR.threads).filter(t => t.path === path) : []);
+const threadsOn = path => (branchPR() ? sent(branchPR().threads).filter(t => t.path === path) : []);
 
 // placeThreads puts each thread of the branch's pull request on the line on disk that has the text
 // its line has at the head: the same line, else the nearest one. Other threads go to the bar.
@@ -539,42 +469,33 @@ async function placeThreads(v, b, rows, extra, file) {
   return { at, bar };
 }
 
-// The reply strips of threads, kept across redraws so what is typed in one stays.
-const strips = new Map();
-
-// replyStrip is a thread's reply box in Local mode: what the user types there is an agent note.
-function replyStrip(t, path, line, text) {
-  let s = strips.get(t.id);
-  if (!s) {
-    const foot = el('div', 'foot');
-    const input = el('input');
-    input.placeholder = 'Note for the agent…';
-    const hint = el('span', 'muted hint');
-    foot.append(avatar(branchPR?.me || 'you'), input, hint);
-    s = { foot, input, hint };
-    strips.set(t.id, s);
-    input.onkeydown = e => {
-      if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        const body = input.value.trim();
-        if (!body) return;
-        input.value = '';
-        notes.push({ id: newId(), path: s.path, line: s.line, text: s.text, body, at: Date.now(), copiedAt: 0 });
-        notesChanged([s.path]);
-        page.announce(`Note added on line ${s.line}`);
-      } else if (e.key === 'Escape') {
-        e.preventDefault();
-        e.stopPropagation();
-        input.value = '';
-        input.blur();
-      }
-    };
-  }
-  Object.assign(s, { path, line, text });
-  const words = forgeWords(prStatus);
-  s.input.setAttribute('aria-label', `Note for the agent on line ${line}`);
-  s.hint.textContent = `Reply to ${t.comments[0]?.author} in “As on ${words.name}”`;
-  return s.foot;
+// replyStrip is a thread's reply box in Local mode: what the user types there is an agent note on
+// line at, which has text.
+function replyStrip(v, t, at, text) {
+  const k = `reply\n${t.id}`;
+  return h('div', { key: 'foot', class: 'foot' }, avatar(branchPR()?.me || 'you'),
+    h('input', {
+      key: 'reply', placeholder: 'Note for the agent…', value: pull(folder, 0).text(k)?.text || '', attrs: { 'aria-label': `Note for the agent on line ${at}` },
+      oninput: e => type(folder, 0, k, e.currentTarget.value),
+      onkeydown: e => {
+        const body = e.currentTarget.value.trim();
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          if (!body) return;
+          type(folder, 0, k, null);
+          notes.push({ id: newId(), path: t.path, line: at, text, body, at: Date.now(), copiedAt: 0 });
+          notesChanged([t.path]);
+          page.announce(`Note added on line ${at}`);
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          e.stopPropagation();
+          type(folder, 0, k, null);
+          redraw(v, [t.path]);
+          e.currentTarget.blur();
+        }
+      },
+    }),
+    h('span', 'muted hint', `Reply to ${t.comments[0]?.author} in “As on ${forgeWords(line(folder)).name}”`));
 }
 
 const newId = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
@@ -619,30 +540,17 @@ async function placeAll() {
 }
 
 function noteEl(v, n) {
-  if (v.editor?.id === n.id) return v.editor.el;
-  const box = el('div', `thr note${n.copiedAt ? ' copied' : ''}`);
-  box.dataset.id = n.id;
-  const c = el('div', 'c');
-  const who = el('div', 'who');
-  who.append(agentMark(), el('b', null, 'Agent note'), el('span', 'muted', ago(n.at)));
-  if (n.copiedAt) who.append(el('span', 'chip', 'Copied'));
-  if (n.outdated) who.append(el('span', 'chip', 'Outdated'));
-  if (!n.copiedAt && !n.outdated) who.append(el('span', 'muted', '· only in kijk'));
-  const end = el('span', 'end');
-  end.append(
-    iconButton(ICON.edit, 'Edit', () => openEditor(v, n.path, n.line, n.text, n)),
-    iconButton(ICON.trash, 'Delete', () => {
-      notes = notes.filter(x => x !== n);
-      notesChanged([n.path]);
-      page.announce('Note deleted');
-    }),
-  );
-  who.append(end);
-  c.append(who);
-  if (n.outdated) c.append(el('span', 'was', n.text));
-  c.append(el('p', null, n.body));
-  box.append(c);
-  return box;
+  if (v.editor?.note?.id === n.id) return noteEditor(v);
+  const del = () => {
+    notes = notes.filter(x => x !== n);
+    notesChanged([n.path]);
+    page.announce('Note deleted');
+  };
+  return h('div', { key: `note:${n.id}`, class: `thr note${n.copiedAt ? ' copied' : ''}`, data: { id: n.id } }, h('div', 'c',
+    h('div', 'who', agentMark(), h('b', null, 'Agent note'), h('span', 'muted', ago(n.at)), !!n.copiedAt && h('span', 'chip', 'Copied'),
+      !!n.outdated && h('span', 'chip', 'Outdated'), !n.copiedAt && !n.outdated && h('span', 'muted', '· only in kijk'),
+      h('span', 'end', iconButton(ICON.edit, 'Edit', () => openEditor(v, n.path, n.line, n.text, n)), iconButton(ICON.trash, 'Delete', del))),
+    !!n.outdated && h('span', 'was', n.text), h('p', null, n.body)));
 }
 
 function agentMark() {
@@ -652,18 +560,26 @@ function agentMark() {
   return s;
 }
 
-// openEditor opens the note editor under line n, for a new note or to edit note.
+let editors = 0; // each editor gets its own key, so the one just opened takes the focus
+
+// openEditor opens the note editor under line n, which has text, for a new note or to edit note.
 function openEditor(v, path, n, text, note) {
   closeEditor(v);
-  const box = el('div', 'thr note editing');
-  const c = el('div', 'c');
-  const who = el('div', 'who');
-  who.append(agentMark(), el('b', null, 'Agent note'), el('span', 'muted', `· line ${n}`));
+  const k = note ? `note\n${note.id}` : unsentKey(notesKey, path, { k: '+', t: text });
+  v.editor = { path, n, text, note, k, key: `editor:${++editors}` };
+  const b = v.boxes.get(path);
+  if (b?.loaded) drawBox(v, b);
+}
+
+function noteEditor(v) {
+  const { path, n, text, note, k, key } = v.editor;
   const close = () => {
+    if (note) type(folder, 0, k, null);
     closeEditor(v);
     v.scroll.focus({ preventScroll: true });
   };
-  const edit = textBox(`Note for the agent on line ${n}`, note?.body || '', note ? 'Save' : 'Add note', body => {
+  const add = body => {
+    type(folder, 0, k, null);
     if (note) {
       note.body = body;
       note.copiedAt = 0; // the agent has not seen the new text
@@ -674,13 +590,11 @@ function openEditor(v, path, n, text, note) {
     notesChanged([path]);
     page.announce(note ? 'Note saved' : `Note added on line ${n}`);
     v.scroll.focus({ preventScroll: true });
-  }, close, note ? '' : unsentKey(notesKey, path, { k: '+', t: text }));
-  edit.querySelector('textarea').placeholder = 'Note for the agent';
-  c.append(who, edit);
-  box.append(c);
-  v.editor = { path, n, id: note?.id, el: box };
-  const b = v.boxes.get(path);
-  if (b?.loaded) drawBox(v, b);
+  };
+  const labels = { label: `Note for the agent on line ${n}`, text: note?.body, okText: note ? 'Save' : 'Add note', placeholder: 'Note for the agent' };
+  return h('div', { key, class: 'thr note editing' }, h('div', 'c',
+    h('div', 'who', agentMark(), h('b', null, 'Agent note'), h('span', 'muted', `· line ${n}`)),
+    textBox(pull(folder, 0), k, labels, add, close)));
 }
 
 function closeEditor(v) {
@@ -694,8 +608,8 @@ function closeEditor(v) {
 
 // prompt is the text the agent gets: two fixed lines, then each note under its file and line.
 function prompt(picked, threads = []) {
-  const p = prStatus?.pr || data.pr;
-  const words = forgeWords(prStatus);
+  const p = line(folder)?.pr || data.pr;
+  const words = forgeWords(line(folder));
   const pr = p ? ` (${words.short} ${words.num}${p.number})` : '';
   const out = [`Review notes for branch ${data.branch}${pr}.`, 'Fix each one, then say what you changed.'];
   for (const n of picked) {
@@ -744,7 +658,7 @@ function openCopy(button) {
     list.append(li);
     return { n, check };
   });
-  const words = forgeWords(prStatus);
+  const words = forgeWords(line(folder));
   const threadList = el('ul');
   const tpicks = openThreads().sort((a, b) => a.path.localeCompare(b.path) || a.line - b.line).map(t => {
     const used = copiedThreads.has(t.id);

@@ -1,4 +1,4 @@
-import { el, keepFocus } from './api.js';
+import { el, h, patch } from './api.js';
 import { line, setView, isCurrent, LINE_HEIGHT } from './view.js';
 import { lineCount, kind } from './git.js';
 import { onKey, keyLabel } from './keys.js';
@@ -17,7 +17,6 @@ import { onKey, keyLabel } from './keys.js';
 //                          is {k, o, n, t}. label names it ("Add a note on line"); old gives removed
 //                          lines one too; near gives an unchanged line one only that near a change
 //   onTop(path)            the file at the top of the view changed
-//   drawn(v, b)            a box was drawn, optional
 //   marked(f)              the file has threads or notes, for Alt+↓ and Alt+↑
 //   viewed(f), setViewed(f, on)  the viewed mark: 'viewed', 'changed' since, or ''; optional
 //   viewedAt(f)            changes with each mark or clear of f, so a fold made before goes
@@ -42,16 +41,12 @@ const heavy = f => generated(f.path) || lines(f) > BIG;
 const HEAD = 34; // px, a box's sticky header
 const AHEAD = 5 * LINE_HEIGHT + HEAD; // a jump puts its target this far below the top
 
-export function iconButton(svg, label, act) {
-  const b = el('button', 'icon-btn');
-  b.innerHTML = svg; // a fixed string
-  b.setAttribute('aria-label', label);
-  b.dataset.tip = label;
-  b.onclick = e => {
+export function iconButton(svg, label, act, props) {
+  const onclick = e => {
     e.stopPropagation();
     act();
   };
-  return b;
+  return h('button', { class: 'icon-btn', html: svg, data: { tip: label }, onclick, ...props, attrs: { 'aria-label': label, ...props?.attrs } });
 }
 
 // boxView makes the view of a tab of boxes. tab.folds keeps the boxes the user folded or opened;
@@ -81,13 +76,14 @@ async function build(v) {
   scroll.setAttribute('aria-label', v.label || 'Changes');
   v.scroll = scroll;
   v.end = el('p', 'fend');
-  v.viewer.replaceChildren(scroll);
+  patch(v.viewer, scroll);
   // Two screens ahead, so a box is drawn before it shows.
   v.near = new IntersectionObserver(entries => {
     for (const e of entries) {
       const b = e.target.box;
       b.near = e.isIntersecting;
       if (b.near && b.open && (!b.loaded || b.stale)) loadBox(v, b);
+      else if (b.near && b.redo) drawBox(v, b);
     }
   }, { root: scroll, rootMargin: '200% 0px' });
   await updateBoxes(v);
@@ -109,8 +105,9 @@ async function build(v) {
   });
   scroll.addEventListener('keydown', e => viewKey(v, e));
   scroll.addEventListener('click', e => {
-    const row = e.target.closest('.ln[data-n]');
-    if (row && !e.target.closest('button')) setCur(v, row);
+    const row = e.target.closest('.ln');
+    if (row && e.target.closest('.addc')) v.src.add?.on(v, row.closest('.fbox').dataset.path, rowOf(row));
+    else if (row?.dataset.n && !e.target.closest('button')) setCur(v, row);
   });
 }
 
@@ -120,7 +117,7 @@ export function noBoxes(v, text) {
   v.scroll = null;
   v.boxes = new Map();
   v.editor = null;
-  v.viewer.replaceChildren(el('p', 'empty', text));
+  patch(v.viewer, h('p', 'empty', text));
 }
 
 // anchor is the box at the top of the view and how far it is scrolled, so a redraw keeps it there.
@@ -159,7 +156,7 @@ async function updateBoxes(v, change) {
   const els = [...(banner ? [banner] : []), ...[...v.boxes.values()].map(b => b.el)];
   v.end.textContent = files.length ? 'End of the changes' : 'No changes yet';
   if (els.length + 1 !== v.scroll.children.length || els.some((e, i) => v.scroll.children[i] !== e)) {
-    keepFocus(v.scroll, () => v.scroll.replaceChildren(...els, v.end));
+    patch(v.scroll, els, v.end);
     moved = true;
   }
   if (moved) restore(v, a);
@@ -207,9 +204,7 @@ function showOpen(v, b) {
   b.body.hidden = !b.open;
   b.note.hidden = b.open || b.state === 'viewed' || !heavy(b.f);
   if (!b.note.hidden) {
-    const show = el('button', 'more', 'Show');
-    show.onclick = () => fold(v, b, true);
-    b.note.replaceChildren(el('span', null, `${generated(b.f.path) ? 'Generated file' : 'Large diff'}, ${plural(lines(b.f), 'line')} · `), show);
+    patch(b.note, h('span', null, `${generated(b.f.path) ? 'Generated file' : 'Large diff'}, ${plural(lines(b.f), 'line')} · `), h('button', { class: 'more', onclick: () => fold(v, b, true) }, 'Show'));
   }
 }
 
@@ -258,40 +253,23 @@ function drawHead(v, b) {
   const f = b.f;
   const slash = f.path.lastIndexOf('/');
   const name = f.path.slice(slash + 1);
-  const chev = iconButton(ICON.chev, `${b.open ? 'Fold' : 'Open'} ${name}`, () => fold(v, b, !b.open));
-  chev.classList.add('fold');
-  chev.setAttribute('aria-expanded', b.open);
-  const path = el('span', 'fpath');
-  path.title = f.orig ? `${f.orig} → ${f.path}` : f.path;
-  path.append(el('span', 'muted', slash < 0 ? '' : f.path.slice(0, slash + 1)), el('b', f.status === 'D' ? 'deleted' : null, name));
-  const parts = [chev, el('span', `letter ${kind(f.status)}`, f.status), path];
-  const extra = v.src.headParts?.(f) || [];
-  parts.push(...extra.filter(p => p && p.classList?.contains('np')));
-  const lc = lineCount(f.add, f.del);
-  if (lc) parts.push(lc);
-  parts.push(...extra.filter(p => p && !p.classList?.contains('np')));
-  parts.push(el('span', 'grow'));
+  const extra = (v.src.headParts?.(f) || []).filter(Boolean);
+  const np = p => p.classList?.contains('np');
   b.el.classList.toggle('viewed', b.state === 'viewed');
-  if (b.state === 'changed') parts.push(el('span', 'again', 'changed since you viewed it'));
-  if (v.src.setViewed && v.src.viewable?.(f) !== false) {
-    const check = el('label', 'check');
-    const box = el('input');
-    box.type = 'checkbox';
-    box.checked = b.state === 'viewed';
-    box.onchange = () => {
-      if (!v.src.setViewed(b.f, box.checked)) box.checked = !box.checked;
-      v.scroll.focus({ preventScroll: true }); // the header is drawn again; V keeps working
-    };
-    check.append(box, ' Viewed');
-    check.dataset.tip = `Viewed\n${keyLabel('markViewed')}`;
-    parts.push(check);
-  }
-  if (f.status !== 'D' && v.src.openFile) {
-    const open = iconButton(ICON.doc, 'Open the whole file', () => v.src.openFile(f));
-    if (v.src.openTip) open.dataset.tip = v.src.openTip;
-    parts.push(open);
-  }
-  b.head.replaceChildren(...parts);
+  const onchange = e => {
+    if (!v.src.setViewed(b.f, e.currentTarget.checked)) drawHead(v, b); // refused: the box shows the mark again
+    v.scroll.focus({ preventScroll: true }); // so V keeps working
+  };
+  patch(b.head,
+    iconButton(ICON.chev, `${b.open ? 'Fold' : 'Open'} ${name}`, () => fold(v, b, !b.open), { key: 'fold', class: 'icon-btn fold', attrs: { 'aria-expanded': String(b.open) } }),
+    h('span', `letter ${kind(f.status)}`, f.status),
+    h('span', { class: 'fpath', title: f.orig ? `${f.orig} → ${f.path}` : f.path },
+      h('span', 'muted', slash < 0 ? '' : f.path.slice(0, slash + 1)), h('b', f.status === 'D' ? 'deleted' : null, name)),
+    extra.filter(np), lineCount(f.add, f.del), extra.filter(p => !np(p)), h('span', 'grow'),
+    b.state === 'changed' && h('span', 'again', 'changed since you viewed it'),
+    v.src.setViewed && v.src.viewable?.(f) !== false && h('label', { class: 'check', data: { tip: `Viewed\n${keyLabel('markViewed')}` } },
+      h('input', { key: 'viewed', type: 'checkbox', checked: b.state === 'viewed', onchange }), ' Viewed'),
+    f.status !== 'D' && v.src.openFile && iconButton(ICON.doc, 'Open the whole file', () => v.src.openFile(f), { key: 'open', data: { tip: v.src.openTip || 'Open the whole file' } }));
 }
 
 // redraw draws the headers of paths again, and their boxes when they are drawn.
@@ -300,7 +278,8 @@ export function redraw(v, paths) {
     const b = v.boxes.get(path);
     if (!b) continue;
     drawHead(v, b);
-    if (b.loaded) drawBox(v, b);
+    if (b.loaded && b.near) drawBox(v, b);
+    else if (b.loaded) b.redo = true; // drawn when it comes near, so a change costs only the boxes in view
   }
 }
 
@@ -365,86 +344,84 @@ function hunksWith(hunks, extra) {
 export async function drawBox(v, b) {
   const res = b.res;
   const draw = b.draws = (b.draws || 0) + 1; // a newer draw of the box wins over one still waiting
+  b.redo = false;
   b.loaded = true;
   b.body.style.height = '';
   const rows = res.hunks ? res.hunks.flatMap(h => h.lines) : [];
   const deco = (await v.src.decorate?.(v, b, rows)) || {};
   if (!isCurrent(v) || draw !== b.draws) return;
-  const top = deco.top || [];
+  const under = deco.under || new Map();
   if (res.error || res.binary || res.folder || !res.hunks.length) {
     const say = res.error || (res.binary ? 'Binary file changed' : res.folder ? 'Folder with its own git repository'
       : b.f.orig ? `Renamed from ${b.f.orig}, no content changes` : 'No content changes');
-    keepFocus(b.body, () => b.body.replaceChildren(...top, el('p', 'fempty', say), ...(deco.end || []), ...[...(deco.under?.values() || [])].flat()));
+    patch(b.body, deco.top, h('p', 'fempty', say), deco.end, [...under.values()]);
     b.starts = [];
-    v.src.drawn?.(v, b);
     return;
   }
-  const marks = v.src.marks?.(res) || {};
-  const under = deco.under || new Map();
-  const hunks = hunksWith(res.hunks, deco.extra || []);
+  const add = v.src.add;
+  const k = JSON.stringify([deco.extra, add && [add.old, add.near, add.label, add.tip]]);
+  if (b.rows?.json !== b.json || b.rows.k !== k) b.rows = { json: b.json, k, ...diffRows(v, b, hunksWith(res.hunks, deco.extra || [])) };
+  b.body.style.setProperty('--gutter', b.rows.gutter);
+  const out = [deco.top];
+  const placed = new Set();
+  for (const r of b.rows.rows) {
+    out.push(r.el);
+    for (const key of r.keys) {
+      if (placed.has(key) || !under.has(key)) continue;
+      placed.add(key);
+      out.push(under.get(key));
+    }
+  }
+  // What has no line left, as on a deleted file, shows at the end of the box.
+  for (const [key, els] of under) if (!placed.has(key)) out.push(els);
+  patch(b.body, out, deco.end);
+  b.starts = b.rows.starts;
+}
+
+// diffRows makes a box's rows. drawBox keeps them while the diff, the extra lines and the + stay,
+// so most draws only move what is under them. A row's keys name what goes under it: 'n:12', 'o:7'.
+function diffRows(v, b, hunks) {
+  const marks = v.src.marks?.(b.res) || {};
+  const add = v.src.add;
   let maxNo = 0;
   for (const l of hunks.flatMap(h => h.lines)) maxNo = Math.max(maxNo, l.o || 0, l.n || 0);
-  b.body.style.setProperty('--gutter', `${String(maxNo).length + 2}ch`);
-  const out = [...top];
+  const rows = [];
   const starts = [];
-  const placed = new Set();
-  const put = key => {
-    if (placed.has(key) || !under.has(key)) return;
-    placed.add(key);
-    out.push(...under.get(key));
-  };
-  hunks.forEach((h, i) => {
-    const sep = el('div', 'ln sep');
-    sep.append(el('span', 'gut'));
-    const tx = el('span', 'tx');
-    const count = k => h.lines.filter(l => l.k !== k).length;
-    tx.append(`@@ -${h.oldStart},${count('+')} +${h.newStart},${count('-')} @@`);
-    const tag = marks.hunk?.(h);
-    if (tag) tx.append(tag);
-    if (i > 0 || h.newStart > 1 || h.oldStart > 1) {
-      const more = el('button', 'more', 'Show more lines');
-      more.onclick = () => {
-        b.context += 20;
-        loadBox(v, b);
-      };
-      tx.append(more);
-    }
-    sep.append(tx);
-    out.push(sep);
-    const changes = h.lines.flatMap((l, j) => (l.k === ' ' ? [] : [j]));
-    const add = v.src.add;
+  hunks.forEach((hk, i) => {
+    const count = k => hk.lines.filter(l => l.k !== k).length;
+    const more = i > 0 || hk.newStart > 1 || hk.oldStart > 1;
+    const onclick = () => {
+      b.context += 20;
+      loadBox(v, b);
+    };
+    // A description, so the focus stays on Show more lines when the rows are made again.
+    rows.push({ keys: [], el: h('div', { key: `sep:${i}`, class: 'ln sep' }, h('span', 'gut'),
+      h('span', 'tx', `@@ -${hk.oldStart},${count('+')} +${hk.newStart},${count('-')} @@`, marks.hunk?.(hk), more && h('button', { class: 'more', onclick }, 'Show more lines'))) });
+    const changes = hk.lines.flatMap((l, j) => (l.k === ' ' ? [] : [j]));
     const near = j => !add.near || changes.some(c => Math.abs(c - j) <= add.near);
-    h.lines.forEach((l, j) => {
+    hk.lines.forEach((l, j) => {
       const row = line([l.o, l.n], l.x || l.t, `${l.k === '+' ? 'add ch-add' : l.k === '-' ? 'del' : ''}${marks.line?.(l) || ''}`);
-      if (l.k !== ' ' && (j === 0 || h.lines[j - 1].k === ' ')) starts.push(row);
+      if (l.k !== ' ' && (j === 0 || hk.lines[j - 1].k === ' ')) starts.push(row);
       row.dataset.k = l.k;
+      row.dataset.t = l.t;
       if (l.o) row.dataset.o = l.o;
-      if (l.k !== '-') {
-        row.dataset.n = l.n;
-        row.dataset.t = l.t;
-      }
+      if (l.k !== '-') row.dataset.n = l.n;
       if (add && (l.k !== '-' || add.old) && (l.k !== ' ' || near(j))) {
-        const plus = el('button', 'addc');
+        const plus = el('button', 'addc'); // the scroll's click listener runs it
         plus.innerHTML = ICON.plus;
         plus.tabIndex = -1;
         plus.setAttribute('aria-label', `${add.label || 'Add a note on line'} ${l.k === '-' ? l.o : l.n}`);
         plus.dataset.tip = add.tip;
-        plus.onclick = () => add.on(v, b.f.path, l);
         row.insertBefore(plus, row.lastChild);
       }
       if (v.cur?.path === b.f.path && v.cur.n === l.n && l.k !== '-') row.classList.add('cur');
-      out.push(row);
-      if (l.k !== '-') put(`n:${l.n}`);
-      if (l.k !== '+') put(`o:${l.o}`);
+      rows.push({ el: row, keys: [l.k !== '-' && `n:${l.n}`, l.k !== '+' && `o:${l.o}`].filter(Boolean) });
     });
   });
-  // What has no line left, as on a deleted file, shows at the end of the box.
-  for (const [key, els] of under) if (!placed.has(key)) out.push(...els);
-  out.push(...(deco.end || []));
-  keepFocus(b.body, () => b.body.replaceChildren(...out));
-  b.starts = starts;
-  v.src.drawn?.(v, b);
+  return { rows, starts, gutter: `${String(maxNo).length + 2}ch` };
 }
+
+const rowOf = row => ({ k: row.dataset.k, o: Number(row.dataset.o) || 0, n: Number(row.dataset.n) || 0, t: row.dataset.t });
 
 // ----- Keys: the current line, and jumps across boxes -----
 
@@ -489,9 +466,9 @@ async function step(v, dir, pick, has = () => true) {
   for (const b of dir > 0 ? boxes : boxes.reverse()) {
     const top = b.el.offsetTop;
     if (dir > 0 ? top + b.el.offsetHeight < at : top > at) continue;
-    if (!b.loaded) {
+    if (!b.loaded || b.redo) {
       if (!has(b)) continue;
-      await loadBox(v, b);
+      await (b.loaded ? drawBox(v, b) : loadBox(v, b));
       if (!isCurrent(v)) return;
     }
     const ys = pick(b).map(e => offsetIn(v, e));
@@ -519,7 +496,7 @@ onKey('addNote', () => {
   const row = curRow(v);
   if (!row?.querySelector('.addc')) return; // a line the forge takes no comment on
   setCur(v, row);
-  v.src.add.on(v, row.closest('.fbox').dataset.path, { k: row.dataset.k, o: Number(row.dataset.o) || 0, n: Number(row.dataset.n), t: row.dataset.t });
+  v.src.add.on(v, row.closest('.fbox').dataset.path, rowOf(row));
 });
 
 // markCurrent is the key V in the open box view: it marks the current file viewed and goes to the

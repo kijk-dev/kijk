@@ -1,12 +1,10 @@
-import { el, get } from './api.js';
+import { el, h, patch, get } from './api.js';
 import { isCurrent } from './view.js';
-import { boxView, showBoxes, noBoxes, goToBox, redraw, drawBox, marksChanged, oldLineOf } from './boxes.js';
-import { cachedView, loadView, onView } from './prdata.js';
-import { placeForge, threadCount, threadsChanged } from './threads.js';
+import { boxView, showBoxes, noBoxes, goToBox, redraw, drawBox, marksChanged, oldLineOf, plural } from './boxes.js';
+import { pull, read, watch, mark, setSince } from './prstore.js';
+import { placeForge, threadCount } from './threads.js';
 import { lineEditor, moveEditor, threadOpts, writable } from './drafts.js';
 import { keyLabel } from './keys.js';
-import { marksOf, setViewed, onViewed } from './viewed.js';
-import { shown, sinceBar, onSince, ownFile } from './since.js';
 
 // The Changes tab of a pull request: its forge diff in file boxes, with its threads under their
 // lines, and a + on each line that starts a comment for your review. Since your review, it shows
@@ -16,13 +14,11 @@ let hooks = {}; // onTop(n, path), openFile(n, path)
 let view = null;
 const goals = new Map(); // a file to scroll to once the Changes of a pull request show
 
-export function setupChanges(h) {
-  hooks = h;
+export function setupChanges(p) {
+  hooks = p;
 }
 
 const threadsOn = (v, path) => (v.res?.threads || []).filter(t => t.path === path);
-
-const prFile = (v, f) => ownFile(v.res)(f);
 
 // diffOf is the diff of file f in pull request v.n: its forge diff, or since the head from.
 async function diffOf(v, f, context, from) {
@@ -32,7 +28,7 @@ async function diffOf(v, f, context, from) {
     return await get('diff', q);
   } catch (err) {
     if (err.status !== 409) throw err;
-    await loadView(v.root, v.n); // kijk restarted and lost where the forge diff starts
+    await read(v.root, v.n); // kijk restarted and lost where the forge diff starts
     return get('diff', q);
   }
 }
@@ -50,7 +46,6 @@ async function forgeRow(v, f, row) {
 
 function source(v) {
   const { root, n } = v;
-  const redrawFile = path => () => redraw(v, [path]);
   return {
     files: () => v.files || [],
     basis: () => `${v.res?.split} ${v.res?.at} ${v.from}`,
@@ -59,28 +54,28 @@ function source(v) {
     openFile: f => hooks.openFile?.(n, f.path),
     openTip: `Open the whole file\nat ${v.num}${n}`,
     decorate: (v2, b, rows) => {
-      const again = redrawFile(b.f.path);
+      const p = pull(root, n);
       let threads = threadsOn(v, b.f.path);
       if (v.from) {
         // The left side is the head of your last review: only threads on a shown line of the head now.
         const lines = new Set(rows.filter(r => r.k !== '-').map(r => r.n));
         threads = threads.filter(t => t.outdated || (!t.old && lines.has(t.line)));
       }
-      const placed = placeForge(`${n}:${b.f.path}`, rows, threads, { redraw: again, ...threadOpts(root, n, v.res, again) });
+      const placed = placeForge(`${n}:${b.f.path}`, rows, threads, { redraw: () => redraw(v, [b.f.path]), ...threadOpts(p) });
       const e = v.editor;
       if (e?.path === b.f.path) {
         moveEditor(e, rows, v.res.at);
-        if (e.row) placed.under.set(e.key, [...(placed.under.get(e.key) || []), e.el]);
-        else placed.top.push(e.el); // its line is gone: the text stays, at the top of the box
+        if (e.row) placed.under.set(e.key, [...(placed.under.get(e.key) || []), e.draw(p)]);
+        else placed.top.push(e.draw(p)); // its line is gone: the text stays, at the top of the box
       }
       return placed;
     },
     onTop: path => hooks.onTop?.(n, path),
     marked: f => threadsOn(v, f.path).length > 0,
-    viewed: f => (prFile(v, f) && v.marks?.state(prFile(v, f))) || '',
+    viewed: f => (v.own?.(f) && v.marks?.state(v.own?.(f))) || '',
     viewedAt: f => v.marks?.at(f) || 0,
-    viewable: f => !!prFile(v, f),
-    setViewed: (f, on) => !!prFile(v, f) && setViewed(root, n, v.res, prFile(v, f), on),
+    viewable: f => !!v.own?.(f),
+    setViewed: (f, on) => !!v.own?.(f) && mark(root, n, v.own?.(f), on),
     banner: () => v.bar,
   };
 }
@@ -95,48 +90,42 @@ export async function openChanges(viewer, root, tab, keep, save) {
   Object.assign(v.src, source(v));
   v.reload = () => {}; // the forge diff does not follow the files on disk
   view = v;
-  const known = cachedView(root, tab.n);
-  if (known) await show(v, known);
-  else viewer.replaceChildren(el('p', 'empty', `Fetching ${v.num}${tab.n}…`));
-  try {
-    await loadView(root, tab.n);
-  } catch (err) {
-    if (isCurrent(v) && !v.scroll) noBoxes(v, err.message);
-  }
+  const known = pull(root, tab.n).res;
+  if (known) await show(v);
+  else patch(viewer, h('p', 'empty', `Fetching ${v.num}${tab.n}…`));
+  await read(root, tab.n);
+  const why = pull(root, tab.n).why;
+  if (why && isCurrent(v) && !v.scroll) noBoxes(v, why);
 }
 
-onView((root, n, res) => {
-  if (view && isCurrent(view) && view.root === root && view.n === n) show(view, res);
+// A mark that made every file viewed moves your last review: what shows may change.
+watch(root => {
+  const v = view, p = v && isCurrent(v) && v.root === root && pull(root, v.n);
+  if (!p?.res) return;
+  if (p.res !== v.res || p.since?.answer !== v.answer || shownKey(p) !== v.shownKey) return show(v);
+  if (p.marks.seq !== v.marks.seq) {
+    v.marks = p.marks;
+    marksChanged(v);
+  }
+  redraw(v, drawn(v)); // what is busy, refused or typed
 });
 
-onViewed((root, n) => {
-  if (!view || !isCurrent(view) || (root && (view.root !== root || view.n !== n)) || !view.res) return;
-  view.marks = marksOf(view.root, view.n, view.res);
-  // A mark that made every file viewed moves your last review: what shows may change.
-  if (shownKey(shown(view.root, view.n, view.res)) !== view.shownKey) show(view, view.res);
-  else marksChanged(view);
-});
+// drawn are the boxes drawn from the diff they show now; one on its way to a new diff draws with it.
+const drawn = v => [...v.boxes.values()].filter(b => b.loaded && !b.loading && b.basis === v.src.basis()).map(b => b.f.path);
 
-onSince((root, n) => {
-  if (view && isCurrent(view) && view.root === root && view.n === n && view.res) show(view, view.res);
-});
+const shownKey = p => [p.from, p.since?.on, (p.files || []).map(f => f.path + f.blobs).join()].join('\n');
 
-const shownKey = sh => [sh.from, sh.since?.on, sh.since?.answer ? 1 : 0, (sh.files || []).map(f => f.path + f.blobs).join()].join('\n');
-
-async function show(v, res) {
-  const before = v.res;
-  v.res = res;
-  v.marks = marksOf(v.root, v.n, res);
-  const sh = shown(v.root, v.n, res);
-  if (!sh.files) return; // kijk asks what changed since your review; onSince shows it
-  const moved = before && (v.from !== sh.from || v.since !== !!sh.since?.on);
-  v.since = !!sh.since?.on;
+async function show(v) {
+  const before = v.res, p = pull(v.root, v.n), res = p.res;
+  Object.assign(v, { res, marks: p.marks, own: p.own, answer: p.since?.answer, shownKey: shownKey(p) });
+  if (!p.files) return; // kijk asks what changed since your review; its answer shows them
+  const moved = before && (v.from !== p.from || v.since !== !!p.since?.on);
+  v.since = !!p.since?.on;
   // Its row is of the other diff: close it, and + on its line gives the text back.
   if (moved) v.editor = null;
-  v.shownKey = shownKey(sh);
-  v.files = sh.files;
-  v.from = sh.from;
-  v.bar = sh.since?.answer ? sinceBar(v.root, v.n, sh.since, sh.files) : null;
+  v.files = p.files;
+  v.from = p.from;
+  v.bar = p.since?.on && p.since.answer ? sinceBar(v, p.since.answer) : null;
   v.scroll?.setAttribute('aria-label', v.from ? `${v.label} since your review` : v.label);
   // The forge knows no line of the head of your last review, and GitHub takes a comment only on a
   // line of its own diff, which shows 3 lines around a change.
@@ -150,15 +139,24 @@ async function show(v, res) {
   await showBoxes(v);
   if (moved && v.scroll && isCurrent(v)) v.scroll.scrollTop = 0;
   // A new thread or draft leaves the diff as it was, so its box would not draw again by itself.
-  if (before && isCurrent(v)) redraw(v, threadsChanged(before, res, v.files.map(f => f.path)));
+  if (before && isCurrent(v)) redraw(v, drawn(v));
+}
+
+// sinceBar is the bar at the top of Changes in Since your review.
+function sinceBar(v, a) {
+  const bar = el('div', 'sincebar');
+  const back = el('button', 'tool', 'Show all changes');
+  back.onclick = () => setSince(v.root, v.n, false);
+  bar.append(el('span', null, a.note || `Since your review · ${plural(a.commits, 'commit')} · ${plural(v.files.length, 'file')}`), back);
+  return bar;
 }
 
 // openEditor opens the box for a new comment under row l of a file.
 function openEditor(v, path, l) {
   closeEditor(v);
-  const f = prFile(v, { path });
+  const f = v.own?.({ path });
   if (!f) return;
-  v.editor = lineEditor(v.root, v.n, v.res, f, l, () => closeEditor(v, true), row => (v.from ? forgeRow(v, f, row) : null));
+  v.editor = lineEditor(pull(v.root, v.n), f, l, () => closeEditor(v, true), row => (v.from ? forgeRow(v, f, row) : null));
   v.editor.path = path;
   const b = v.boxes.get(path);
   if (b?.loaded) drawBox(v, b);

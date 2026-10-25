@@ -134,6 +134,8 @@ func openPage(t *testing.T, tab context.Context, k *kijkProcess, path string) pa
 			p.log.mu.Unlock()
 		}
 	}()
+	// patch then throws when it makes the focused element again, and noErrors fails the test.
+	p.onEveryPage(`globalThis.kijkCheck = true`)
 	sep := "?"
 	if strings.Contains(path, "?") {
 		sep = "&"

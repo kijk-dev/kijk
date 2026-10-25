@@ -515,6 +515,11 @@ func TestBrowser(t *testing.T) {
 		b.waitFor("one match", `document.querySelectorAll('#prs-list li.prrow').length === 1 && `+prRow(477))
 		b.key("Escape", kb.Escape)
 		b.waitFor("the search cleared", `document.querySelector('#prs-list .prsearch input').value === '' && document.querySelectorAll('#prs-list li.prrow').length === 9`)
+		// The row the keys moved to keeps the Tab stop, so Tab back into the list lands on it.
+		b.key("↓", kb.ArrowDown)
+		b.waitFor("this branch focused", `document.activeElement === `+prRow(482))
+		b.key("↓", kb.ArrowDown)
+		b.waitFor("#477 focused, with the Tab stop", `document.activeElement === `+prRow(477)+` && `+prRow(477)+`.tabIndex === 0 && document.querySelectorAll('#prs-list li.prrow[tabindex="0"]').length === 1`)
 
 		// A teammate's pull request.
 		b.click("#477", prRow(477))
@@ -989,6 +994,12 @@ func TestBrowser(t *testing.T) {
 		saveKey := map[bool]string{false: "Ctrl", true: "⌘"}[b.mac]
 		b.waitFor("not saved yet", box+`.querySelector('.saved').textContent === 'Not saved · `+saveKey+` Enter saves it'`)
 		shots(b, "prs-summary-unsaved")
+		for range len(" Thanks.") {
+			b.key("Backspace", kb.Backspace)
+		}
+		b.waitFor("the forge's summary again: saved", box+`.querySelector('.saved').hidden`)
+		b.typeText(" Thanks.")
+		b.waitFor("not saved again", `!`+box+`.querySelector('.saved').hidden`)
 		forge.settle()
 		if strings.Contains(strings.Join(forge.calls()[n:], "\n"), "updatePullRequestReview(") {
 			t.Fatal("kijk saved the summary on a key press")

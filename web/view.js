@@ -573,6 +573,8 @@ async function load(file, c) {
     const lines = await get('lines', { root: file.root, path: file.path, from: c * CHUNK, to: (c + 1) * CHUNK, ...(file.pr ? { pr: file.pr } : {}) });
     file.chunks.set(c, lines);
     if (current === file) file.render();
+  } catch {
+    // The file went, as during git switch; the refresh that follows shows it.
   } finally {
     file.pending.delete(c);
   }

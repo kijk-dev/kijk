@@ -1,5 +1,4 @@
-import { el, svg } from './api.js';
-import { age } from './prdata.js';
+import { el, svg, h } from './api.js';
 import { plural } from './boxes.js';
 
 // Forge threads as boxes under their lines: open threads with a tinted header, resolved ones folded
@@ -14,6 +13,16 @@ const ICON = {
 const opened = new Set(); // resolved threads the user opened
 const shown = new Set(); // file boxes whose outdated threads show
 
+// age is how long ago an ISO time was, short: 5m, 3h, 2d, 1w.
+export function age(iso) {
+  const s = Math.max(0, (Date.now() - Date.parse(iso)) / 1000);
+  if (!Number.isFinite(s)) return '';
+  if (s < 3600) return `${Math.max(1, Math.floor(s / 60))}m`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h`;
+  if (s < 7 * 86400) return `${Math.floor(s / 86400)}d`;
+  return `${Math.floor(s / (7 * 86400))}w`;
+}
+
 // avatar is a name's first letter on a color from the name; kijk loads no pictures from the forge.
 export function avatar(name) {
   const a = el('span', 'av', (name || '?')[0].toUpperCase());
@@ -25,134 +34,77 @@ export function avatar(name) {
 // comment draws one comment. A draft of yours is a dashed box; drafts, when given, says who wrote
 // it where and gives its text box and its buttons: {where(c), body(c), acts(c)}.
 export function comment(c, drafts) {
-  const box = el('div', `c${c.draft ? ' mine' : ''}`);
-  const who = el('div', 'who');
-  who.append(avatar(c.author), el('b', null, c.author));
-  if (c.at) {
-    const when = el('span', 'muted', age(c.at));
-    when.title = new Date(c.at).toLocaleString();
-    who.append(when);
-  }
-  if (c.draft) {
-    who.append(el('span', 'chip draft', 'Draft'));
-    const where = drafts?.where(c);
-    if (where) who.append(el('span', 'muted', where));
-    const acts = drafts?.acts(c) || [];
-    if (acts.length) {
-      const end = el('span', 'end');
-      end.append(...acts);
-      who.append(end);
-    }
-  }
-  const editor = c.draft && drafts?.body(c);
-  if (editor) {
-    box.append(who, editor);
-    return box;
-  }
-  const body = el('div', 'cbody');
-  if (c.html) body.innerHTML = c.html; // rendered by kijk's server, which drops raw HTML
-  else body.textContent = c.body;
-  for (const a of body.querySelectorAll('a[href]')) {
-    a.target = '_blank';
-    a.rel = 'noopener';
-  }
-  box.append(who, body);
-  return box;
+  const where = c.draft && drafts?.where(c), acts = (c.draft && drafts?.acts(c)) || [];
+  return h('div', { key: c.id, class: `c${c.draft ? ' mine' : ''}` },
+    h('div', 'who', avatar(c.author), h('b', null, c.author), c.at && h('span', { class: 'muted', title: new Date(c.at).toLocaleString() }, age(c.at)),
+      c.draft && h('span', 'chip draft', 'Draft'), where && h('span', 'muted', where), acts.length > 0 && h('span', 'end', acts)),
+    (c.draft && drafts?.body(c)) || (c.html ? h('div', { class: 'cbody', html: c.html, onclick: newTab }) : h('div', 'cbody', c.body)));
 }
 
-// threadEl draws a thread. opts: {redraw(), line, foot, drafts, reply(t), resolve(t, on), error(t)}.
+// The html is rendered by kijk's server, which drops raw HTML; its links open in a new tab.
+export const newTab = e => Object.assign(e.target.closest('a[href]') || {}, { target: '_blank', rel: 'noopener' });
+
+// threadEl draws a thread. opts: {redraw(), line, foot, drafts, reply(t), resolve(t, on), busy(id), error(t)}.
 // foot is Local mode's reply strip, reply(t) forge mode's; line is where it shows, if not its own.
 export function threadEl(t, opts) {
   const line = opts.line || t.line;
+  const key = `t:${t.id}`;
   if (t.resolved && !opened.has(t.id)) {
-    const box = el('div', 'thr folded');
-    box.dataset.id = t.id;
-    box.tabIndex = 0;
-    box.setAttribute('role', 'button');
-    box.setAttribute('aria-expanded', 'false');
-    const first = t.comments[0];
-    const text = el('span');
-    text.append(el('b', null, 'Resolved'), ` · ${first.author}: ${first.body.split('\n')[0]}`);
-    const replies = t.comments.length - 1;
-    if (replies) text.append(` · ${replies} ${replies === 1 ? 'reply' : 'replies'}`);
-    box.append(svg(ICON.chev), svg(ICON.check, 'ok'), text);
-    box.title = `Resolved thread on line ${line}. Click to show it.`;
+    const first = t.comments[0], replies = t.comments.length - 1;
     const open = () => {
       opened.add(t.id);
       opts.redraw();
     };
-    box.onclick = open;
-    box.onkeydown = e => {
+    const onkeydown = e => {
       if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault();
         open();
       }
     };
-    return box;
+    return h('div', { key, class: 'thr folded', data: { id: t.id }, tabIndex: 0, attrs: { role: 'button', 'aria-expanded': 'false' }, title: `Resolved thread on line ${line}. Click to show it.`, onclick: open, onkeydown },
+      h('span', { html: ICON.chev }), h('span', { class: 'ok', html: ICON.check }),
+      h('span', null, h('b', null, 'Resolved'), ` · ${first.author}: ${first.body.split('\n')[0]}`, replies > 0 && ` · ${replies} ${replies === 1 ? 'reply' : 'replies'}`));
   }
-  const box = el('div', `thr${t.resolved ? ' resolved' : ''}${t.draft ? ' draftonly' : ''}`);
-  box.dataset.id = t.id;
-  const head = el('div', 'thead');
-  if (t.draft) {
-    head.append(el('span', null, `New comment · line ${line}`));
-  } else {
-    head.append(svg(ICON.msg), el('span', null, `${t.resolved ? 'Resolved thread' : t.outdated ? 'Outdated thread' : 'Open thread'} · line ${line}`),
-      el('span', 'muted', `· ${plural(t.comments.length, 'comment')}`));
-  }
-  const end = el('span', 'end');
-  if (t.resolved) {
-    if (t.canUnresolve && opts.resolve) end.append(resolveButton(t, 'Unresolve', false, opts));
-    const fold = el('button', 'all', 'Fold');
-    fold.onclick = () => {
-      opened.delete(t.id);
-      opts.redraw();
-    };
-    end.append(fold);
-  } else if (t.canResolve && opts.resolve) {
-    end.append(resolveButton(t, 'Resolve', true, opts));
-  }
-  if (end.firstChild) head.append(end);
-  box.append(head);
-  const why = opts.error?.(t);
-  if (why) box.append(el('p', 'error', why));
-  if (t.outdated && t.was) box.append(el('span', 'was', t.was));
-  for (const c of t.comments) box.append(comment(c, opts.drafts));
-  const foot = opts.foot || (!t.draft && !t.resolved && t.canReply && opts.reply?.(t));
-  if (foot) box.append(foot);
-  return box;
+  const fold = e => {
+    e.stopPropagation(); // the thread is folded before the click gets to it, and would open again
+    opened.delete(t.id);
+    opts.redraw();
+  };
+  const end = t.resolved ? [t.canUnresolve && opts.resolve && resolveButton(t, 'Unresolve', false, opts), h('button', { class: 'all', onclick: fold }, 'Fold')]
+    : [t.canResolve && opts.resolve && resolveButton(t, 'Resolve', true, opts)];
+  return h('div', { key, class: `thr${t.resolved ? ' resolved' : ''}${t.draft ? ' draftonly' : ''}`, data: { id: t.id } },
+    h('div', 'thead', t.draft ? h('span', null, `New comment · line ${line}`) : [h('span', { html: ICON.msg }),
+      h('span', null, `${t.resolved ? 'Resolved thread' : t.outdated ? 'Outdated thread' : 'Open thread'} · line ${line}`),
+      h('span', 'muted', `· ${plural(t.comments.length, 'comment')}`)], end.some(Boolean) && h('span', 'end', end)),
+    opts.error?.(t) && h('p', 'error', opts.error(t)),
+    t.outdated && t.was && h('span', 'was', t.was),
+    t.comments.map(c => comment(c, opts.drafts)),
+    opts.foot || (!t.draft && !t.resolved && t.canReply && opts.reply?.(t)));
 }
 
 function resolveButton(t, text, on, opts) {
-  const b = el('button', 'tool', text);
-  b.dataset.tip = on ? 'Resolve this thread\nIt happens at once' : 'Open this thread again\nIt happens at once';
-  b.onclick = async () => {
-    b.disabled = true;
-    try {
-      await opts.resolve(t, on);
-      if (on) opened.delete(t.id);
-      else opened.add(t.id);
-    } catch { /* the thread shows why */ } finally {
-      b.disabled = false;
-    }
-  };
-  return b;
+  const onclick = () => opts.resolve(t, on).then(() => {
+    if (on) opened.delete(t.id);
+    else opened.add(t.id);
+    opts.redraw();
+  }, () => {}); // the thread shows why
+  const tip = on ? 'Resolve this thread\nIt happens at once' : 'Open this thread again\nIt happens at once';
+  return h('button', { key: 'resolve', class: 'tool', disabled: opts.busy(t.id), data: { tip }, onclick }, text);
 }
 
 // outdatedBar lists the threads whose lines changed after they were written, at the top of a box.
 export function outdatedBar(key, threads, opts) {
-  const bar = el('div', 'fnote obar');
-  const text = el('span');
-  text.append(`${plural(threads.length, 'outdated thread')} `,
-    el('span', 'muted', threads.length === 1 ? '· its lines changed after it was written' : '· their lines changed after they were written'));
-  const show = el('button', 'all', shown.has(key) ? 'Hide' : 'Show');
-  show.onclick = () => {
-    if (shown.has(key)) shown.delete(key);
+  const on = shown.has(key);
+  const onclick = () => {
+    if (on) shown.delete(key);
     else shown.add(key);
     opts.redraw();
   };
-  bar.append(svg(ICON.msg), text, show);
-  if (!shown.has(key)) return [bar];
-  return [bar, ...threads.map(t => threadEl({ ...t, outdated: true }, { ...opts, line: t.line || t.origLine }))];
+  return [h('div', { key: 'obar', class: 'fnote obar' }, h('span', { html: ICON.msg }),
+    h('span', null, `${plural(threads.length, 'outdated thread')} `,
+      h('span', 'muted', threads.length === 1 ? '· its lines changed after it was written' : '· their lines changed after they were written')),
+    h('button', { class: 'all', onclick }, on ? 'Hide' : 'Show')),
+  on && threads.map(t => threadEl({ ...t, outdated: true }, { ...opts, line: t.line || t.origLine }))];
 }
 
 // placeForge puts threads under their rows: by new line, or by old line for a removed one. What

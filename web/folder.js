@@ -1,4 +1,5 @@
 import { el, get, post, base, splitKey, storeKey } from './api.js';
+import { askLine, line } from './prstore.js';
 import { showTree, paint, refreshTree, openFolders, selectFile } from './tree.js';
 import { refreshView, jumpChange, showMessage } from './view.js';
 import { setTabs, tabState, openTab, activeTab, recentFiles, closeActive, goPlace } from './tabs.js';
@@ -34,17 +35,6 @@ const syncText = document.getElementById('sync-text');
 const fetchBtn = document.getElementById('fetch-btn');
 const fetchedEl = el('span');
 const prLine = document.getElementById('prline');
-let pr = null; // pull request status of the open folder
-const prs = new Map(); // last status per folder, shown at once when a folder opens again
-
-// cachedPR also looks in localStorage, so the last status survives a reload.
-function cachedPR(key) {
-  if (!prs.has(key)) {
-    try { prs.set(key, JSON.parse(localStorage.getItem(`kijk.pr:${storeKey(key)}`))); } catch { prs.set(key, null); }
-  }
-  return prs.get(key);
-}
-let prCall = 0;
 let prTimer = 0;
 let upHash = null; // where the upstream was, so a push, also the agent's own, refreshes the PR
 const pushAfterEl = document.getElementById('push-after');
@@ -77,16 +67,18 @@ export function setupFolder(p) {
     openBranch,
     branchHead,
     overviewRow,
+    status: () => git,
   });
   setupPrs({
     announce: p.announce,
     say: p.say,
-    openTab: (t, pin) => { if (!offline) openTab({ ...t, num: forgeWords(pr).num }, pin); },
+    openTab: (t, pin) => { if (!offline) openTab({ ...t, num: forgeWords(line(openKey)).num }, pin); },
     save: saveState,
     setCount: showCount,
     openBranch: () => { if (!offline) openBranch(); },
-    openFile: (n, path) => { if (!offline) openTab({ kind: 'file', path, pr: n, num: forgeWords(pr).num }, true); },
+    openFile: (n, path) => { if (!offline) openTab({ kind: 'file', path, pr: n, num: forgeWords(line(openKey)).num }, true); },
     focusBranch: focusBranchList,
+    status: () => git,
   });
 }
 
@@ -137,9 +129,8 @@ export function openFolder(r, again) {
   sidebarHead.hidden = false;
   showFolderName(r);
   gitNote.hidden = true;
-  pr = cachedPR(r.key);
   upHash = null;
-  showPR(prLine, pr, openFolderPR);
+  showPR(prLine, line(r.key), openFolderPR);
   showPrsTab();
   refreshPR();
   selectTab('files');
@@ -185,7 +176,6 @@ export function closeFolder() {
   offline = false;
   showOffline();
   git = null;
-  pr = null;
   setBranchFolder(null);
   setPrsFolder(null);
   setTabs(null, {}, () => {});
@@ -234,25 +224,17 @@ function reload() {
 }
 
 // An open PR's target branch is what "behind", conflicts and the graph compare with.
-const prTarget = () => ownPR(pr)?.target || '';
+const prTarget = () => ownPR(line(openKey))?.target || '';
 
 // refreshPR asks gh or glab about this branch's pull request: on open, after a push, on Fetch,
 // and every minute while CI runs.
 async function refreshPR() {
   clearTimeout(prTimer);
   if (offline) return;
-  const root = openKey, call = ++prCall;
-  let res;
-  try {
-    res = await get('pr', { root });
-  } catch {
-    res = cachedPR(root); // keep what was shown
-  }
-  prs.set(root, res);
-  try { localStorage.setItem(`kijk.pr:${storeKey(root)}`, JSON.stringify(res)); } catch { /* storage blocked */ }
-  if (root !== openKey || call !== prCall) return;
-  const before = prTarget();
-  pr = res;
+  const root = openKey, before = prTarget();
+  await askLine(root); // on an error the store keeps what was shown
+  if (root !== openKey) return;
+  const pr = line(root);
   if (git?.git) {
     prsBtn.hidden = !git.total && !pr?.forge;
     if (prsEl.hidden === (shownTab() === 'prs')) selectTab(shownTab());
@@ -260,14 +242,13 @@ async function refreshPR() {
   showPR(prLine, pr, openFolderPR);
   showPrsTab();
   if (prTarget() !== before) refreshGit();
-  prsStatus(git, pr);
   if (pr?.pr?.ci === 'running') prTimer = setTimeout(refreshPR, 60000);
 }
 
 async function refreshGit() {
   if (offline) return; // keep what is on screen until the machine is back
   const root = openKey;
-  refreshBranch(git, pr); // at the same time as the status, which takes as long
+  refreshBranch(); // at the same time as the status, which takes as long
   let st;
   try {
     st = await get('status', { root, target: prTarget() });
@@ -279,10 +260,10 @@ async function refreshGit() {
   gitNote.hidden = !st.error;
   gitNote.textContent = st.error || '';
   if (!st.git) return selectTab('files');
-  prsBtn.hidden = !st.total && !pr?.forge;
+  prsBtn.hidden = !st.total && !line(root)?.forge;
   if (!git || prsEl.hidden === (shownTab() === 'prs')) selectTab(shownTab());
   git = st;
-  prsStatus(st, pr);
+  prsStatus();
   if (upHash !== null && st.upHash !== upHash) refreshPR();
   upHash = st.upHash || '';
   paint(filesEl, marks(st));
@@ -441,7 +422,7 @@ const shownTab = () => (sidebar === 'prs' && prsBtn.hidden ? 'git' : sidebar);
 // is the pull requests that wait for your review.
 let waiting = 0;
 function showPrsTab() {
-  const kind = pr?.forge?.kind;
+  const kind = line(openKey)?.forge?.kind;
   const word = FORGE[kind] ? `${FORGE[kind].short}s` : 'Branch';
   const wait = waiting ? `\n${waiting} ${waiting === 1 ? 'waits' : 'wait'} for your review` : '';
   prsBtn.dataset.tip = `${word}${wait}\n${keyLabel('prsTab')}`;

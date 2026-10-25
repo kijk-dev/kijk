@@ -55,29 +55,99 @@ export function el(tag, cls, text) {
   return e;
 }
 
-// svg is an icon in a span; markup is always one of the fixed strings in the code.
-export function svg(markup, cls) {
-  const s = el('span', cls);
+// svg is an icon in a span, or in tag; markup is always one of the fixed strings in the code.
+export function svg(markup, cls, tag = 'span') {
+  const s = el(tag, cls);
   s.innerHTML = markup;
   return s;
 }
 
-// keepFocus runs draw, which may move or rebuild what has the focus in box, and gives the focus
-// back: to the same element, else to the one in its place, with the caret where it was.
-export function keepFocus(box, draw) {
-  const was = document.activeElement;
-  if (was === box || !box.contains(was)) return draw();
-  const caret = typeof was.selectionStart === 'number' && [was.selectionStart, was.selectionEnd];
-  const like = () => [...box.querySelectorAll(was.tagName)].filter(e => same(e) === same(was));
-  const nth = like().indexOf(was);
-  const out = draw();
-  const now = box.contains(was) ? was : like()[nth];
-  if (now && document.activeElement !== now) {
-    now.focus({ preventScroll: true });
-    if (caret && typeof now.selectionStart === 'number') now.setSelectionRange(...caret);
+// icon is the svg element of markup, one of the fixed strings in the code.
+export const icon = markup => Object.assign(document.createElement('template'), { innerHTML: markup }).content.firstChild;
+
+// h describes an element for patch. props is a class name, or {key, class, attrs, data, html,
+// autofocus, and any property, such as onclick, value or disabled}.
+export const h = (tag, props, ...children) => ({ tag, props: typeof props === 'string' ? { class: props } : props || {}, children });
+
+const flat = (list, out = []) => {
+  for (const c of list) {
+    if (Array.isArray(c)) flat(c, out);
+    else if (c != null && c !== false && c !== '') out.push(typeof c === 'number' ? String(c) : c);
   }
   return out;
+};
+
+// patch makes parent's children what the descriptions say: text, descriptions, arrays, null or
+// false, and elements, put as they are. It keeps each element whose tag and key match, in order for
+// those with no key, so what has the focus, a caret or a scroll place keeps it.
+export function patch(parent, ...children) {
+  const want = flat(children);
+  const had = globalThis.kijkCheck && parent.contains(document.activeElement) && document.activeElement;
+  const old = [...parent.childNodes], keyed = new Map(), loose = new Map(), used = new Set();
+  for (const c of old) {
+    const k = c.drawn?.props.key;
+    if (k != null) keyed.set(`${c.nodeName}\n${k}`, c);
+    else if (c.drawn || c.nodeType === 3) (loose.get(c.nodeName) || loose.set(c.nodeName, { at: 0, list: [] }).get(c.nodeName)).list.push(c);
+  }
+  const next = name => {
+    const l = loose.get(name);
+    while (l && l.at < l.list.length) if (!used.has(l.list[l.at++])) return l.list[l.at - 1];
+  };
+  const nodes = want.map(w => {
+    let node = w;
+    if (typeof w === 'string') {
+      node = next('#text') || document.createTextNode(w);
+      if (node.data !== w) node.data = w;
+    } else if (!(w instanceof Node)) {
+      const name = w.tag.toUpperCase();
+      node = w.props.key != null ? keyed.get(`${name}\n${w.props.key}`) : next(name);
+      if (!node || used.has(node)) node = document.createElement(w.tag);
+    }
+    used.add(node);
+    return node;
+  });
+  for (const c of old) if (!used.has(c)) c.remove();
+  let at = parent.firstChild;
+  for (const node of nodes) {
+    if (node === at) at = at.nextSibling;
+    else if (parent.moveBefore && node.isConnected && parent.isConnected) parent.moveBefore(node, at);
+    else parent.insertBefore(node, at);
+  }
+  want.forEach((w, i) => typeof w === 'object' && !(w instanceof Node) && update(nodes[i], w));
+  // For the tests: the focus went because an element was made again instead of kept.
+  if (had && !had.isConnected) {
+    const was = old.find(c => c.contains(had)), before = new Set(old);
+    if (was && nodes.some(n => !before.has(n) && n.nodeName === was.nodeName && n.className === was.className)) {
+      throw new Error(`patch made the focused ${was.nodeName.toLowerCase()}.${was.className} again`);
+    }
+  }
 }
 
-// same tells an element apart from others across a redraw: by its data, its label or its text.
-const same = e => [e.dataset.path, e.dataset.n, e.dataset.k, e.dataset.id, e.getAttribute('aria-label'), e.children.length ? '' : e.textContent].join('\n');
+const LIVE = new Set(['value', 'checked']); // the user changes these, so they compare with the page
+
+function update(node, d) {
+  const was = node.drawn?.props || {}, props = d.props;
+  for (const [k, v] of Object.entries(props)) {
+    if (k === 'attrs' || k === 'data') {
+      const o = was[k] || {};
+      for (const a in v) if (o[a] !== v[a]) k === 'data' ? (node.dataset[a] = v[a]) : node.setAttribute(a, v[a]);
+      for (const a in o) if (!(a in v)) k === 'data' ? delete node.dataset[a] : node.removeAttribute(a);
+    } else if (k === 'class') {
+      if (node.className !== v) node.className = v;
+    } else if (k === 'html') {
+      if (v !== was.html) node.innerHTML = v; // one of the fixed strings in the code
+    } else if (k === 'autofocus') {
+      if (v && !node.drawn) queueMicrotask(() => node.isConnected && node.focus({ preventScroll: true }));
+    } else if (k !== 'key' && (LIVE.has(k) ? node[k] !== v : was[k] !== v || typeof v === 'function')) {
+      node[k] = v;
+    }
+  }
+  for (const [k, v] of Object.entries(was)) {
+    if (k in props) continue;
+    if (k === 'attrs' || k === 'data') for (const a in v) k === 'data' ? delete node.dataset[a] : node.removeAttribute(a);
+    else if (typeof v === 'function' || typeof v === 'boolean') node[k] = typeof v === 'function' ? null : false;
+    else if (k !== 'html') node.removeAttribute(k.toLowerCase());
+  }
+  node.drawn = d;
+  if (props.html == null) patch(node, d.children);
+}
