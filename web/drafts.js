@@ -4,6 +4,7 @@ import { avatar } from './threads.js';
 import { iconButton, plural } from './boxes.js';
 import { forgeMark, forgeWords } from './pr.js';
 import { mac } from './keys.js';
+import { confirm } from './dialog.js';
 
 // Writing a review: drafts on the forge, resolves, the review box and the check before posting.
 // The writes, the text not sent and the refusals are in prstore.js; these draw them.
@@ -306,81 +307,29 @@ function checkRows(p) {
     const k = t.replies.length;
     rows.push(['Replies', elsewhere(el('span', 'v', k > 2 ? String(k) : `${k}, to ${t.replies.map(r => r.to).join(' and ')}`), t.replies)]);
   }
-  if (res.summary?.trim()) rows.push(['Summary', el('span', 'v', res.summary.trim().split('\n')[0])]);
-  return rows.map(([key, value]) => {
-    const li = el('li');
-    li.append(el('span', 'k', key), value);
-    return li;
-  });
+  if (res.summary?.trim()) rows.push(['Summary', res.summary.trim().split('\n')[0]]);
+  return rows;
 }
 
 function openCheck(root, n) {
   const p = pull(root, n), res = p.res;
-  if (document.querySelector('.confirm') || nothing(p)) return;
+  if (nothing(p)) return;
   const w = forgeWords(res);
-  const back = document.activeElement;
-  const shade = el('div', 'backdrop');
-  const box = el('div', 'confirm');
-  box.setAttribute('role', 'dialog');
-  box.setAttribute('aria-modal', 'true');
-  box.setAttribute('aria-labelledby', 'confirm-title');
-  const title = el('h2');
-  title.id = 'confirm-title';
-  title.append(forgeMark(res.forge?.kind || 'github'), `Post your review on ${w.num}${n}?`);
-  const list = el('ul');
-  list.append(...checkRows(p));
-  const error = el('p', 'error');
-  error.hidden = true;
-  const acts = el('div', 'acts');
-  const note = el('span', 'muted', `Everyone on the ${w.kind} sees it at once.`);
-  const cancel = el('button', 'tool', 'Cancel');
-  const ok = el('button', 'primary', 'Post review');
-  acts.append(note, cancel, ok);
-  box.append(title, el('p', 'sub', `${res.title} · ${res.author}`), list, error, acts);
-  const close = () => {
-    shade.remove();
-    box.remove();
-    if (back?.isConnected) back.focus();
-  };
-  const postIt = async () => {
-    if (ok.disabled) return;
-    ok.disabled = cancel.disabled = true;
-    error.hidden = true;
-    note.textContent = 'Posting…';
-    try {
-      await submit(root, n);
-    } catch (err) {
-      error.textContent = err.message;
-      error.hidden = false;
-      note.textContent = `Everyone on the ${w.kind} sees it at once.`;
-      ok.disabled = cancel.disabled = false;
-      told(err);
-      return;
-    }
-    close();
+  confirm({
+    mark: forgeMark(res.forge?.kind || 'github'),
+    title: `Post your review on ${w.num}${n}?`,
+    sub: `${res.title} · ${res.author}`,
+    rows: checkRows(p),
+    note: `Everyone on the ${w.kind} sees it at once.`,
+    busy: 'Posting…',
+    ok: 'Post review',
+    run: () => submit(root, n).catch(err => { told(err); throw err; }),
+  }).then(done => {
+    if (!done) return;
     const said = `Posted your review on ${w.num}${n}`;
     hooks.say?.(said);
     hooks.announce?.(said);
     fetch('/api/count?name=review', { method: 'POST' }).catch(() => {}); // the local kijk counts, also for a remote folder
     hooks.reviewed?.(root, n);
-  };
-  ok.onclick = postIt;
-  cancel.onclick = close;
-  box.onkeydown = e => {
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      e.stopPropagation();
-      if (!cancel.disabled) close();
-    } else if (e.key === 'Enter' && e.target !== cancel) {
-      e.preventDefault();
-      postIt();
-    } else if (e.key === 'Tab') {
-      // The focus stays in the dialog: it goes from one button to the other.
-      e.preventDefault();
-      (document.activeElement === ok ? cancel : ok).focus();
-    }
-  };
-  shade.onclick = () => { if (!cancel.disabled) close(); };
-  document.body.append(shade, box);
-  ok.focus();
+  });
 }

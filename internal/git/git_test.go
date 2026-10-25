@@ -287,7 +287,7 @@ func TestCommitDiffAndPush(t *testing.T) {
 		t.Fatalf("commit diff = %+v, %v", d, err)
 	}
 
-	if out, err := Push(repo); err != nil {
+	if out, err := Push(repo, ""); err != nil {
 		t.Fatalf("push: %v %s", err, out)
 	}
 	if st := status(repo); st.Ahead != 0 {
@@ -306,11 +306,92 @@ func TestPublishBranch(t *testing.T) {
 	if st.Upstream != "" || st.Base != "origin/HEAD" || st.Ahead != 2 {
 		t.Fatalf("status = %+v", st)
 	}
-	if out, err := Push(repo); err != nil {
+	if out, err := Push(repo, ""); err != nil {
 		t.Fatalf("publish: %v %s", err, out)
 	}
 	if st := status(repo); st.Upstream != "origin/feature" || st.Ahead != 0 {
 		t.Fatalf("after publish = %+v", st)
+	}
+}
+
+func TestForcePush(t *testing.T) {
+	gittest.Isolate(t)
+	repo := repoWithOrigin(t)
+	origin, _ := Run(repo, "remote", "get-url", "origin")
+	remote := func(ref string) string {
+		h, _ := Run(origin, "rev-parse", ref)
+		return h
+	}
+	// The local branch has another name than the remote one, so the push must take the upstream's.
+	gittest.Run(t, repo, "checkout", "-qb", "work")
+	gittest.Run(t, repo, "commit", "-q", "--allow-empty", "-m", "one")
+	gittest.Run(t, repo, "push", "-q", "-u", "origin", "work:feat")
+	gittest.Run(t, repo, "checkout", "-q", "main")
+	gittest.Run(t, repo, "commit", "-q", "--allow-empty", "-m", "on main")
+	gittest.Run(t, repo, "push", "-q")
+	gittest.Run(t, repo, "checkout", "-q", "work")
+	gittest.Run(t, repo, "rebase", "-q", "main")
+
+	st := status(repo)
+	if !st.Force || st.Upstream != "origin/feat" || st.Ahead != 2 || st.Behind != 1 {
+		t.Fatalf("after a rebase = %+v", st)
+	}
+	for _, bad := range []string{"zzz", "--force", "abc1"} {
+		if _, err := Push(repo, bad); err != ErrBadHash {
+			t.Errorf("lease %q: %v", bad, err)
+		}
+	}
+	if out, err := Push(repo, st.UpHash); err != nil {
+		t.Fatalf("force push: %v %s", err, out)
+	}
+	head, _ := Run(repo, "rev-parse", "HEAD")
+	if remote("feat") != head {
+		t.Fatal("the force push did not replace origin/feat")
+	}
+	if st := status(repo); st.Force || st.Ahead != 0 || st.Behind != 0 {
+		t.Fatalf("after the force push = %+v", st)
+	}
+
+	// A teammate pushes after kijk showed the upstream, with no fetch: git refuses on the lease.
+	gittest.Run(t, repo, "commit", "-q", "--amend", "--allow-empty", "-m", "one again")
+	shown := status(repo).UpHash
+	mate := filepath.Join(t.TempDir(), "mate")
+	gittest.Run(t, t.TempDir(), "clone", "-q", "-b", "feat", origin, mate)
+	gittest.Run(t, mate, "commit", "-q", "--allow-empty", "-m", "theirs")
+	gittest.Run(t, mate, "push", "-q")
+	theirs := remote("feat")
+	if _, err := Push(repo, shown); err == nil || !strings.Contains(err.Error(), "origin/feat moved") {
+		t.Fatalf("a lease that is not the remote's: %v", err)
+	}
+	// A fetch brings their commit and the page shows it: kijk refuses, since the branch never had it.
+	gittest.Run(t, repo, "fetch", "-q")
+	if st := status(repo); !st.Force || st.UpHash != theirs {
+		t.Fatalf("after the fetch = %+v", st)
+	}
+	if _, err := Push(repo, theirs); err == nil || !strings.Contains(err.Error(), "never had") {
+		t.Fatalf("a lease the branch never had: %v", err)
+	}
+	if remote("feat") != theirs {
+		t.Fatal("their commit was lost")
+	}
+
+	gittest.Run(t, repo, "checkout", "-q", "main")
+	gittest.Run(t, repo, "commit", "-q", "--amend", "--allow-empty", "-m", "on main again")
+	st = status(repo)
+	if st.Force || st.Ahead != 1 || st.Behind != 1 {
+		t.Fatalf("main = %+v", st)
+	}
+	before := remote("main")
+	if _, err := Push(repo, st.UpHash); err == nil || remote("main") != before {
+		t.Fatalf("force push to the main line: %v", err)
+	}
+	// Also when the main line comes from another remote, as in a fork.
+	gittest.Run(t, repo, "remote", "add", "upstream", origin)
+	gittest.Run(t, repo, "fetch", "-q", "upstream")
+	gittest.Run(t, repo, "checkout", "-q", "-b", "mine", "--track", "upstream/main")
+	gittest.Run(t, repo, "commit", "-q", "--amend", "--allow-empty", "-m", "mine")
+	if st := status(repo); st.Force || st.Upstream != "upstream/main" || st.Behind != 1 {
+		t.Fatalf("main of another remote = %+v", st)
 	}
 }
 
@@ -398,7 +479,7 @@ func TestPushWithoutRemote(t *testing.T) {
 	if st.Remote || st.Base != "" || st.Ahead != 0 {
 		t.Fatalf("status = %+v", st)
 	}
-	if _, err := Push(repo); err == nil {
+	if _, err := Push(repo, ""); err == nil {
 		t.Fatal("push without a remote should fail")
 	}
 	if _, err := CommitFiles(repo, "--output=/tmp/x"); err == nil {
