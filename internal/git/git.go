@@ -124,6 +124,7 @@ type Status struct {
 	FetchedAt int64  `json:"fetchedAt,omitempty"` // unix ms of the last fetch
 
 	UpHash string `json:"upHash,omitempty"` // where the upstream is, so the UI notices a push
+	Force  bool   `json:"force,omitempty"`  // a push must replace the upstream, as after a rebase
 
 	Main          string   `json:"main,omitempty"` // compared with: the PR target, else the main line; empty when that is the upstream or this branch
 	MainBehind    int      `json:"mainBehind"`
@@ -174,7 +175,8 @@ func StatusFor(root, target string) Status {
 			st.Ahead, _ = strconv.Atoi(n)
 		}
 	}
-	m := mainRef(root)
+	line := mainRef(root)
+	m := line
 	if t := targetRef(root, target); t != "" {
 		m = t
 	}
@@ -188,6 +190,9 @@ func StatusFor(root, target string) Status {
 	}
 	if st.Upstream != "" && st.Ahead > 0 && st.Behind > 0 {
 		st.UpConflicts = conflictsWith(root, st.Upstream)
+		_, ref := upstreamOf(root, st.Branch)
+		st.Force = ref != "" && line != st.Upstream && line != st.Branch &&
+			strings.TrimPrefix(ref, "refs/heads/") != strings.TrimPrefix(line, "origin/")
 	}
 	if st.Upstream != "" {
 		st.UpHash, _ = Run(root, "rev-parse", "--verify", "-q", "@{upstream}")
@@ -535,17 +540,62 @@ func parseRaw(raw []byte) []change {
 	return out
 }
 
-// Push pushes the current branch, or publishes it to origin when it has no upstream.
+// Push pushes the current branch, or publishes it to origin when it has no upstream. With a lease,
+// the upstream commit the page showed, it replaces the upstream, but only when the status says Force.
 // It never waits for a password: prompts are off and ssh runs in batch mode.
-func Push(root string) (string, error) {
+func Push(root, lease string) (string, error) {
 	st := status(root)
 	if st.Branch == "" {
 		return "", errors.New("HEAD is not on a branch")
+	}
+	if lease != "" {
+		return forcePush(root, st, lease)
 	}
 	if st.Upstream == "" {
 		return network(root, "push", "-u", "origin", "HEAD")
 	}
 	return network(root, "push")
+}
+
+func forcePush(root string, st Status, lease string) (string, error) {
+	if !FullHash(lease) {
+		return "", ErrBadHash
+	}
+	if !st.Force {
+		return "", errors.New("kijk force pushes only a branch that split from its upstream, and never the main line")
+	}
+	if !everOn(root, st.Branch, lease) {
+		return "", fmt.Errorf("%s has commits this branch never had. Rebase onto them, then push.", st.Upstream)
+	}
+	remote, ref := upstreamOf(root, st.Branch)
+	out, err := network(root, "push", "--force-with-lease="+ref+":"+lease, remote, "HEAD:"+ref)
+	if err != nil && strings.Contains(out, "stale info") {
+		return "", fmt.Errorf("%s moved since kijk showed it. Fetch, look at the new commits, then push again.", st.Upstream)
+	}
+	return out, err
+}
+
+// everOn says whether commit c was ever on branch, by its reflog: what --force-if-includes checks,
+// which git skips when the lease names a commit.
+func everOn(root, branch, c string) bool {
+	log, err := Run(root, "reflog", "show", "--format=%H", "refs/heads/"+branch, "--")
+	if err != nil || log == "" {
+		return false
+	}
+	not := "^" + strings.ReplaceAll(log, "\n", "\n^") + "\n"
+	out, err := gitOutput(root, not, "rev-list", "-n1", "--ignore-missing", "--stdin", c)
+	return err == nil && out == ""
+}
+
+// upstreamOf names the remote of branch's upstream and the branch there, such as refs/heads/feat,
+// which can differ from the local name.
+func upstreamOf(root, branch string) (remote, ref string) {
+	out, err := Run(root, "for-each-ref", "--format=%(upstream:remotename)%00%(upstream:remoteref)", "refs/heads/"+branch)
+	remote, ref, _ = strings.Cut(out, "\x00")
+	if err != nil || remote == "" || remote == "." || !strings.HasPrefix(ref, "refs/heads/") {
+		return "", ""
+	}
+	return remote, ref
 }
 
 // Fetch updates the remote branches, so the behind counts and conflict warnings are current.
