@@ -21,8 +21,8 @@ in code, UI text and commit messages.
   folder: `folder.js`, `view.js`, `tabs.js`, `tree.js`, `git.js`, `find.js`, `diagram.js`, `pr.js`,
   the PRs tab (`prs.js` the list and an opened pull request, `review.js` the folder's own branch,
   `boxes.js` the file boxes of Branch changes and Changes, `changes.js`, `threads.js`, `drafts.js`
-  what writes a review, `overview.js` with the checks graph, `prstore.js` what kijk knows about
-  pull requests, with the viewed marks and what changed since your review),
+  what writes a review, `overview.js` with the checks graph and Squash and merge, `prstore.js` what
+  kijk knows about pull requests, with the viewed marks and what changed since your review),
   `layout.js` the Unified / Split choice of every diff, `dialog.js` the confirm dialog before a
   write, `api.js`, `keys.js`, `tip.js`, `viewer.css`, and `engines/` with one file per diagram
   engine.

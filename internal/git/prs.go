@@ -464,6 +464,7 @@ type PR struct {
 	Drafts    int        `json:"drafts"`  // your comments not sent yet
 	Summary   string     `json:"summary"` // of your review, held on the forge until you submit it
 	Write     Write      `json:"write"`
+	Merge     Merge      `json:"merge"`
 
 	rollup   *githubRollup // read into Checks once the head is in the repo
 	pipeline *gitlabPipeline
@@ -552,6 +553,7 @@ func ViewPR(root string, n int) (*PR, *forge, error) {
 	}
 	if pr.State == "merged" || pr.State == "closed" {
 		pr.Write = Write{Note: "This " + f.Word() + " is " + pr.State + "."}
+		pr.Merge = Merge{Why: pr.Write.Note}
 	}
 	return &pr, f, nil
 }
@@ -700,8 +702,10 @@ func gitlabDrafts(f *forge, n int) ([]gitlabDraft, error) {
 const githubPRQuery = `query($owner: String!, $name: String!, $n: Int!) {
   viewer { login }
   repository(owner: $owner, name: $name) {
+    viewerPermission squashMergeAllowed deleteBranchOnMerge
     pullRequest(number: $n) {
-      number title body url state isDraft createdAt headRefName baseRefName headRefOid baseRefOid
+      number title body url state isDraft createdAt headRefName baseRefName headRefOid baseRefOid mergeable mergeStateStatus
+      isCrossRepository headRef { refUpdateRule { allowsDeletions } associatedPullRequests(states: OPEN) { totalCount } }
       additions deletions author { login } commits { totalCount }
       reviewRequests(first: 30) { nodes { requestedReviewer { __typename ... on User { login } ... on Team { name } ... on Bot { login } ... on Mannequin { login } } } }
       latestReviews(first: 30) { nodes { author { login } state } }
@@ -747,7 +751,10 @@ func parseGithubPRView(data []byte, pr *PR) error {
 	var v struct {
 		Viewer     struct{ Login string }
 		Repository *struct {
-			PullRequest *struct {
+			ViewerPermission    string
+			SquashMergeAllowed  *bool
+			DeleteBranchOnMerge bool
+			PullRequest         *struct {
 				githubRowJSON
 				Body           string
 				State          string
@@ -800,6 +807,9 @@ func parseGithubPRView(data []byte, pr *PR) error {
 						}
 					}
 				}
+				Mergeable, MergeStateStatus string
+				IsCrossRepository           bool
+				HeadRef                     *githubHeadRef
 			}
 		}
 	}
@@ -813,6 +823,9 @@ func parseGithubPRView(data []byte, pr *PR) error {
 	*pr = PR{PRRow: p.row(), Body: p.Body, HeadOid: p.HeadRefOid, BaseOid: p.BaseRefOid, Commits: p.Commits.TotalCount,
 		Me: v.Viewer.Login, Reviewers: []Reviewer{}, Comments: []Comment{}, Threads: []Thread{}}
 	pr.State = prState(p.State, p.IsDraft)
+	pr.Merge = githubMerge(pr, githubMergeJSON{ViewerPermission: v.Repository.ViewerPermission, SquashMergeAllowed: v.Repository.SquashMergeAllowed,
+		DeleteBranchOnMerge: v.Repository.DeleteBranchOnMerge, Mergeable: p.Mergeable, MergeStateStatus: p.MergeStateStatus,
+		IsCrossRepository: p.IsCrossRepository, HeadRef: p.HeadRef})
 	seen := map[string]int{}
 	add := func(name, state string) {
 		if i, ok := seen[name]; ok {
@@ -902,6 +915,8 @@ const gitlabPRQuery = `query($path: ID!, $iid: String!) {
   project(fullPath: $path) {
     mergeRequest(iid: $iid) {
       iid title description webUrl state draft createdAt sourceBranch targetBranch diffHeadSha commitCount
+      conflicts squashOnMerge squashReadOnly detailedMergeStatus userPermissions { canMerge removeSourceBranch }
+      sourceProjectId targetProjectId forceRemoveSourceBranch shouldRemoveSourceBranch
       author { username } diffStatsSummary { additions deletions } diffRefs { baseSha headSha startSha }
       approvedBy { nodes { username } }
       reviewers { nodes { username mergeRequestInteraction { approved reviewState } } }
@@ -968,6 +983,7 @@ func parseGitlabPR(data []byte, pr *PR) error {
 					}
 				}
 				HeadPipeline *gitlabPipeline
+				gitlabMergeJSON
 			}
 		}
 	}
@@ -998,6 +1014,7 @@ func parseGitlabPR(data []byte, pr *PR) error {
 		}
 	}
 	pr.State = prState(m.State, m.Draft)
+	pr.Merge = gitlabMerge(pr, m.gitlabMergeJSON)
 	asked := map[string]bool{}
 	for _, r := range m.Reviewers.Nodes {
 		st := "requested"

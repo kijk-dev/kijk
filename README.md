@@ -182,7 +182,24 @@ opens.
   note and never reaches the forge.
 - GitHub does not let you approve your own pull request. GitLab needs version 16.3 for reviews from
   kijk, and 18.9 for Request changes; on an older server kijk says so.
-- kijk never merges.
+
+**Squash and merge.** The Overview has a box under the checks. **Squash and merge…** in it puts
+all the commits of the pull request onto the target branch as one commit.
+
+- It first asks you. The check says how many commits become one, and how the checks stand. Enter
+  merges; Escape goes back. kijk cannot undo a merge.
+- kijk merges only the head it shows. When someone pushed since, kijk refuses and shows the new
+  commits first.
+- GitHub or GitLab writes the commit message.
+- The check has a box to delete the branch on the forge after the merge. On GitLab it is ticked
+  when the merge request or the project says so. There is no box for a branch on a fork, or one
+  you may not delete. When the repo deletes branches itself, the check says so instead. kijk never
+  deletes your local branch. When the delete fails, the merge stands and kijk says why.
+- The button is off, and the box says why, when the pull request is a draft, when you may not
+  merge, when the repo does not allow squash merges, when it has conflicts, or when the forge holds
+  the merge, as for a required review or check. When the forge has not worked out yet if it can
+  merge, the button is on, and the forge says why when it refuses.
+- kijk does not merge with a merge commit or a rebase, and does not set auto-merge.
 
 To diff a pull request, kijk fetches its head commit into your repo as `refs/kijk/pr/<number>`,
 with no checkout. When the target branch on GitHub has commits you have not fetched, kijk puts
