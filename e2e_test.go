@@ -177,6 +177,94 @@ func TestBrowser(t *testing.T) {
 		p.noErrors()
 	})
 
+	t.Run("split diff", func(t *testing.T) {
+		p := p.on(t)
+		write(t, filepath.Join(shop, "src", "util.go"), splitUtil)
+		p.selectAgent("Add the cart", "shop")
+		p.click("the Git tab", gitTab)
+		p.click("main.go", changeRow("main.go"))
+		p.waitFor("the unified diff of main.go", diffRow("add", "const items = 70"))
+		p.waitFor("the layout switch", layoutButton("Unified")+`?.checkVisibility() && `+layoutButton("Unified")+`.getAttribute('aria-pressed') === 'true'`)
+		p.press("find")
+		p.typeText("items")
+		p.waitFor("three matches, unified", `document.querySelector('#findbar .count')?.textContent.endsWith(' of 3') && document.querySelectorAll('#viewer mark.hit').length === 3`)
+		p.key("Escape", kb.Escape)
+		p.click("Split", layoutButton("Split"))
+		p.waitFor("the removed and the added line in one row", `(r => r?.firstChild.matches('.ln.del') && r.firstChild.querySelector('.tx').textContent === 'const items = 7' && r.lastChild.matches('.ln.add'))(`+splitRowOf("const items = 70")+`)`)
+		p.waitFor("the changed words marked", `(r => r.firstChild.querySelector('.w')?.textContent === '7' && r.lastChild.querySelector('.w')?.textContent === '70')(`+splitRowOf("const items = 70")+`)`)
+		p.waitFor("an unchanged line on both sides", `(r => r?.firstChild.querySelector('.tx').textContent === r.lastChild.querySelector('.tx').textContent)(`+splitRowOf("func main() {")+`)`)
+
+		// A match on an unchanged line counts once and shows on the new side.
+		p.press("find")
+		p.typeText("items")
+		p.waitFor("three matches", `document.querySelector('#findbar .count')?.textContent.endsWith(' of 3')`)
+		p.waitFor("the matches on their sides", `[...document.querySelectorAll('#viewer mark.hit')].map(m => m.closest('.srow > .ln').previousElementSibling ? 'new' : 'old').sort().join() === 'new,new,old'`)
+		p.key("Escape", kb.Escape)
+
+		p.click("util.go", changeRow("util.go"))
+		p.waitFor("an added line facing an empty half", `(r => r?.firstChild.matches('.fill') && r.lastChild.matches('.ln.add'))(`+splitRowOf(splitLong)+`)`)
+		p.act("reload", chromedp.Reload())
+		p.waitFor("Split kept after a reload", splitRowOf(splitLong)+` && `+layoutButton("Split")+`.getAttribute('aria-pressed') === 'true'`)
+
+		// A long line wraps in its half, and the row below starts where it ends.
+		wrapped := func(more string) string {
+			return `(r => r.offsetHeight ` + more + ` && r.offsetHeight % 18 === 0 && r.firstChild.offsetHeight === r.offsetHeight && r.nextElementSibling.getBoundingClientRect().top === r.getBoundingClientRect().bottom)(` + splitRowOf(splitLong) + `)`
+		}
+		p.waitFor("the long line wrapped", wrapped("> 18")+` && document.querySelector('#viewer .scroll').scrollWidth === document.querySelector('#viewer .scroll').clientWidth`)
+		height := evalJS[float64](p, splitRowOf(splitLong)+`.offsetHeight`)
+		p.emulate("light", 1800)
+		p.waitFor("the long line in fewer lines when wider", wrapped(fmt.Sprintf("< %v", height)))
+		p.emulate("light", 1400)
+		write(t, filepath.Join(shop, "src", "util.go"), splitUtil+"\n// Changed again.\n")
+		p.waitFor("the change", diffRow("add", "// Changed again.")+` && `+wrapped(fmt.Sprintf("=== %v", height)))
+
+		p.emulate("light", 800)
+		p.waitFor("unified in a narrow view", `!document.querySelector('#viewer .srow') && `+diffRow("add", splitLong)+` && `+layoutButton("Split")+`.disabled && `+layoutButton("Split")+`.dataset.tip === 'Split needs a wider view'`)
+		p.emulate("light", 1400)
+		p.waitFor("split again in a wide view", splitRowOf(splitLong))
+		p.press("gotoFile")
+		p.typeText("util.go")
+		p.waitFor("util.go in the list", `document.querySelector('#goto-list li[title="src/util.go"]')`)
+		p.key("Enter", "\r")
+		p.waitFor("no layout switch on a file", activeFile("util.go")+` && `+viewHas("func total(prices []int) int {")+` && !`+layoutButton("Split")+`.checkVisibility()`)
+		p.click("main.go", changeRow("main.go"))
+		p.click("Unified", layoutButton("Unified"))
+		p.waitFor("unified again", `!document.querySelector('#viewer .srow') && `+diffRow("del", "const items = 7"))
+		p.noErrors()
+
+		// Branch changes: an agent note on the new side sits under the right half.
+		repo := namedRepo(t, "cart")
+		write(t, filepath.Join(repo, "cart.go"), "package cart\n\n// Cart holds the items to buy.\ntype Cart struct {\n\tItems []int\n}\n")
+		run(t, repo, "add", ".")
+		run(t, repo, "commit", "-qm", "Add the cart")
+		run(t, repo, "checkout", "-qb", "map")
+		write(t, filepath.Join(repo, "cart.go"), "package cart\n\n// Cart holds the items to buy, each once, with how many of it the cart holds and what they cost in all.\ntype Cart struct {\n\tItems map[int]int\n}\n")
+		claude := t.TempDir()
+		claudeAgent(t, claude, repo, "Use a map", "idle")
+		b := openPage(t, newTab(t, tab), startKijkIn(t, exe, t.TempDir(), "CLAUDE_CONFIG_DIR="+claude), "/")
+		b.selectAgent("Use a map", "cart")
+		b.waitFor("the PRs tab", `!`+prsTab+`.hidden`)
+		b.press("prsTab")
+		b.waitFor("Branch changes", `document.querySelector('#filetabs .filetab.active')?.textContent.startsWith('Branch changes') && `+fileBox("cart.go"))
+		b.click("Split", layoutButton("Split"))
+		items := `[...(` + fileBox("cart.go") + `?.querySelectorAll('.srow > .ln.add') || [])].find(c => c.querySelector('.tx').textContent === '\tItems map[int]int')`
+		b.waitFor("the added line in the right half", items+`?.previousElementSibling.matches('.ln.del')`)
+		b.waitFor("a change bar on the added half only", `getComputedStyle(`+items+`.querySelector('.gut'), '::after').width === '3px' && getComputedStyle(`+items+`.previousElementSibling.querySelector('.gut'), '::after').content === 'none'`)
+		b.hover("the added line", items)
+		b.click("+", items+`.querySelector('.addc')`)
+		b.waitFor("the note editor", `document.activeElement?.matches('.thr.editing textarea')`)
+		b.typeText("Count each item once.")
+		b.press("submitNote")
+		note := fileBox("cart.go") + `.querySelector('.thr.note:not(.editing)')`
+		b.waitFor("the note under the right half", note+`?.parentElement.matches('.side.r') && `+note+`.getBoundingClientRect().left > `+items+`.getBoundingClientRect().left`)
+		shots(b, "split-branch")
+		comment := `[...` + fileBox("cart.go") + `.querySelectorAll('.srow')].find(r => r.lastChild.querySelector('.tx')?.textContent.startsWith('// Cart holds the items to buy, each once'))`
+		b.waitFor("the long comment wrapped in the box", comment+`?.offsetHeight > 18 && `+fileBox("cart.go")+`.querySelector('.fbody').scrollWidth === `+fileBox("cart.go")+`.querySelector('.fbody').clientWidth`)
+		b.click("Unified", layoutButton("Unified"))
+		b.waitFor("the note under its line, unified", `!document.querySelector('#viewer .srow') && `+boxRow("cart.go", "\tItems map[int]int")+`?.nextElementSibling?.matches('.thr.note')`)
+		b.noErrors()
+	})
+
 	t.Run("branch review", func(t *testing.T) {
 		repo, origin := reviewRepo(t)
 		forge := newFakeForge(t)
@@ -1729,6 +1817,11 @@ func TestBrowser(t *testing.T) {
 				p.click("main.go", changeRow("main.go"))
 				p.waitFor("the diff of main.go", diffRow("add", "const items = 70"))
 			}},
+			{"split", func() {
+				p.click("util.go", changeRow("util.go"))
+				p.click("Split", layoutButton("Split"))
+				p.waitFor("the split diff of util.go", splitRowOf(splitLong))
+			}},
 		}
 		for _, v := range views {
 			v.open()
@@ -1742,6 +1835,7 @@ func TestBrowser(t *testing.T) {
 			}
 			p.emulate("light", 1400)
 		}
+		p.click("Unified", layoutButton("Unified"))
 		p.noErrors()
 		t.Logf("screenshots in %s", dir)
 	})
@@ -2072,6 +2166,22 @@ func boxHas(path, cls, text string) string {
 func lineOf(text, line string) int {
 	return slices.Index(strings.Split(text, "\n"), line) + 1
 }
+
+// layoutButton is a button of the Unified / Split switch.
+func layoutButton(text string) string {
+	return byText("#difflayout button", text)
+}
+
+// splitRowOf is the row of a split diff with a half whose text is text.
+func splitRowOf(text string) string {
+	return fmt.Sprintf(`[...document.querySelectorAll('#viewer .srow')].find(r => [...r.children].some(c => c.querySelector('.tx')?.textContent === %s))`, jsString(text))
+}
+
+// splitLong is a line too long for a half of a split diff; splitUtil adds it to util.go and renames p.
+const (
+	splitLong = "// total adds up the prices of the items in the cart, from the first one to the last one, and gives back the sum of all of them."
+	splitUtil = "package main\n\n" + splitLong + "\nfunc total(prices []int) int {\n\tsum := 0\n\tfor _, price := range prices {\n\t\tsum += price\n\t}\n\treturn sum\n}\n\nfunc prices() []int { return []int{3, 4} }\n"
+)
 
 // changeAt is true when a change starts five lines below the top of the Branch changes view.
 const changeAt = `(s => [...s.querySelectorAll('.fbox:not(.shut) .ln.add, .fbox:not(.shut) .ln.del')].some(r => Math.abs(r.getBoundingClientRect().top - s.getBoundingClientRect().top - 124) < 2))(document.querySelector('.allfiles'))`
