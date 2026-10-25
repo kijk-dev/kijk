@@ -191,7 +191,7 @@ func TestBrowser(t *testing.T) {
 		p.key("Escape", kb.Escape)
 		p.click("Split", layoutButton("Split"))
 		p.waitFor("the removed and the added line in one row", `(r => r?.firstChild.matches('.ln.del') && r.firstChild.querySelector('.tx').textContent === 'const items = 7' && r.lastChild.matches('.ln.add'))(`+splitRowOf("const items = 70")+`)`)
-		p.waitFor("the changed words underlined", `(r => r.firstChild.querySelector('.w')?.textContent === '7' && r.lastChild.querySelector('.w')?.textContent === '70')(`+splitRowOf("const items = 70")+`)`)
+		p.waitFor("the changed words marked", `(r => r.firstChild.querySelector('.w')?.textContent === '7' && r.lastChild.querySelector('.w')?.textContent === '70')(`+splitRowOf("const items = 70")+`)`)
 		p.waitFor("an unchanged line on both sides", `(r => r?.firstChild.querySelector('.tx').textContent === r.lastChild.querySelector('.tx').textContent)(`+splitRowOf("func main() {")+`)`)
 
 		// A match on an unchanged line counts once and shows on the new side.
@@ -206,16 +206,17 @@ func TestBrowser(t *testing.T) {
 		p.act("reload", chromedp.Reload())
 		p.waitFor("Split kept after a reload", splitRowOf(splitLong)+` && `+layoutButton("Split")+`.getAttribute('aria-pressed') === 'true'`)
 
-		// Sideways, the text of both halves moves and the line numbers stay.
-		at := func(part string) string {
-			return `(r => r.lastChild.querySelector('` + part + `').getBoundingClientRect().left)(` + splitRowOf(splitLong) + `)`
+		// A long line wraps in its half, and the row below starts where it ends.
+		wrapped := func(more string) string {
+			return `(r => r.offsetHeight ` + more + ` && r.offsetHeight % 18 === 0 && r.firstChild.offsetHeight === r.offsetHeight && r.nextElementSibling.getBoundingClientRect().top === r.getBoundingClientRect().bottom)(` + splitRowOf(splitLong) + `)`
 		}
-		gut, text := evalJS[float64](p, at(".gut")), evalJS[float64](p, at(".tx"))
-		p.evalJS(`document.querySelector('#viewer .scroll').scrollLeft = 200`)
-		p.settle()
-		p.waitFor("the text moved, the numbers stayed", fmt.Sprintf(`Math.abs(%s - %v) < 1 && Math.abs(%s - %v) < 1`, at(".gut"), gut, at(".tx"), text-200))
+		p.waitFor("the long line wrapped", wrapped("> 18")+` && document.querySelector('#viewer .scroll').scrollWidth === document.querySelector('#viewer .scroll').clientWidth`)
+		height := evalJS[float64](p, splitRowOf(splitLong)+`.offsetHeight`)
+		p.emulate("light", 1800)
+		p.waitFor("the long line in fewer lines when wider", wrapped(fmt.Sprintf("< %v", height)))
+		p.emulate("light", 1400)
 		write(t, filepath.Join(shop, "src", "util.go"), splitUtil+"\n// Changed again.\n")
-		p.waitFor("the change, still scrolled sideways", diffRow("add", "// Changed again.")+` && document.querySelector('#viewer .scroll').scrollLeft === 200 && `+fmt.Sprintf(`Math.abs(%s - %v) < 1`, at(".tx"), text-200))
+		p.waitFor("the change", diffRow("add", "// Changed again.")+` && `+wrapped(fmt.Sprintf("=== %v", height)))
 
 		p.emulate("light", 800)
 		p.waitFor("unified in a narrow view", `!document.querySelector('#viewer .srow') && `+diffRow("add", splitLong)+` && `+layoutButton("Split")+`.disabled && `+layoutButton("Split")+`.dataset.tip === 'Split needs a wider view'`)
@@ -257,11 +258,8 @@ func TestBrowser(t *testing.T) {
 		note := fileBox("cart.go") + `.querySelector('.thr.note:not(.editing)')`
 		b.waitFor("the note under the right half", note+`?.parentElement.matches('.side.r') && `+note+`.getBoundingClientRect().left > `+items+`.getBoundingClientRect().left`)
 		shots(b, "split-branch")
-		body := fileBox("cart.go") + `.querySelector('.fbody')`
-		x := evalJS[float64](b, note+`.getBoundingClientRect().left`)
-		b.evalJS(body + `.scrollLeft = 300`)
-		b.settle()
-		b.waitFor("the note in place when scrolled sideways", fmt.Sprintf(`%s.scrollLeft > 0 && Math.abs(%s.getBoundingClientRect().left - %v) < 1`, body, note, x))
+		comment := `[...` + fileBox("cart.go") + `.querySelectorAll('.srow')].find(r => r.lastChild.querySelector('.tx')?.textContent.startsWith('// Cart holds the items to buy, each once'))`
+		b.waitFor("the long comment wrapped in the box", comment+`?.offsetHeight > 18 && `+fileBox("cart.go")+`.querySelector('.fbody').scrollWidth === `+fileBox("cart.go")+`.querySelector('.fbody').clientWidth`)
 		b.click("Unified", layoutButton("Unified"))
 		b.waitFor("the note under its line, unified", `!document.querySelector('#viewer .srow') && `+boxRow("cart.go", "\tItems map[int]int")+`?.nextElementSibling?.matches('.thr.note')`)
 		b.noErrors()

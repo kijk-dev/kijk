@@ -30,23 +30,67 @@ export function showMessage(viewer, msg) {
   viewer.replaceChildren(typeof msg === 'string' ? el('p', 'empty', msg) : msg);
 }
 
-// virtual renders only the rows on screen; drawRange(first, last) returns their elements.
-// scroll must be in the page already: the first rows are drawn at once, at scrollTop top,
-// so a view that replaces another never shows an empty frame.
-function virtual(scroll, count, width, top, drawRange) {
+// virtual renders only the rows on screen; drawRange(first, last) returns their elements. With lines,
+// lines() gives n(i), the 18px lines row i takes at the scroll's width now. top is px, or a function of
+// topOf. scroll must be in the page: the first rows draw at once, so a new view never shows empty.
+function virtual(scroll, count, width, top, drawRange, lines) {
   const space = el('div', 'space');
   const rows = el('div', 'rows');
   space.style.height = `${count * LINE_HEIGHT}px`;
   space.style.width = width;
   space.append(rows);
   scroll.append(space);
+  let tops = null; // tops[i] is the top of row i, when rows differ in height
+  let wide = -1; // the scroll width tops is for
+  const real = new Map(); // row -> lines, where a drawn row did not take what lines() said
+  const topOf = i => (tops ? tops[i] : i * LINE_HEIGHT);
+  const indexAt = y => { // the row at y px
+    if (!tops) return Math.floor(y / LINE_HEIGHT);
+    let lo = 0, hi = count - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (tops[mid] <= y) lo = mid;
+      else hi = mid - 1;
+    }
+    return Math.max(0, lo);
+  };
+  const measure = () => {
+    const n = lines();
+    tops = new Float64Array(count + 1);
+    for (let i = 0; i < count; i++) tops[i + 1] = tops[i] + (real.get(i) ?? n(i)) * LINE_HEIGHT;
+    space.style.height = `${tops[count]}px`;
+  };
+  // still runs change, then puts the row at the top back where it was.
+  const still = change => {
+    const i = indexAt(scroll.scrollTop), off = scroll.scrollTop - topOf(i);
+    change();
+    scroll.scrollTop = topOf(i) + off;
+  };
   let at = -1; // the scrollTop the rows were drawn for
   const draw = () => {
+    if (lines && scroll.clientWidth && scroll.clientWidth !== wide) {
+      still(() => {
+        wide = scroll.clientWidth;
+        real.clear();
+        measure();
+      });
+    }
     at = scroll.scrollTop;
-    const first = Math.max(0, Math.floor(scroll.scrollTop / LINE_HEIGHT) - 20);
-    const last = Math.min(count, first + 400, Math.ceil((scroll.scrollTop + scroll.clientHeight) / LINE_HEIGHT) + 20);
-    rows.style.transform = `translateY(${first * LINE_HEIGHT}px)`;
-    rows.replaceChildren(...drawRange(first, last));
+    const first = Math.max(0, indexAt(scroll.scrollTop) - 20);
+    const last = Math.min(count, first + 400, indexAt(scroll.scrollTop + scroll.clientHeight) + 21);
+    rows.style.transform = `translateY(${topOf(first)}px)`;
+    const drawn = drawRange(first, last);
+    rows.replaceChildren(...drawn);
+    if (!lines || !scroll.clientWidth) return;
+    let off = false;
+    drawn.forEach((e, k) => {
+      const n = Math.round(e.offsetHeight / LINE_HEIGHT);
+      if (n * LINE_HEIGHT !== topOf(first + k + 1) - topOf(first + k)) {
+        real.set(first + k, n);
+        off = true;
+      }
+    });
+    if (off) still(measure);
   };
   let frame = 0;
   const render = () => {
@@ -56,9 +100,13 @@ function virtual(scroll, count, width, top, drawRange) {
   // A sideways scroll brings no row into view, so it draws nothing again.
   scroll.addEventListener('scroll', () => { if (scroll.scrollTop !== at) render(); });
   new ResizeObserver(render).observe(scroll);
-  scroll.scrollTop = top;
+  if (lines && scroll.clientWidth) {
+    wide = scroll.clientWidth;
+    measure();
+  }
+  scroll.scrollTop = typeof top === 'function' ? top(topOf) : top;
   draw();
-  return render;
+  return { render, topOf, indexAt };
 }
 
 // setView makes another kind of view, such as Branch changes, the open view: {kind, scroll, reload(change), jump(dir)}.
@@ -136,6 +184,24 @@ export function splitRow(row, key, cls) {
   return out;
 }
 
+// wrapped is how many lines text takes in fit cells, wrapped as pre-wrap does: at spaces, which hang at
+// the end of a line, and inside a word only when it is longer than a line.
+function wrapped(text, fit) {
+  let lines = 1, col = 0;
+  for (const [, word, space] of text.matchAll(/(\S*)(\s*)/g)) {
+    const w = [...word].length;
+    if (col > 0 && col + w > fit) {
+      lines++;
+      col = 0;
+    }
+    const more = Math.max(0, Math.ceil(w / fit) - 1);
+    lines += more;
+    col += w - more * fit;
+    for (const c of space) col = c === '\t' ? col + 4 - (col % 4) : col + 1;
+  }
+  return lines;
+}
+
 const TOKEN = /\w+|\s+|[^\w\s]/g;
 const MAX_TOKENS = 500; // the word diff takes tokens², so a minified line gets no marks
 
@@ -193,7 +259,7 @@ export function reveal(key, flashIt) {
   if (!current?.scroll || current.kind === 'rendered') return;
   const { scroll } = current;
   const i = current.kind === 'file' ? key - 1 : key;
-  const top = i * LINE_HEIGHT;
+  const top = current.topOf(i);
   if (top < scroll.scrollTop + LINE_HEIGHT || top > scroll.scrollTop + scroll.clientHeight - 2 * LINE_HEIGHT) {
     scroll.scrollTop = Math.max(0, top - scroll.clientHeight / 3);
   }
@@ -292,14 +358,14 @@ export async function openFile(viewer, root, path, keep, md) {
   file.lines = info.lines;
   file.gotoLine = n => reveal(Math.min(Math.max(1, n), info.lines), true);
   file.starts = info.changes.map(c => (c.kind === 'del' ? c.start : c.start - 1));
-  file.render = virtual(scroll, info.lines, `calc(${gutter} + ${info.maxCols + 4}ch)`, scrollTop, (first, last) => {
+  Object.assign(file, virtual(scroll, info.lines, `calc(${gutter} + ${info.maxCols + 4}ch)`, scrollTop, (first, last) => {
     for (let c = Math.floor(first / CHUNK); c * CHUNK < last; c++) load(file, c);
     const out = [];
     for (let n = first; n < last; n++) {
       out.push(line([n + 1], file.chunks.get(Math.floor(n / CHUNK))?.[n % CHUNK] ?? '', marks[n], n + 1));
     }
     return out;
-  });
+  }));
   viewChanged();
 }
 
@@ -724,7 +790,7 @@ export async function openDiff(viewer, root, change, mode, context = 3, keep, md
   let maxNo = 0, cols = 0;
   for (const l of res.hunks.flatMap(h => h.lines)) {
     maxNo = Math.max(maxNo, l.o || 0, l.n || 0);
-    cols = Math.max(cols, split ? l.t.replaceAll('\t', '    ').length : l.t.length);
+    cols = Math.max(cols, l.t.length);
   }
   const digits = String(maxNo).length;
   const scroll = el('div', split ? 'scroll diff halves' : 'scroll diff');
@@ -732,19 +798,20 @@ export async function openDiff(viewer, root, change, mode, context = 3, keep, md
   scroll.style.setProperty('--gutter', gutter);
   viewer.replaceChildren(bar, scroll);
   d.scroll = scroll;
-  const slide = () => scroll.style.setProperty('--sx', `${scroll.scrollLeft}px`);
-  if (split) { // the rows are as wide as the view, and --sx moves their text sideways
-    const fit = () => scroll.style.setProperty('--vw', `${scroll.clientWidth}px`);
-    fit();
-    new ResizeObserver(fit).observe(scroll);
-    scroll.addEventListener('scroll', slide);
-  }
+  // A split row takes the lines its longer half needs; virtual corrects a guess that misses.
+  const lines = split && (() => {
+    const probe = scroll.appendChild(el('span', 'probe', 'x'.repeat(100)));
+    const ch = probe.getBoundingClientRect().width / 100;
+    probe.remove();
+    const fit = Math.max(1, Math.floor((scroll.clientWidth / 2 - 1) / ch) - digits - 3); // gutter, padding
+    return i => (rows[i].sep ? 1 : Math.max(wrapped(rows[i].l?.t ?? '', fit), wrapped(rows[i].r?.t ?? '', fit)));
+  });
   const at = keep?.line ? rows.findIndex(r => r.r?.n === keep.line) : -1;
-  const top = at >= 0 ? at * LINE_HEIGHT - keep.offset : keep ? keep.scrollTop : Math.max(0, ((d.starts[0] ?? 0) - 5) * LINE_HEIGHT);
+  const top = topOf => (at >= 0 ? topOf(at) - keep.offset : keep ? keep.scrollTop : topOf(Math.max(0, (d.starts[0] ?? 0) - 5)));
   d.relayout = () => { // the new-side line at the top stays where it is
-    const first = Math.floor(scroll.scrollTop / LINE_HEIGHT);
+    const first = d.indexAt(scroll.scrollTop);
     const i = rows.findIndex((r, j) => j >= first && r.r);
-    again(context, { scrollTop: scroll.scrollTop, line: rows[i]?.r.n, offset: i * LINE_HEIGHT - scroll.scrollTop, res, openedAt: d.openedAt });
+    again(context, { scrollTop: scroll.scrollTop, line: rows[i]?.r.n, offset: d.topOf(i) - scroll.scrollTop, res, openedAt: d.openedAt });
   };
   d.rows = rows;
   d.lines = maxNo;
@@ -754,9 +821,8 @@ export async function openDiff(viewer, root, change, mode, context = 3, keep, md
     if (i >= 0) reveal(i, true);
   };
   const cls = l => (l.k === '+' ? 'add' : l.k === '-' ? 'del' : '');
-  // Split: a half shows the longest line once the view scrolls as far as it goes.
-  const width = split ? `max(100%, calc(50% + ${cols + 2}ch + ${gutter}))` : `calc(${gutter} * 2 + ${cols + 6}ch)`;
-  d.render = virtual(scroll, rows.length, width, top, (first, last) => {
+  const width = split ? '100%' : `calc(${gutter} * 2 + ${cols + 6}ch)`;
+  Object.assign(d, virtual(scroll, rows.length, width, top, (first, last) => {
     const out = [];
     for (let i = first; i < last; i++) {
       const r = rows[i];
@@ -774,11 +840,8 @@ export async function openDiff(viewer, root, change, mode, context = 3, keep, md
       }
     }
     return out;
-  });
-  if (keep?.scrollLeft) {
-    scroll.scrollLeft = keep.scrollLeft;
-    slide();
-  }
+  }, lines));
+  if (keep?.scrollLeft) scroll.scrollLeft = keep.scrollLeft;
   viewChanged();
 }
 
@@ -1031,9 +1094,9 @@ export function jumpChange(dir) {
   if (current?.jump) return current.jump(dir);
   if (!current?.scroll || !current.starts) return false;
   const { scroll, starts } = current;
-  const at = Math.floor(scroll.scrollTop / LINE_HEIGHT) + 5;
+  const at = current.indexAt(scroll.scrollTop) + 5;
   const target = dir < 0 ? starts.findLast(s => s < at) : starts.find(s => s > at);
-  if (target != null) scroll.scrollTop = Math.max(0, (target - 5) * LINE_HEIGHT);
+  if (target != null) scroll.scrollTop = current.topOf(Math.max(0, target - 5));
   return true;
 }
 

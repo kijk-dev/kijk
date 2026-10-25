@@ -199,7 +199,6 @@ function newBox(v, f) {
   b.body.style.height = `${height}px`;
   b.el.style.containIntrinsicSize = `auto ${height + HEAD}px`;
   b.el.append(b.head, b.note, b.body);
-  b.body.addEventListener('scroll', () => b.body.style.setProperty('--sx', `${b.body.scrollLeft}px`));
   b.el.dataset.path = f.path;
   b.el.box = b;
   showOpen(v, b);
@@ -382,7 +381,6 @@ export async function drawBox(v, b) {
   if (b.rows?.json !== b.json || b.rows.k !== k) b.rows = { json: b.json, k, ...diffRows(v, b, hunksWith(res.hunks, deco.extra || []), split) };
   b.body.classList.toggle('halves', split);
   b.body.style.setProperty('--gutter', b.rows.gutter);
-  b.body.style.setProperty('--cols', b.rows.cols);
   const out = [deco.top];
   const placed = new Set();
   for (const r of b.rows.rows) {
@@ -405,11 +403,8 @@ export async function drawBox(v, b) {
 function diffRows(v, b, hunks, split) {
   const marks = v.src.marks?.(b.res) || {};
   const add = v.src.add;
-  let maxNo = 0, cols = 0;
-  for (const l of hunks.flatMap(h => h.lines)) {
-    maxNo = Math.max(maxNo, l.o || 0, l.n || 0);
-    cols = Math.max(cols, l.t.replaceAll('\t', '    ').length);
-  }
+  let maxNo = 0;
+  for (const l of hunks.flatMap(h => h.lines)) maxNo = Math.max(maxNo, l.o || 0, l.n || 0);
   const rows = [];
   const starts = [];
   const cls = l => `${l.k === '+' ? 'add ch-add' : l.k === '-' ? 'del' : ''}${marks.line?.(l) || ''}`;
@@ -456,7 +451,7 @@ function diffRows(v, b, hunks, split) {
       rows.push({ el: row, keys: [r.r && `n:${r.r.n}`, r.l && `o:${r.l.o}`].filter(Boolean) });
     });
   });
-  return { rows, starts, cols, gutter: `${String(maxNo).length + 2}ch` };
+  return { rows, starts, gutter: `${String(maxNo).length + 2}ch` };
 }
 
 const rowOf = row => ({ k: row.dataset.k, o: Number(row.dataset.o) || 0, n: Number(row.dataset.n) || 0, t: row.dataset.t });
