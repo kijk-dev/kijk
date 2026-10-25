@@ -51,6 +51,7 @@ export function confirm({ mark, title, sub, rows = [], note, busy, ok: okText, r
         error.hidden = false;
         said.textContent = note;
         ok.disabled = cancel.disabled = false;
+        ok.focus(); // the disabled button lost it, and Escape and Tab need it in the dialog
         return;
       }
       close(true);
