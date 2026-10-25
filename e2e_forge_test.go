@@ -44,6 +44,7 @@ case "$* $in" in
 *"deletePullRequestReviewComment("*) m=delete ;;
 *"unresolveReviewThread("*) m=unresolve ;;
 *"resolveReviewThread("*) m=resolve ;;
+*"mergePullRequest("*) m=merge ;;
 *"pullRequests(states"*) f=gh-list.json ;;
 *"search(query"*) f=gh-search.json ;;
 *"pullRequest(number"*) f="gh-pr-$(printf '%%s' "$in" | sed -n 's/.*"n":\([0-9]*\).*/\1/p').json" ;;
@@ -73,6 +74,7 @@ case "$*" in
 *" version") f="glab-version-$host.json" ;;
 */draft_notes/bulk_publish*) m=publish ;;
 *"--method POST "*/approve) m=approve ;;
+*"--method PUT "*"/merge "*) m=merge ;;
 *"--method PUT "*/draft_notes/*) m=put ;;
 *"--method POST "*/draft_notes*) m=draft ;;
 */draft_notes) f=glab-drafts.json ;;

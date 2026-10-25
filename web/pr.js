@@ -18,7 +18,7 @@ export const forgeWords = res => FORGE[res?.forge?.kind] || FORGE.github;
 // ownPR is the pull request of the PR line's answer res while it is open: the folder's own one.
 export const ownPR = res => (['open', 'draft'].includes(res?.pr?.state) ? res.pr : null);
 
-const MERGE = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 0 0 9 9"/></svg>';
+export const MERGE = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 0 0 9 9"/></svg>';
 const STATE = { draft: 'Draft', merged: 'Merged', closed: 'Closed' };
 
 const link = (cls, href, props, ...children) => h(href ? 'a' : 'span', { class: cls, ...(href && { href, target: '_blank', rel: 'noopener' }), ...props }, children);

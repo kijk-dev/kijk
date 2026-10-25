@@ -55,6 +55,7 @@ export function setupPrs(p) {
     own: n => n === own(folder) && onBranch(),
     say: p.say,
     announce: p.announce,
+    merged: root => { if (root === folder) askLists(true); },
   });
 }
 

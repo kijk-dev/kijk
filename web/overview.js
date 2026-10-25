@@ -1,16 +1,17 @@
 import { el, h, get, patch } from './api.js';
 import { setView, isCurrent } from './view.js';
-import { pull, read, watch } from './prstore.js';
+import { pull, read, watch, write } from './prstore.js';
 import { avatar, comment, age, newTab } from './threads.js';
-import { forgeWords } from './pr.js';
+import { forgeWords, forgeMark, MERGE } from './pr.js';
 import { mac } from './keys.js';
 import { threadOpts, writable, summarySlot, commentFoot } from './drafts.js';
+import { confirm } from './dialog.js';
 
-// The Overview tab of a pull request: title, reviewers, description, checks as graphs and the
-// conversation. Tab n 0 is the folder's own branch before it has a pull request.
+// The Overview tab of a pull request: title, reviewers, description, checks as graphs, Squash and
+// merge and the conversation. Tab n 0 is the folder's own branch before it has a pull request.
 
 // hooks: branch(): {branch, base, ahead, forge, create}, with forge as in the PR line's answer;
-// own(n), whether n is the branch's pull request; say(text) and announce(text).
+// own(n), whether n is the branch's pull request; say(text) and announce(text); merged(root).
 let hooks = {};
 let view = null;
 let asList = false; // the checks show as a list, not graphs
@@ -91,6 +92,7 @@ function content(v, res) {
     })),
     res.bodyHtml ? h('div', { key: 'desc', class: 'desc', html: res.bodyHtml, onclick: newTab }) : h('div', { key: 'nodesc', class: 'desc' }, h('p', 'muted', 'No description.')),
     checks(v, res, words),
+    mergeBox(v, res),
     h('h2', { key: 'talk' }, 'Conversation', h('span', 'muted', said ? `${said} ${said === 1 ? 'comment' : 'comments'}` : 'no comments yet')),
     // Where kijk may write, the conversation ends in your drafts, your summary and a box for more.
     (res.comments.length || writable(res)) && v.conv,
@@ -103,15 +105,21 @@ function drawConv(v) {
   patch(v.conv, p.res.comments.map(c => comment(c, drafts)), writable(p.res) && [summarySlot(p), commentFoot(p)]);
 }
 
+// ciSaid sums up the checks of the head, such as "1 failed · 1 cancelled" or "all passed".
+function ciSaid(c) {
+  if (!c || (!c.groups.length && !c.other?.length)) return 'none';
+  const jobs = [...c.groups.flatMap(g => g.jobs), ...(c.other || [])];
+  const count = st => jobs.filter(j => j.state === st).length;
+  const said = [['bad', 'failed'], ['cancel', 'cancelled'], ['run', 'running'], ['wait', 'waiting'], ['skip', 'skipped']]
+    .filter(([st]) => count(st)).map(([st, word]) => `${count(st)} ${word}`);
+  return said.length ? said.join(' · ') : 'all passed';
+}
+
 // checks are the CI of the head: a graph per workflow run or pipeline, the end of each failed
 // job's log, and the checks of other apps.
 function checks(v, res, words) {
   const c = res.checks;
   if (!c || (!c.groups.length && !c.other?.length)) return h('h2', { key: 'ci' }, words.ci, h('span', 'muted', 'none'));
-  const jobs = [...c.groups.flatMap(g => g.jobs), ...(c.other || [])];
-  const count = st => jobs.filter(j => j.state === st).length;
-  const said = [['bad', 'failed'], ['cancel', 'cancelled'], ['run', 'running'], ['wait', 'waiting'], ['skip', 'skipped']]
-    .filter(([st]) => count(st)).map(([st, word]) => `${count(st)} ${word}`);
   // A graph stays while its run is the same, with the lines drawEdges put in it.
   const was = v.graphs || new Map();
   v.graphs = new Map();
@@ -123,7 +131,7 @@ function checks(v, res, words) {
   const run = words.ci === 'Pipeline' ? 'pipeline' : 'run';
   const own = hooks.own?.(res.number);
   return [
-    h('h2', { key: 'ci' }, words.ci, h('span', 'muted', said.length ? said.join(' · ') : 'all passed'),
+    h('h2', { key: 'ci' }, words.ci, h('span', 'muted', ciSaid(c)),
       c.groups.some(g => g.graph) && h('span', { class: 'mode h2mode', attrs: { role: 'group', 'aria-label': 'Show as' } },
         [[false, 'Graph'], [true, 'List']].map(([list, text]) => h('button', {
           key: text, attrs: { 'aria-pressed': String(asList === list) },
@@ -240,6 +248,42 @@ async function copyFailure(res, j, lines, pre, words) {
   hooks.say?.(`Copied the failure of ${j.name}`);
   hooks.announce?.(`Copied the failure of ${j.name}`);
   fetch('/api/count?name=agent-copy', { method: 'POST' }).catch(() => {}); // the local kijk counts, also for a remote folder
+}
+
+const squashed = res => (res.commits === 1 ? `1 commit goes onto ${res.base} as a new commit` : `${res.commits} commits become one commit on ${res.base}`);
+
+// mergeBox is Squash and merge, under the checks as on the forge. When kijk may not merge, the
+// button is off and the box says why.
+function mergeBox(v, res) {
+  const m = res.merge;
+  if (!m || ['merged', 'closed'].includes(res.state)) return null;
+  return h('div', { key: 'merge', class: `mergebox${m.ok ? ' ok' : ''}` },
+    h('span', { class: 'mi', html: m.ok ? MERGE : ICON.skip }),
+    h('div', 'grow', h('b', null, m.ok ? 'Ready to merge' : 'Cannot merge'), h('div', 'hint', m.ok ? `${squashed(res)}.` : m.why)),
+    h('button', { class: 'primary', disabled: !m.ok, data: m.ok ? {} : { tip: m.why }, onclick: () => openMerge(v.root, res.number) }, 'Squash and merge…'));
+}
+
+// openMerge asks before the merge, which kijk cannot undo, then shows the pull request merged.
+function openMerge(root, n) {
+  const res = pull(root, n).res, w = forgeWords(res), ref = `${w.num}${n}`;
+  confirm({
+    mark: forgeMark(res.forge?.kind || 'github'),
+    title: `Squash and merge ${ref} into ${res.base}?`,
+    sub: `${res.title} · ${res.author}`,
+    rows: [['Commits', squashed(res)], [w.ci, el('span', `v ${{ failed: 'bad', passed: 'ok' }[res.ci] || ''}`, ciSaid(res.checks))]],
+    note: 'It cannot be undone from kijk.',
+    busy: 'Merging…',
+    ok: 'Squash and merge',
+    run: () => write(root, n, 'merge', 'merge', {}).catch(err => {
+      read(root, n, true); // the forge may say now why it refused
+      throw err;
+    }),
+  }).then(done => {
+    if (!done) return;
+    hooks.say?.(`Merged ${ref}`);
+    hooks.announce?.(`Merged ${ref}`);
+    hooks.merged?.(root);
+  });
 }
 
 function drawBranch(v) {

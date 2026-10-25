@@ -1381,6 +1381,93 @@ func TestBrowser(t *testing.T) {
 			t.Fatal("kijk read drafts on GitLab 15.11")
 		}
 		b.noErrors()
+
+		// A merge is no review, so 15.11 takes it: a squash, of the head on screen.
+		merged := obj{}
+		for k, v := range mr {
+			merged[k] = v
+		}
+		merged["state"] = "merged"
+		forge.after(t, "merge", "glab-pr-12.json", ghData(obj{"currentUser": obj{"username": "you"}, "project": obj{"mergeRequest": merged}}))
+		b.click("Overview", prsRow("Overview"))
+		b.click("Squash and merge…", `document.querySelector('.md.ov .mergebox button.primary')`)
+		dialog := `document.querySelector('.confirm[role=dialog]')`
+		b.waitFor("the check in GitLab's words", dialog+`?.querySelector('h2').textContent === 'Squash and merge !12 into main?' && `+
+			`[...`+dialog+`.querySelectorAll('li')].map(l => l.textContent).join('|') === 'Commits1 commit goes onto main as a new commit|Pipelinenone'`)
+		n = len(forge.calls())
+		b.click("Squash and merge", dialog+`.querySelector('button.primary')`)
+		forge.waitFor(t, n, `--method PUT projects/acme%2Freview/merge_requests/12/merge -H Content-Type: application/json --input - {"sha":"`+mr["diffHeadSha"].(string)+`","squash":true}`)
+		b.waitFor("merged", `!document.querySelector('.confirm') && document.querySelector('#statusbar').textContent.includes('Merged !12') && document.querySelector('.md.ov h1') && !document.querySelector('.md.ov .mergebox')`)
+		b.noErrors()
+	})
+
+	t.Run("squash and merge", func(t *testing.T) {
+		repo, origin := reviewRepo(t)
+		forge := newFakeForge(t)
+		reviewForge(t, forge, repo, origin, false)
+		theirs := gitOut(t, origin, "rev-parse", "refs/pull/477/head")
+		main := gitOut(t, repo, "rev-parse", "origin/main")
+		// answer is #477 in state, with what GitHub says about merging it.
+		answer := func(state, mergeable string) obj {
+			o := pr477(theirs, main, func(ts []obj) []obj { return ts })
+			r := o["data"].(obj)["repository"].(obj)
+			r["viewerPermission"], r["squashMergeAllowed"] = "WRITE", true
+			pr := r["pullRequest"].(obj)
+			pr["state"], pr["mergeable"], pr["mergeStateStatus"] = state, mergeable, "CLEAN"
+			return o
+		}
+		forge.set(t, "gh-pr-477.json", answer("OPEN", "CONFLICTING"))
+		forge.set(t, "gh-target.json", ghData(obj{"repository": obj{"pullRequest": obj{"id": "PR_477", "headRefOid": theirs, "reviews": obj{"nodes": []obj{}}}}}))
+		claude := t.TempDir()
+		claudeAgent(t, claude, repo, "Fix the login", "idle")
+		k := startKijkIn(t, exe, t.TempDir(), "CLAUDE_CONFIG_DIR="+claude, forge.env())
+		b := openPage(t, newTab(t, tab), k, "/")
+		b.selectAgent("Fix the login", "review")
+		b.waitFor("the PRs tab", prsTab+`.querySelector('.tabcount')?.textContent === '2'`)
+		b.press("prsTab")
+		b.click("#477", prRow(477))
+		b.click("Overview", prsRow("Overview"))
+
+		// GitHub says it has conflicts: the button is off, and the box under the checks says why.
+		box := `document.querySelector('.md.ov .mergebox')`
+		const why = "This pull request has conflicts with main."
+		b.waitFor("the box off", box+`?.querySelector('.hint').textContent === '`+why+`' && `+box+`.querySelector('button.primary').disabled && `+
+			box+`.querySelector('button.primary').dataset.tip === '`+why+`' && `+box+`.nextElementSibling.firstChild.textContent === 'Conversation'`)
+		shots(b, "prs-merge-off")
+
+		forge.set(t, "gh-pr-477.json", answer("OPEN", "MERGEABLE"))
+		b.press("refreshPrs")
+		b.waitFor("the box on", box+`?.matches('.ok') && `+box+`.querySelector('.hint').textContent === '2 commits become one commit on main.' && !`+box+`.querySelector('button.primary').disabled`)
+		shots(b, "prs-merge")
+
+		// The check says what goes onto main; Escape goes back and merges nothing.
+		b.click("Squash and merge…", box+`.querySelector('button.primary')`)
+		dialog := `document.querySelector('.confirm[role=dialog]')`
+		b.waitFor("the check", dialog+`?.querySelector('h2').textContent === 'Squash and merge #477 into main?' && `+dialog+`.querySelector('.sub').textContent === 'Retry webhook delivery with backoff · sanne' && `+
+			`[...`+dialog+`.querySelectorAll('li')].map(l => l.textContent).join('|') === 'Commits2 commits become one commit on main|Checks1 failed · 1 cancelled' && `+
+			dialog+`.querySelector('li .v.bad') && `+dialog+`.querySelector('.acts .muted').textContent === 'It cannot be undone from kijk.' && document.activeElement === `+dialog+`.querySelector('button.primary')`)
+		shots(b, "prs-merge-check")
+		b.key("Escape", kb.Escape)
+		b.waitFor("the check closed", `!document.querySelector('.confirm')`)
+
+		// GitHub refuses: the check stays open and says why.
+		forge.set(t, "gh-merge.json", `{"data":{"mergePullRequest":null},"errors":[{"message":"Required status check \"build\" is expected."}]}`)
+		b.click("Squash and merge…", box+`.querySelector('button.primary')`)
+		b.click("Squash and merge", dialog+`.querySelector('button.primary')`)
+		b.waitFor("GitHub's reason", dialog+`?.querySelector('.error').textContent === 'gh: Required status check "build" is expected.' && !`+dialog+`.querySelector('button.primary').disabled`)
+
+		// It merges once, at the head on screen; the page then says Merged.
+		forge.set(t, "gh-merge.json", ghData(obj{"mergePullRequest": obj{"pullRequest": obj{"id": "PR_477"}}}))
+		forge.after(t, "merge", "gh-pr-477.json", answer("MERGED", "UNKNOWN"))
+		n := len(forge.calls())
+		b.click("Squash and merge", dialog+`.querySelector('button.primary')`)
+		forge.waitFor(t, n, `"variables":{"head":"`+theirs+`","pr":"PR_477"}`)
+		b.waitFor("merged", `!document.querySelector('.confirm') && document.querySelector('#statusbar').textContent.includes('Merged #477') && !`+box+` && `+
+			`document.querySelector('#prs-pr .chips .chip')?.textContent === 'Merged'`)
+		if c := strings.Count(strings.Join(forge.calls()[n:], "\n"), "mergePullRequest("); c != 1 {
+			t.Fatalf("%d merges", c)
+		}
+		b.noErrors()
 	})
 
 	t.Run("viewed marks", func(t *testing.T) {
