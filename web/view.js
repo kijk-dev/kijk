@@ -1,4 +1,5 @@
 import { get, url, el, splitKey, base } from './api.js';
+import { diffLayout, onDiffLayout } from './layout.js';
 
 export const LINE_HEIGHT = 18;
 // The file types of filetypes.go. They come from the local kijk, also for a remote folder.
@@ -10,6 +11,8 @@ let viewChanged = () => {};
 
 // onView runs after a file or diff is drawn, also after a reload, so find can search it again.
 export function onView(fn) { viewChanged = fn; }
+
+onDiffLayout(() => current?.relayout?.());
 
 // typeOf gives the file type of a path, as TypeOf in filetypes.go does; {} shows as source.
 function typeOf(path) {
@@ -655,8 +658,9 @@ async function load(file, c) {
   }
 }
 
-// openDiff shows one file's change; mode is "staged", "unstaged", "untracked" or "commit".
-// keep is set when the diff reloads: {scrollTop, res, openedAt}. md is {source, toggle}.
+// openDiff shows one file's change; mode is "staged", "unstaged", "untracked" or "commit". keep is
+// set when the diff draws again: {scrollTop, scrollLeft, line, offset, res, openedAt}, line being a
+// new-side line to put offset px below the top. md is {source, toggle}.
 export async function openDiff(viewer, root, change, mode, context = 3, keep, md) {
   const d = { kind: 'diff', starts: [], path: change.path, mode, hash: change.hash || '', openedAt: keep?.openedAt ?? Date.now() };
   const params = { root, path: change.path, orig: change.orig || '', mode, hash: change.hash || '', context };
@@ -664,7 +668,7 @@ export async function openDiff(viewer, root, change, mode, context = 3, keep, md
   d.reload = async () => {
     const res = await get('diff', params).catch(() => null);
     if (current !== d || (res && JSON.stringify(res) === d.json)) return;
-    again(context, { scrollTop: d.scroll?.scrollTop ?? 0, res, openedAt: d.openedAt });
+    again(context, { scrollTop: d.scroll?.scrollTop ?? 0, scrollLeft: d.scroll?.scrollLeft, res, openedAt: d.openedAt });
   };
   current = d;
   let res;
@@ -702,12 +706,13 @@ export async function openDiff(viewer, root, change, mode, context = 3, keep, md
   bar.append(toggle);
   if (modes) bar.append(modes);
 
+  const split = diffLayout() === 'split';
   const rows = [];
   const more = () => again(context + 20);
   const changed = r => r.l !== r.r;
   res.hunks.forEach((h, i) => {
     if (!full && (i > 0 || h.oldStart > 1 || h.newStart > 1)) rows.push({ sep: true });
-    for (const r of pairRows(h.lines, false)) {
+    for (const r of pairRows(h.lines, split)) {
       if (changed(r) && (rows.length === 0 || rows.at(-1).sep || !changed(rows.at(-1)))) d.starts.push(rows.length);
       rows.push(r);
     }
@@ -716,15 +721,28 @@ export async function openDiff(viewer, root, change, mode, context = 3, keep, md
   let maxNo = 0, cols = 0;
   for (const l of res.hunks.flatMap(h => h.lines)) {
     maxNo = Math.max(maxNo, l.o || 0, l.n || 0);
-    cols = Math.max(cols, l.t.length);
+    cols = Math.max(cols, split ? l.t.replaceAll('\t', '    ').length : l.t.length);
   }
   const digits = String(maxNo).length;
-  const scroll = el('div', 'scroll');
+  const scroll = el('div', split ? 'scroll diff halves' : 'scroll diff');
   const gutter = `${digits + 2}ch`;
   scroll.style.setProperty('--gutter', gutter);
   viewer.replaceChildren(bar, scroll);
   d.scroll = scroll;
-  const top = keep ? keep.scrollTop : Math.max(0, ((d.starts[0] ?? 0) - 5) * LINE_HEIGHT);
+  const slide = () => scroll.style.setProperty('--sx', `${scroll.scrollLeft}px`);
+  if (split) { // the rows are as wide as the view, and --sx moves their text sideways
+    const fit = () => scroll.style.setProperty('--vw', `${scroll.clientWidth}px`);
+    fit();
+    new ResizeObserver(fit).observe(scroll);
+    scroll.addEventListener('scroll', slide);
+  }
+  const at = keep?.line ? rows.findIndex(r => r.r?.n === keep.line) : -1;
+  const top = at >= 0 ? at * LINE_HEIGHT - keep.offset : keep ? keep.scrollTop : Math.max(0, ((d.starts[0] ?? 0) - 5) * LINE_HEIGHT);
+  d.relayout = () => { // the new-side line at the top stays where it is
+    const first = Math.floor(scroll.scrollTop / LINE_HEIGHT);
+    const i = rows.findIndex((r, j) => j >= first && r.r);
+    again(context, { scrollTop: scroll.scrollTop, line: rows[i]?.r.n, offset: i * LINE_HEIGHT - scroll.scrollTop, res, openedAt: d.openedAt });
+  };
   d.rows = rows;
   d.lines = maxNo;
   d.gotoLine = n => { // the line number on the new side, else the old side
@@ -733,7 +751,9 @@ export async function openDiff(viewer, root, change, mode, context = 3, keep, md
     if (i >= 0) reveal(i, true);
   };
   const cls = l => (l.k === '+' ? 'add' : l.k === '-' ? 'del' : '');
-  d.render = virtual(scroll, rows.length, `calc(${gutter} * 2 + ${cols + 6}ch)`, top, (first, last) => {
+  // Split: a half shows the longest line once the view scrolls as far as it goes.
+  const width = split ? `max(100%, calc(50% + ${cols + 2}ch + ${gutter}))` : `calc(${gutter} * 2 + ${cols + 6}ch)`;
+  d.render = virtual(scroll, rows.length, width, top, (first, last) => {
     const out = [];
     for (let i = first; i < last; i++) {
       const r = rows[i];
@@ -743,6 +763,8 @@ export async function openDiff(viewer, root, change, mode, context = 3, keep, md
         btn.onclick = more;
         sep.append(btn);
         out.push(sep);
+      } else if (split) {
+        out.push(splitRow(r, i, cls));
       } else {
         const l = r.r || r.l;
         out.push(line([l.o, l.n], l.x || l.t, cls(l), i));
@@ -750,6 +772,10 @@ export async function openDiff(viewer, root, change, mode, context = 3, keep, md
     }
     return out;
   });
+  if (keep?.scrollLeft) {
+    scroll.scrollLeft = keep.scrollLeft;
+    slide();
+  }
   viewChanged();
 }
 

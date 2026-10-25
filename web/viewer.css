@@ -127,7 +127,11 @@ svg { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; 
 
 main { display: flex; flex-direction: column; min-width: 0; }
 #viewer { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; container-type: inline-size; }
-#filetabs { flex: none; display: flex; height: var(--bar); overflow-x: auto; scrollbar-width: thin; background: var(--panel); border-bottom: 1px solid var(--border); }
+#tabbar { flex: none; display: flex; height: var(--bar); background: var(--panel); border-bottom: 1px solid var(--border); }
+#tabbar:has(> #filetabs[hidden]) { display: none; }
+#filetabs { flex: 1; min-width: 0; display: flex; overflow-x: auto; scrollbar-width: thin; }
+#difflayout { flex: none; display: flex; align-items: center; padding: 0 8px; }
+main:not(:has(#viewer > .scroll.diff)) #difflayout { display: none; }
 .filetab { display: flex; align-items: center; gap: 6px; padding: 4px 4px 4px 12px; border-right: 1px solid var(--border); border-bottom: 2px solid transparent; cursor: pointer; white-space: nowrap; font-size: 12px; color: var(--muted); }
 .filetab:hover { color: var(--text); }
 .filetab.active { background: var(--bg); color: var(--text); border-bottom-color: var(--modified); }
@@ -165,6 +169,18 @@ main { display: flex; flex-direction: column; min-width: 0; }
 .ln.flash .tx { animation: flash 1.2s ease-out; }
 mark.hit { background: none; color: inherit; box-shadow: inset 0 -2px var(--busy); }
 mark.hit.current { outline: 2px solid var(--busy); outline-offset: -1px; border-radius: 2px; box-shadow: none; }
+/* Split diff: old on the left, new on the right, each half with its own line numbers. The rows stay
+   put while a sideways scroll moves the text of both halves by --sx, so the numbers stay in view. */
+.halves .srow, .halves .ln.sep { position: sticky; left: 0; width: var(--vw, 100cqi); min-width: 0; }
+.srow { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); height: 18px; }
+.halves .srow > .ln { position: relative; min-width: 0; overflow: hidden; }
+.srow > * + * { border-left: 1px solid var(--border); }
+.srow .gut { z-index: 1; }
+.srow .tx { transform: translateX(calc(-1 * var(--sx, 0px))); }
+.srow > .fill { background: repeating-linear-gradient(135deg, transparent 0 3.24px, var(--border) 3.24px 4.24px); }
+/* A changed word is underlined, not tinted: a tint would take syntax colors under 4.5:1 on the wash. */
+.ln.del .w { box-shadow: inset 0 -2px var(--removed); }
+.ln.add .w { box-shadow: inset 0 -2px var(--added); }
 #findbar { flex: none; display: flex; align-items: center; gap: 4px; padding: 4px 8px 4px 12px; background: var(--panel); border-bottom: 1px solid var(--border); font-size: 12px; }
 /* The text fields: find, go to, the commit message, the PR search, the review box and threads. */
 #findbar input, .goto input, #message, .prsearch input, .reviewbox textarea, .thr .foot input, .thr textarea {
@@ -209,6 +225,7 @@ dialog.goto::backdrop { background: none; }
 .mode button:active { background: var(--border); }
 .mode button[aria-pressed="true"] { background: var(--select); color: var(--modified); }
 .mode button:focus-visible { outline: 2px solid var(--busy); outline-offset: -2px; }
+.mode button:disabled { color: color-mix(in srgb, var(--muted) 70%, var(--panel)); cursor: default; }
 .diffbar .mode:not([hidden]) + .mode, .diffbar .tool + .mode { margin-left: 0; }
 
 /* Images. The checkerboard stays light in both themes: dark ink in a logo vanishes on a dark one. */
@@ -587,7 +604,6 @@ button.pill:hover { background: color-mix(in srgb, var(--modified) 22%, var(--se
    place it takes. */
 .reviewbox .mode { margin-left: 0; display: flex; }
 .reviewbox .mode button { flex: 1 1 auto; padding: 2px 4px; white-space: nowrap; }
-.reviewbox .mode button:disabled { color: color-mix(in srgb, var(--muted) 70%, var(--panel)); cursor: default; }
 .reviewbox .why { font-size: 12px; color: var(--muted); }
 .reviewbox .saved { margin-top: -2px; font-size: 12px; color: var(--muted); }
 .reviewbox .error { font-size: 12px; color: var(--error); }
