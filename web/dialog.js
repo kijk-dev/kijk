@@ -67,9 +67,11 @@ export function confirm({ mark, title, sub, rows = [], note, busy, ok: okText, r
         e.preventDefault();
         go();
       } else if (e.key === 'Tab') {
-        // The focus stays in the dialog: it goes from one button to the other.
+        // The focus stays in the dialog, going round its inputs and buttons.
         e.preventDefault();
-        (document.activeElement === ok ? cancel : ok).focus();
+        const stops = [...box.querySelectorAll('input, button')].filter(s => !s.disabled);
+        const i = stops.indexOf(document.activeElement);
+        stops[(i + (e.shiftKey ? stops.length - 1 : 1)) % stops.length]?.focus();
       }
     };
     shade.onclick = () => { if (!cancel.disabled) close(false); };

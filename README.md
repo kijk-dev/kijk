@@ -190,7 +190,11 @@ all the commits of the pull request onto the target branch as one commit.
   merges; Escape goes back. kijk cannot undo a merge.
 - kijk merges only the head it shows. When someone pushed since, kijk refuses and shows the new
   commits first.
-- GitHub or GitLab writes the commit message, and its settings decide if the branch is deleted.
+- GitHub or GitLab writes the commit message.
+- The check has a box to delete the branch on the forge after the merge. On GitLab it is ticked
+  when the merge request or the project says so. There is no box for a branch on a fork, or one
+  you may not delete. When the repo deletes branches itself, the check says so instead. kijk never
+  deletes your local branch. When the delete fails, the merge stands and kijk says why.
 - The button is off, and the box says why, when the pull request is a draft, when you may not
   merge, when the repo does not allow squash merges, when it has conflicts, or when the forge holds
   the merge, as for a required review or check. When the forge has not worked out yet if it can

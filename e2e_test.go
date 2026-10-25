@@ -1284,6 +1284,8 @@ func TestBrowser(t *testing.T) {
 		mr["description"], mr["state"], mr["diffHeadSha"], mr["commitCount"] = "Retry five times.", "opened", theirs, 1
 		mr["diffRefs"] = obj{"baseSha": main, "headSha": theirs, "startSha": main}
 		mr["approvedBy"], mr["discussions"] = obj{"nodes": []obj{}}, obj{"nodes": []obj{}}
+		mr["userPermissions"], mr["sourceProjectId"], mr["targetProjectId"] = obj{"canMerge": true, "removeSourceBranch": true}, 7, 7
+		mr["forceRemoveSourceBranch"] = true // the project deletes merged branches by default
 		forge.set(t, "glab-pr-12.json", ghData(obj{"currentUser": obj{"username": "you"}, "project": obj{"mergeRequest": mr}}))
 		forge.set(t, "glab-drafts.json", `[{"id":61,"note":"Thanks for this.","discussion_id":null,"position":null}]`)
 		forge.set(t, "glab-version-gitlab.com.json", `{"version":"17.4.1-ee"}`)
@@ -1393,11 +1395,13 @@ func TestBrowser(t *testing.T) {
 		b.click("Squash and merge…", `document.querySelector('.md.ov .mergebox button.primary')`)
 		dialog := `document.querySelector('.confirm[role=dialog]')`
 		b.waitFor("the check in GitLab's words", dialog+`?.querySelector('h2').textContent === 'Squash and merge !12 into main?' && `+
-			`[...`+dialog+`.querySelectorAll('li')].map(l => l.textContent).join('|') === 'Commits1 commit goes onto main as a new commit|Pipelinenone'`)
+			`[...`+dialog+`.querySelectorAll('li')].map(l => l.textContent).join('|') === 'Commits1 commit goes onto main as a new commit|Pipelinenone|BranchDelete retry-webhooks after the merge' && `+
+			dialog+`.querySelector('li input[type=checkbox]').checked`)
+		shots(b, "prs-merge-delete-gitlab")
 		n = len(forge.calls())
 		b.click("Squash and merge", dialog+`.querySelector('button.primary')`)
-		forge.waitFor(t, n, `--method PUT projects/acme%2Freview/merge_requests/12/merge -H Content-Type: application/json --input - {"sha":"`+mr["diffHeadSha"].(string)+`","squash":true}`)
-		b.waitFor("merged", `!document.querySelector('.confirm') && document.querySelector('#statusbar').textContent.includes('Merged !12') && document.querySelector('.md.ov h1') && !document.querySelector('.md.ov .mergebox')`)
+		forge.waitFor(t, n, `--method PUT projects/acme%2Freview/merge_requests/12/merge -H Content-Type: application/json --input - {"sha":"`+mr["diffHeadSha"].(string)+`","should_remove_source_branch":true,"squash":true}`)
+		b.waitFor("merged", `!document.querySelector('.confirm') && document.querySelector('#statusbar').textContent.includes('Merged !12 and deleted retry-webhooks') && document.querySelector('.md.ov h1') && !document.querySelector('.md.ov .mergebox')`)
 		b.noErrors()
 	})
 
@@ -1407,16 +1411,17 @@ func TestBrowser(t *testing.T) {
 		reviewForge(t, forge, repo, origin, false)
 		theirs := gitOut(t, origin, "rev-parse", "refs/pull/477/head")
 		main := gitOut(t, repo, "rev-parse", "origin/main")
-		// answer is #477 in state, with what GitHub says about merging it.
-		answer := func(state, mergeable string) obj {
+		// answer is #477 in state, with what GitHub says about merging it and if it deletes the branch.
+		answer := func(state, mergeable, status string, autoDelete bool) obj {
 			o := pr477(theirs, main, func(ts []obj) []obj { return ts })
 			r := o["data"].(obj)["repository"].(obj)
-			r["viewerPermission"], r["squashMergeAllowed"] = "WRITE", true
+			r["viewerPermission"], r["squashMergeAllowed"], r["deleteBranchOnMerge"] = "WRITE", true, autoDelete
 			pr := r["pullRequest"].(obj)
-			pr["state"], pr["mergeable"], pr["mergeStateStatus"] = state, mergeable, "CLEAN"
+			pr["state"], pr["mergeable"], pr["mergeStateStatus"] = state, mergeable, status
+			pr["isCrossRepository"], pr["headRef"] = false, obj{"refUpdateRule": nil, "associatedPullRequests": obj{"totalCount": 1}}
 			return o
 		}
-		forge.set(t, "gh-pr-477.json", answer("OPEN", "CONFLICTING"))
+		forge.set(t, "gh-pr-477.json", answer("OPEN", "CONFLICTING", "DIRTY", true))
 		forge.set(t, "gh-target.json", ghData(obj{"repository": obj{"pullRequest": obj{"id": "PR_477", "headRefOid": theirs, "reviews": obj{"nodes": []obj{}}}}}))
 		claude := t.TempDir()
 		claudeAgent(t, claude, repo, "Fix the login", "idle")
@@ -1435,7 +1440,7 @@ func TestBrowser(t *testing.T) {
 			box+`.querySelector('button.primary').dataset.tip === '`+why+`' && `+box+`.nextElementSibling.firstChild.textContent === 'Conversation'`)
 		shots(b, "prs-merge-off")
 
-		forge.set(t, "gh-pr-477.json", answer("OPEN", "MERGEABLE"))
+		forge.set(t, "gh-pr-477.json", answer("OPEN", "MERGEABLE", "CLEAN", true))
 		b.press("refreshPrs")
 		b.waitFor("the box on", box+`?.matches('.ok') && `+box+`.querySelector('.hint').textContent === '2 commits become one commit on main.' && !`+box+`.querySelector('button.primary').disabled`)
 		shots(b, "prs-merge")
@@ -1444,25 +1449,45 @@ func TestBrowser(t *testing.T) {
 		b.click("Squash and merge…", box+`.querySelector('button.primary')`)
 		dialog := `document.querySelector('.confirm[role=dialog]')`
 		b.waitFor("the check", dialog+`?.querySelector('h2').textContent === 'Squash and merge #477 into main?' && `+dialog+`.querySelector('.sub').textContent === 'Retry webhook delivery with backoff · sanne' && `+
-			`[...`+dialog+`.querySelectorAll('li')].map(l => l.textContent).join('|') === 'Commits2 commits become one commit on main|Checks1 failed · 1 cancelled' && `+
+			`[...`+dialog+`.querySelectorAll('li')].map(l => l.textContent).join('|') === 'Commits2 commits become one commit on main|Checks1 failed · 1 cancelled|BranchGitHub deletes retry-webhooks after the merge' && `+
+			`!`+dialog+`.querySelector('input') && `+
 			dialog+`.querySelector('li .v.bad') && `+dialog+`.querySelector('.acts .muted').textContent === 'It cannot be undone from kijk.' && document.activeElement === `+dialog+`.querySelector('button.primary')`)
 		shots(b, "prs-merge-check")
 		b.key("Escape", kb.Escape)
 		b.waitFor("the check closed", `!document.querySelector('.confirm')`)
 
-		// GitHub refuses: the check stays open and says why.
+		// GitHub refuses: the check stays open and says why, and the box says it after a new read.
 		forge.set(t, "gh-merge.json", `{"data":{"mergePullRequest":null},"errors":[{"message":"Required status check \"build\" is expected."}]}`)
+		forge.after(t, "merge", "gh-pr-477.json", answer("OPEN", "MERGEABLE", "BLOCKED", true))
 		b.click("Squash and merge…", box+`.querySelector('button.primary')`)
 		b.click("Squash and merge", dialog+`.querySelector('button.primary')`)
 		b.waitFor("GitHub's reason", dialog+`?.querySelector('.error').textContent === 'gh: Required status check "build" is expected.' && !`+dialog+`.querySelector('button.primary').disabled`)
+		b.key("Escape", kb.Escape)
+		b.waitFor("the box off", `!document.querySelector('.confirm') && `+box+`?.querySelector('button.primary').disabled`)
 
-		// It merges once, at the head on screen; the page then says Merged.
-		forge.set(t, "gh-merge.json", ghData(obj{"mergePullRequest": obj{"pullRequest": obj{"id": "PR_477"}}}))
-		forge.after(t, "merge", "gh-pr-477.json", answer("MERGED", "UNKNOWN"))
+		// The repo no longer deletes merged branches: the check asks, unticked. Tab and Space tick it.
+		forge.set(t, "gh-pr-477.json", answer("OPEN", "MERGEABLE", "CLEAN", false))
+		b.press("refreshPrs")
+		b.waitFor("the box on", `!`+box+`?.querySelector('button.primary').disabled`)
+		b.click("Squash and merge…", box+`.querySelector('button.primary')`)
+		check := dialog + `?.querySelector('li input[type=checkbox]')`
+		b.waitFor("the delete unticked", `[...`+dialog+`.querySelectorAll('li')].pop().textContent === 'BranchDelete retry-webhooks after the merge' && !`+check+`.checked`)
+		b.key("Tab", kb.Tab)
+		b.waitFor("the focus on the delete", `document.activeElement === `+check)
+		b.key("Space", " ")
+		b.waitFor("the delete ticked", check+`.checked`)
+		shots(b, "prs-merge-delete")
+
+		// It merges once, at the head on screen, then deletes the branch at that head. GitHub refuses
+		// the delete: the merge stands, and kijk says why the branch is still there.
+		forge.set(t, "gh-merge.json", ghData(obj{"mergePullRequest": obj{"pullRequest": obj{"headRef": obj{"id": "REF_477", "target": obj{"oid": theirs}}}}}))
+		forge.set(t, "gh-deleteref.json", `{"data":{"deleteRef":null},"errors":[{"message":"Cannot delete this branch."}]}`)
+		forge.after(t, "merge", "gh-pr-477.json", answer("MERGED", "UNKNOWN", "UNKNOWN", false))
 		n := len(forge.calls())
 		b.click("Squash and merge", dialog+`.querySelector('button.primary')`)
 		forge.waitFor(t, n, `"variables":{"head":"`+theirs+`","pr":"PR_477"}`)
-		b.waitFor("merged", `!document.querySelector('.confirm') && document.querySelector('#statusbar').textContent.includes('Merged #477') && !`+box+` && `+
+		forge.waitFor(t, n, `"variables":{"ref":"REF_477"}`)
+		b.waitFor("merged", `!document.querySelector('.confirm') && document.querySelector('#statusbar').textContent.includes('Merged #477. Could not delete retry-webhooks: gh: Cannot delete this branch.') && !`+box+` && `+
 			`document.querySelector('#prs-pr .chips .chip')?.textContent === 'Merged'`)
 		if c := strings.Count(strings.Join(forge.calls()[n:], "\n"), "mergePullRequest("); c != 1 {
 			t.Fatalf("%d merges", c)

@@ -263,25 +263,46 @@ function mergeBox(v, res) {
     h('button', { class: 'primary', disabled: !m.ok, data: m.ok ? {} : { tip: m.why }, onclick: () => openMerge(v.root, res.number) }, 'Squash and merge…'));
 }
 
+// branchRow says what the merge does to the head branch, with merge.delete: a checkbox when kijk may
+// delete it, a line when the forge deletes it itself, else nothing.
+function branchRow(res, w) {
+  const del = res.merge.delete;
+  if (del === 'auto') return { row: ['Branch', `${w.name} deletes ${res.head} after the merge`] };
+  if (del !== 'on' && del !== 'off') return {};
+  const box = el('input');
+  box.type = 'checkbox';
+  box.checked = del === 'on';
+  const label = el('label', 'v');
+  label.append(box, el('span', null, `Delete ${res.head} after the merge`));
+  return { row: ['Branch', label], box };
+}
+
 // openMerge asks before the merge, which kijk cannot undo, then shows the pull request merged.
 function openMerge(root, n) {
   const res = pull(root, n).res, w = forgeWords(res), ref = `${w.num}${n}`;
+  const { row, box } = branchRow(res, w);
+  let out = {};
   confirm({
     mark: forgeMark(res.forge?.kind || 'github'),
     title: `Squash and merge ${ref} into ${res.base}?`,
     sub: `${res.title} · ${res.author}`,
-    rows: [['Commits', squashed(res)], [w.ci, el('span', `v ${{ failed: 'bad', passed: 'ok' }[res.ci] || ''}`, ciSaid(res.checks))]],
+    rows: [['Commits', squashed(res)], [w.ci, el('span', `v ${{ failed: 'bad', passed: 'ok' }[res.ci] || ''}`, ciSaid(res.checks))], row].filter(Boolean),
     note: 'It cannot be undone from kijk.',
     busy: 'Merging…',
     ok: 'Squash and merge',
-    run: () => write(root, n, 'merge', 'merge', {}).catch(err => {
-      read(root, n, true); // the forge may say now why it refused
-      throw err;
-    }),
+    run: async () => {
+      out = await write(root, n, 'merge', 'merge', { delete: !!box?.checked }).catch(err => {
+        read(root, n, true); // the forge may say now why it refused
+        throw err;
+      });
+    },
   }).then(done => {
     if (!done) return;
-    hooks.say?.(`Merged ${ref}`);
-    hooks.announce?.(`Merged ${ref}`);
+    let said = `Merged ${ref}`;
+    if (out.deleted) said += ` and deleted ${res.head}`;
+    else if (out.why) said += `. Could not delete ${res.head}: ${out.why}`;
+    hooks.say?.(said);
+    hooks.announce?.(said);
     hooks.merged?.(root);
   });
 }

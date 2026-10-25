@@ -626,6 +626,9 @@ button.pill:hover { background: color-mix(in srgb, var(--modified) 22%, var(--se
 .confirm li .k { width: 76px; flex: none; color: var(--muted); font-size: 12px; }
 .confirm li .v { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .confirm li .v .muted { font-size: 12px; }
+.confirm label.v { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.confirm label.v input { flex: none; margin: 0; accent-color: var(--modified); cursor: pointer; }
+.confirm label.v span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .confirm .verdict { font-weight: 600; }
 .confirm .v.ok { color: var(--added); }
 .confirm .v.bad { color: var(--conflict); }

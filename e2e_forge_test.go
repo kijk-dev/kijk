@@ -45,6 +45,7 @@ case "$* $in" in
 *"unresolveReviewThread("*) m=unresolve ;;
 *"resolveReviewThread("*) m=resolve ;;
 *"mergePullRequest("*) m=merge ;;
+*"deleteRef("*) m=deleteref ;;
 *"pullRequests(states"*) f=gh-list.json ;;
 *"search(query"*) f=gh-search.json ;;
 *"pullRequest(number"*) f="gh-pr-$(printf '%%s' "$in" | sed -n 's/.*"n":\([0-9]*\).*/\1/p').json" ;;
