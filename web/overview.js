@@ -32,8 +32,8 @@ function jobIcon(state) {
   return h('span', { class: `ji ${{ ok: 'ok', bad: 'bad' }[state] || 'skip'}`, html: { ok: ICON.check, bad: ICON.x, skip: ICON.skip, cancel: ICON.skip, wait: ICON.wait }[state] || ICON.wait });
 }
 
-export function setupOverview(h) {
-  hooks = h;
+export function setupOverview(p) {
+  hooks = p;
 }
 
 export async function openOverview(viewer, root, tab) {

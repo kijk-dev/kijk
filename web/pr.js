@@ -1,4 +1,4 @@
-import { el, h, patch } from './api.js';
+import { el, h, patch, icon } from './api.js';
 
 // Forge marks from Simple Icons (CC0).
 export const FORGE = {
@@ -22,12 +22,6 @@ const MERGE = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="18" cy="1
 const STATE = { draft: 'Draft', merged: 'Merged', closed: 'Closed' };
 
 const link = (cls, href, props, ...children) => h(href ? 'a' : 'span', { class: cls, ...(href && { href, target: '_blank', rel: 'noopener' }), ...props }, children);
-
-const mergeIcon = () => {
-  const t = document.createElement('template');
-  t.innerHTML = MERGE;
-  return t.content.firstChild;
-};
 
 // forgeMark is the forge's own mark, with its name as the tooltip.
 export function forgeMark(kind) {
@@ -76,7 +70,7 @@ export function prChips(p, w, defaultBranch) {
       : p.review === 'changes' ? chip('fail', 'Changes requested')
         : p.approvals ? chip('pass', `✓ ${p.approvals} ${p.approvals === 1 ? 'approval' : 'approvals'}`)
           : p.review === 'needed' && chip('', 'Review needed'),
-    p.target && p.target !== defaultBranch && link('chip target', null, { title: `Merges into ${p.target}`, attrs: { 'aria-label': `Merges into ${p.target}` } }, mergeIcon(), p.target),
+    p.target && p.target !== defaultBranch && link('chip target', null, { title: `Merges into ${p.target}`, attrs: { 'aria-label': `Merges into ${p.target}` } }, icon(MERGE), p.target),
   ].filter(Boolean);
   return chips.length ? h('div', { key: 'chips', class: 'chips' }, chips) : null;
 }

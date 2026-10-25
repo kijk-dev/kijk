@@ -1,4 +1,4 @@
-import { el, get } from './api.js';
+import { el, h, patch, get } from './api.js';
 import { isCurrent } from './view.js';
 import { boxView, showBoxes, noBoxes, goToBox, redraw, drawBox, marksChanged, oldLineOf, plural } from './boxes.js';
 import { pull, read, watch, mark, setSince } from './prstore.js';
@@ -14,13 +14,11 @@ let hooks = {}; // onTop(n, path), openFile(n, path)
 let view = null;
 const goals = new Map(); // a file to scroll to once the Changes of a pull request show
 
-export function setupChanges(h) {
-  hooks = h;
+export function setupChanges(p) {
+  hooks = p;
 }
 
 const threadsOn = (v, path) => (v.res?.threads || []).filter(t => t.path === path);
-
-const prFile = (v, f) => v.own?.(f);
 
 // diffOf is the diff of file f in pull request v.n: its forge diff, or since the head from.
 async function diffOf(v, f, context, from) {
@@ -74,10 +72,10 @@ function source(v) {
     },
     onTop: path => hooks.onTop?.(n, path),
     marked: f => threadsOn(v, f.path).length > 0,
-    viewed: f => (prFile(v, f) && v.marks?.state(prFile(v, f))) || '',
+    viewed: f => (v.own?.(f) && v.marks?.state(v.own?.(f))) || '',
     viewedAt: f => v.marks?.at(f) || 0,
-    viewable: f => !!prFile(v, f),
-    setViewed: (f, on) => !!prFile(v, f) && mark(root, n, prFile(v, f), on),
+    viewable: f => !!v.own?.(f),
+    setViewed: (f, on) => !!v.own?.(f) && mark(root, n, v.own?.(f), on),
     banner: () => v.bar,
   };
 }
@@ -94,7 +92,7 @@ export async function openChanges(viewer, root, tab, keep, save) {
   view = v;
   const known = pull(root, tab.n).res;
   if (known) await show(v);
-  else viewer.replaceChildren(el('p', 'empty', `Fetching ${v.num}${tab.n}…`));
+  else patch(viewer, h('p', 'empty', `Fetching ${v.num}${tab.n}…`));
   await read(root, tab.n);
   const why = pull(root, tab.n).why;
   if (why && isCurrent(v) && !v.scroll) noBoxes(v, why);
@@ -156,7 +154,7 @@ function sinceBar(v, a) {
 // openEditor opens the box for a new comment under row l of a file.
 function openEditor(v, path, l) {
   closeEditor(v);
-  const f = prFile(v, { path });
+  const f = v.own?.({ path });
   if (!f) return;
   v.editor = lineEditor(pull(v.root, v.n), f, l, () => closeEditor(v, true), row => (v.from ? forgeRow(v, f, row) : null));
   v.editor.path = path;

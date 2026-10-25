@@ -17,7 +17,6 @@ import { onKey, keyLabel } from './keys.js';
 //                          is {k, o, n, t}. label names it ("Add a note on line"); old gives removed
 //                          lines one too; near gives an unchanged line one only that near a change
 //   onTop(path)            the file at the top of the view changed
-//   drawn(v, b)            a box was drawn, optional
 //   marked(f)              the file has threads or notes, for Alt+↓ and Alt+↑
 //   viewed(f), setViewed(f, on)  the viewed mark: 'viewed', 'changed' since, or ''; optional
 //   viewedAt(f)            changes with each mark or clear of f, so a fold made before goes
@@ -77,7 +76,7 @@ async function build(v) {
   scroll.setAttribute('aria-label', v.label || 'Changes');
   v.scroll = scroll;
   v.end = el('p', 'fend');
-  v.viewer.replaceChildren(scroll);
+  patch(v.viewer, scroll);
   // Two screens ahead, so a box is drawn before it shows.
   v.near = new IntersectionObserver(entries => {
     for (const e of entries) {
@@ -117,7 +116,7 @@ export function noBoxes(v, text) {
   v.scroll = null;
   v.boxes = new Map();
   v.editor = null;
-  v.viewer.replaceChildren(el('p', 'empty', text));
+  patch(v.viewer, h('p', 'empty', text));
 }
 
 // anchor is the box at the top of the view and how far it is scrolled, so a redraw keeps it there.
@@ -204,9 +203,7 @@ function showOpen(v, b) {
   b.body.hidden = !b.open;
   b.note.hidden = b.open || b.state === 'viewed' || !heavy(b.f);
   if (!b.note.hidden) {
-    const show = el('button', 'more', 'Show');
-    show.onclick = () => fold(v, b, true);
-    b.note.replaceChildren(el('span', null, `${generated(b.f.path) ? 'Generated file' : 'Large diff'}, ${plural(lines(b.f), 'line')} · `), show);
+    patch(b.note, h('span', null, `${generated(b.f.path) ? 'Generated file' : 'Large diff'}, ${plural(lines(b.f), 'line')} · `), h('button', { class: 'more', onclick: () => fold(v, b, true) }, 'Show'));
   }
 }
 
@@ -356,7 +353,6 @@ export async function drawBox(v, b) {
       : b.f.orig ? `Renamed from ${b.f.orig}, no content changes` : 'No content changes');
     patch(b.body, deco.top, h('p', 'fempty', say), deco.end, [...under.values()]);
     b.starts = [];
-    v.src.drawn?.(v, b);
     return;
   }
   const add = v.src.add;
@@ -377,7 +373,6 @@ export async function drawBox(v, b) {
   for (const [key, els] of under) if (!placed.has(key)) out.push(els);
   patch(b.body, out, deco.end);
   b.starts = b.rows.starts;
-  v.src.drawn?.(v, b);
 }
 
 // diffRows makes a box's rows. drawBox keeps them while the diff, the extra lines and the + stay,

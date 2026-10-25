@@ -15,8 +15,8 @@ const ICON = {
 
 let hooks = {}; // announce(text), say(text), reviewed(root, n)
 
-export function setupDrafts(h) {
-  hooks = h;
+export function setupDrafts(p) {
+  hooks = p;
 }
 
 // writable says whether kijk may write to the pull request of answer res.

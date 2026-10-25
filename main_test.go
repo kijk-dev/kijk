@@ -85,12 +85,14 @@ func TestViewerImportsNoAppFile(t *testing.T) {
 	}
 }
 
+// prsTabFiles are the web files of the PRs tab, besides prstore.js.
+var prsTabFiles = []string{"pr.js", "prs.js", "review.js", "drafts.js", "boxes.js", "changes.js", "overview.js", "threads.js"}
+
 // TestPRsTabAsksThroughTheStore checks that only prstore.js asks the forge about pull requests or
 // writes to it, so every answer goes through its one rule of which answer is newer.
 func TestPRsTabAsksThroughTheStore(t *testing.T) {
 	asks := regexp.MustCompile(`(?:^|[^.\w])get\(\s*['"](?:prs?|pr/view|pr/since)['"]`)
 	posts := regexp.MustCompile(`\bpost\(`)
-	tab := []string{"pr.js", "prs.js", "review.js", "drafts.js", "boxes.js", "changes.js", "overview.js", "threads.js"}
 	files, _ := fs.Glob(webFiles, "web/*.js")
 	for _, f := range files {
 		name := path.Base(f)
@@ -104,7 +106,7 @@ func TestPRsTabAsksThroughTheStore(t *testing.T) {
 		if asks.Match(b) {
 			t.Errorf("%s asks the forge about pull requests; ask through prstore.js", f)
 		}
-		if slices.Contains(tab, name) && posts.Match(b) {
+		if slices.Contains(prsTabFiles, name) && posts.Match(b) {
 			t.Errorf("%s writes to the forge; write through prstore.js", f)
 		}
 	}
@@ -114,13 +116,38 @@ func TestPRsTabAsksThroughTheStore(t *testing.T) {
 // user holds, instead of building them again and putting back the focus or the scroll place by hand.
 func TestPRsTabDrawsInPlace(t *testing.T) {
 	rebuilds := regexp.MustCompile(`\bkeepFocus\b|\.replaceChildren\(|\.scrollTop\s*=[^=]`)
-	for _, name := range []string{"pr.js", "prs.js", "overview.js"} {
+	// The lines that move the view on purpose.
+	allowed := []struct{ file, line, why string }{
+		{"boxes.js", "scroll.scrollTop = v.keep.scrollTop", "a tab shown again starts where it was"},
+		{"boxes.js", "v.scroll.scrollTop = a.b.el.offsetTop + a.offset", "the box at the top stays while boxes above it fold, open or load"},
+		{"boxes.js", "v.scroll.scrollTop = b.el.offsetTop - 12", "a jump to a file, or to the header of a box folded across the top"},
+		{"boxes.js", "v.scroll.scrollTop = y", "the arrow keys keep the current line in view"},
+		{"boxes.js", "v.scroll.scrollTop = Math.max(0, y - AHEAD)", "a jump to the next change, thread or note"},
+		{"changes.js", "v.scroll.scrollTop = 0", "the other diff of the Since switch starts at the top"},
+	}
+	used := make([]bool, len(allowed))
+	for _, name := range prsTabFiles {
 		b, err := fs.ReadFile(webFiles, "web/"+name)
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, m := range rebuilds.FindAll(b, -1) {
-			t.Errorf("%s: %s; draw through patch", name, m)
+	lines:
+		for i, line := range strings.Split(string(b), "\n") {
+			if !rebuilds.MatchString(line) {
+				continue
+			}
+			for j, a := range allowed {
+				if a.file == name && strings.Contains(line, a.line) {
+					used[j] = true
+					continue lines
+				}
+			}
+			t.Errorf("%s:%d: draw through patch: %s", name, i+1, strings.TrimSpace(line))
+		}
+	}
+	for j, a := range allowed {
+		if !used[j] {
+			t.Errorf("%s no longer has %q; drop it from the allowed lines", a.file, a.line)
 		}
 	}
 }

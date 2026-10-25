@@ -62,6 +62,9 @@ export function svg(markup, cls, tag = 'span') {
   return s;
 }
 
+// icon is the svg element of markup, one of the fixed strings in the code.
+export const icon = markup => Object.assign(document.createElement('template'), { innerHTML: markup }).content.firstChild;
+
 // h describes an element for patch. props is a class name, or {key, class, attrs, data, html,
 // autofocus, and any property, such as onclick, value or disabled}.
 export const h = (tag, props, ...children) => ({ tag, props: typeof props === 'string' ? { class: props } : props || {}, children });
@@ -148,23 +151,3 @@ function update(node, d) {
   node.drawn = d;
   if (props.html == null) patch(node, d.children);
 }
-
-// keepFocus runs draw, which may move or rebuild what has the focus in box, and gives the focus
-// back: to the same element, else to the one in its place, with the caret where it was.
-export function keepFocus(box, draw) {
-  const was = document.activeElement;
-  if (was === box || !box.contains(was)) return draw();
-  const caret = typeof was.selectionStart === 'number' && [was.selectionStart, was.selectionEnd];
-  const like = () => [...box.querySelectorAll(was.tagName)].filter(e => same(e) === same(was));
-  const nth = like().indexOf(was);
-  const out = draw();
-  const now = box.contains(was) ? was : like()[nth];
-  if (now && document.activeElement !== now) {
-    now.focus({ preventScroll: true });
-    if (caret && typeof now.selectionStart === 'number') now.setSelectionRange(...caret);
-  }
-  return out;
-}
-
-// same tells an element apart from others across a redraw: by its data, its label or its text.
-const same = e => [e.dataset.path, e.dataset.n, e.dataset.k, e.dataset.id, e.getAttribute('aria-label'), e.children.length ? '' : e.textContent].join('\n');
