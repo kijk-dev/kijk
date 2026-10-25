@@ -14,10 +14,12 @@ import (
 )
 
 // openedPR is what kijk keeps of a pull request a page opened: its forge diff, so its files are
-// diffed by number (the page never sends a revision), and what the forge last said kijk may write.
+// diffed by number (the page never sends a revision), and what the forge last said kijk may write
+// and merge.
 type openedPR struct {
 	split, head string // empty while kijk has no diff of it
 	write       git.Write
+	merge       git.Merge
 	ref         string // as the forge says its number, such as "#7"
 	stale       string // why kijk cannot show the forge's head, which a comment would go to
 }
@@ -122,7 +124,7 @@ func (a *api) prView(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ref := f.Ref(n)
-	a.opened.set(root, n, func(p *openedPR) { p.write, p.ref = pr.Write, ref })
+	a.opened.set(root, n, func(p *openedPR) { p.write, p.merge, p.ref = pr.Write, pr.Merge, ref })
 	out := prReply{PR: pr, Forge: f, Files: []any{}}
 	out.BodyHTML = markdownHTML(pr.Body)
 	for i := range pr.Comments {

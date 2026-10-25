@@ -214,6 +214,7 @@ export function setSince(root, n, on) {
 const WRITES = {
   comment: ['pr/comment', true], edit: ['pr/comment/edit'], delete: ['pr/comment/delete'],
   resolve: ['pr/resolve'], summary: ['pr/summary', true], submit: ['pr/submit', true],
+  merge: ['pr/merge', true],
 };
 
 // write sends one write about pull request n under key k, then reads the pull request again: busy(k)

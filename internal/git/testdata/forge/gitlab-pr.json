@@ -1,5 +1,5 @@
 {"data":{"currentUser":{"username":"you"},"project":{"mergeRequest":{
-"iid":"12","title":"Draft: Retry webhook delivery","description":"Retry *up to* five times.","webUrl":"https://gitlab.com/acme/shop/-/merge_requests/12","state":"opened","draft":true,"createdAt":"2026-10-19T09:00:00Z","sourceBranch":"retry-webhooks","targetBranch":"main","diffHeadSha":"3333333333333333333333333333333333333333","commitCount":2,
+"iid":"12","title":"Draft: Retry webhook delivery","description":"Retry *up to* five times.","webUrl":"https://gitlab.com/acme/shop/-/merge_requests/12","state":"opened","draft":true,"createdAt":"2026-10-19T09:00:00Z","sourceBranch":"retry-webhooks","targetBranch":"main","diffHeadSha":"3333333333333333333333333333333333333333","commitCount":2,"conflicts":false,"squashOnMerge":true,"squashReadOnly":false,"detailedMergeStatus":"DRAFT_STATUS","userPermissions":{"canMerge":true,"removeSourceBranch":true},"sourceProjectId":7,"targetProjectId":7,"forceRemoveSourceBranch":true,"shouldRemoveSourceBranch":null,
 "author":{"username":"sanne"},"diffStatsSummary":{"additions":30,"deletions":4},
 "diffRefs":{"baseSha":"4444444444444444444444444444444444444444","headSha":"3333333333333333333333333333333333333333","startSha":"5555555555555555555555555555555555555555"},
 "approvedBy":{"nodes":[{"username":"priya"},{"username":"lead"}]},

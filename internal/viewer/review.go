@@ -22,13 +22,22 @@ type writeRequest struct {
 	ID       string `json:"id"`
 	Resolved bool   `json:"resolved"`
 	Verdict  string `json:"verdict"`
+	Delete   bool   `json:"delete"` // the head branch, with a merge
+	merge    bool   // set by the route, not the page
 }
+
+type writeRun func(req writeRequest, p openedPR) (any, error)
 
 // write reads a write's request and checks its folder, then runs it. A refused request is 400, a
 // head that moved 409, no diff kept 428, and a forge that failed 502 with the tool's words.
-func (a *api) write(run func(req writeRequest, p openedPR) (any, error)) http.HandlerFunc {
+func (a *api) write(run writeRun) http.HandlerFunc { return a.writeAs(false, run) }
+
+// merge is write for Squash and merge, which kijk refuses by what the forge said about merging.
+func (a *api) merge(run writeRun) http.HandlerFunc { return a.writeAs(true, run) }
+
+func (a *api) writeAs(merge bool, run writeRun) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		var req writeRequest
+		req := writeRequest{merge: merge}
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxCommentBytes+4<<10)).Decode(&req); err != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
@@ -63,20 +72,25 @@ func (a *api) write(run func(req writeRequest, p openedPR) (any, error)) http.Ha
 }
 
 // refused says why kijk does not ask the forge: the forge would refuse the write, by what it last
-// said kijk may write, or another page loaded a newer head than the one on screen.
+// said kijk may write or merge, or another page loaded a newer head than the one on screen.
 func refused(p openedPR, known bool, req writeRequest) string {
-	can := p.write
+	can, moved := p.write, git.ErrHeadMoved
+	if req.merge {
+		moved = git.ErrMergeMoved
+	}
 	switch {
 	case !known:
 		return ""
-	case !can.OK:
+	case req.merge && !p.merge.OK:
+		return cmp.Or(p.merge.Why, "kijk cannot merge this pull request")
+	case !req.merge && !can.OK:
 		return cmp.Or(can.Note, "kijk cannot write to this pull request")
 	case req.Verdict == "approve" && !can.Approve, req.Verdict == "changes" && !can.Changes:
 		return can.Why
 	case req.At != "" && p.stale != "":
 		return p.stale
 	case req.At != "" && p.head != "" && req.At != p.head:
-		return p.ref + " " + git.ErrHeadMoved.Error()
+		return p.ref + " " + moved.Error()
 	}
 	return ""
 }
@@ -123,6 +137,23 @@ func prSubmit(req writeRequest, p openedPR) (any, error) {
 		}
 	}
 	return struct{}{}, git.SubmitReview(req.Root, req.N, p.head, req.Verdict)
+}
+
+// prMerge squashes and merges the pull request, only at the head on screen. kijk passes on the
+// choice to delete the branch only where the page showed the checkbox.
+func prMerge(req writeRequest, p openedPR) (any, error) {
+	head, err := shownHead(req, p)
+	if err != nil {
+		return nil, err
+	}
+	var del *bool
+	switch {
+	case p.merge.Delete == "on" || p.merge.Delete == "off":
+		del = &req.Delete
+	case req.Delete:
+		return nil, fmt.Errorf("%w: kijk may not delete the branch of %s", git.ErrBadInput, p.ref)
+	}
+	return git.SquashMerge(req.Root, req.N, head, del)
 }
 
 // shownHead is the head a write goes to. The page must say it shows it: else the write would go to
