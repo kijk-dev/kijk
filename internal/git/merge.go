@@ -139,22 +139,30 @@ type movedErr string
 func (e movedErr) Error() string        { return string(e) }
 func (e movedErr) Is(target error) bool { return target == ErrHeadMoved }
 
+// Merged is what a merge did to the head branch, when kijk asked to delete it. A delete that
+// fails does not fail the merge.
+type Merged struct {
+	Deleted bool   `json:"deleted"`
+	Why     string `json:"why,omitempty"` // why the branch is still there
+}
+
 // SquashMerge squashes pull request n into one commit on its base, only while its head is head,
-// the head kijk showed. The forge's settings make the commit message and may delete the branch.
-func SquashMerge(root string, n int, head string) error {
+// the head kijk showed. del says whether to delete the branch too; nil leaves it to the forge.
+func SquashMerge(root string, n int, head string, del *bool) (Merged, error) {
 	if head == "" {
-		return badInput("no head to merge")
+		return Merged{}, badInput("no head to merge")
 	}
 	f, tool, err := writer(root)
 	if err != nil {
-		return err
+		return Merged{}, err
 	}
+	var out Merged
 	if tool == "gh" {
-		err = githubSquash(f, n, head)
+		out, err = githubSquash(f, n, head, del != nil && *del)
 	} else {
-		err = gitlabSquash(f, n, head)
+		out, err = gitlabSquash(f, n, head, del)
 	}
-	return toolErr(tool, err)
+	return out, toolErr(tool, err)
 }
 
 func mergeMoved(f *forge, n int) error {
@@ -163,23 +171,52 @@ func mergeMoved(f *forge, n int) error {
 
 // githubSquash checks the head first to say so in kijk's words; expectedHeadOid still holds a push
 // that lands between the two calls.
-func githubSquash(f *forge, n int, head string) error {
+func githubSquash(f *forge, n int, head string, del bool) (Merged, error) {
 	t, err := githubTargetOf(f, n)
 	if err != nil {
-		return err
+		return Merged{}, err
 	}
 	if t.head != head {
-		return mergeMoved(f, n)
+		return Merged{}, mergeMoved(f, n)
 	}
-	return mutate("gh", f, `mutation($pr: ID!, $head: GitObjectID!) { mergePullRequest(input: {pullRequestId: $pr, mergeMethod: SQUASH, expectedHeadOid: $head}) { pullRequest { id } } }`,
-		map[string]any{"pr": t.id, "head": head}, nil)
+	var out struct {
+		MergePullRequest struct {
+			PullRequest struct {
+				HeadRef *struct {
+					ID     string
+					Target struct{ Oid string }
+				}
+			}
+		}
+	}
+	err = mutate("gh", f, `mutation($pr: ID!, $head: GitObjectID!) { mergePullRequest(input: {pullRequestId: $pr, mergeMethod: SQUASH, expectedHeadOid: $head}) { pullRequest { headRef { id target { oid } } } } }`,
+		map[string]any{"pr": t.id, "head": head}, &out)
+	if err != nil || !del {
+		return Merged{}, err
+	}
+	ref := out.MergePullRequest.PullRequest.HeadRef
+	switch {
+	case ref == nil:
+		return Merged{Deleted: true}, nil // someone deleted it already
+	case ref.Target.Oid != head:
+		return Merged{Why: "it has commits that were not merged"}, nil
+	}
+	if err := mutate("gh", f, `mutation($ref: ID!) { deleteRef(input: {refId: $ref}) { clientMutationId } }`, map[string]any{"ref": ref.ID}, nil); err != nil {
+		return Merged{Why: toolErr("gh", err).Error()}, nil
+	}
+	return Merged{Deleted: true}, nil
 }
 
-// gitlabSquash: with sha GitLab merges only that head, and answers 409 when it moved.
-func gitlabSquash(f *forge, n int, head string) error {
-	_, err := gitlabREST(f, "PUT", gitlabMR(f, n)+"/merge", map[string]any{"squash": true, "sha": head})
-	if err != nil && conflictRe.MatchString(err.Error()) {
-		return mergeMoved(f, n)
+// gitlabSquash: with sha GitLab merges only that head, and answers 409 when it moved. GitLab deletes
+// the branch itself after the merge, so kijk says it is deleted once GitLab took the merge.
+func gitlabSquash(f *forge, n int, head string, del *bool) (Merged, error) {
+	body := map[string]any{"squash": true, "sha": head}
+	if del != nil {
+		body["should_remove_source_branch"] = *del
 	}
-	return err
+	_, err := gitlabREST(f, "PUT", gitlabMR(f, n)+"/merge", body)
+	if err != nil && conflictRe.MatchString(err.Error()) {
+		return Merged{}, mergeMoved(f, n)
+	}
+	return Merged{Deleted: err == nil && del != nil && *del}, err
 }

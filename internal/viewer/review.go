@@ -22,6 +22,7 @@ type writeRequest struct {
 	ID       string `json:"id"`
 	Resolved bool   `json:"resolved"`
 	Verdict  string `json:"verdict"`
+	Delete   bool   `json:"delete"` // the head branch, with a merge
 	merge    bool   // set by the route, not the page
 }
 
@@ -138,13 +139,21 @@ func prSubmit(req writeRequest, p openedPR) (any, error) {
 	return struct{}{}, git.SubmitReview(req.Root, req.N, p.head, req.Verdict)
 }
 
-// prMerge squashes and merges the pull request, only at the head on screen.
+// prMerge squashes and merges the pull request, only at the head on screen. kijk passes on the
+// choice to delete the branch only where the page showed the checkbox.
 func prMerge(req writeRequest, p openedPR) (any, error) {
 	head, err := shownHead(req, p)
 	if err != nil {
 		return nil, err
 	}
-	return struct{}{}, git.SquashMerge(req.Root, req.N, head)
+	var del *bool
+	switch {
+	case p.merge.Delete == "on" || p.merge.Delete == "off":
+		del = &req.Delete
+	case req.Delete:
+		return nil, fmt.Errorf("%w: kijk may not delete the branch of %s", git.ErrBadInput, p.ref)
+	}
+	return git.SquashMerge(req.Root, req.N, head, del)
 }
 
 // shownHead is the head a write goes to. The page must say it shows it: else the write would go to

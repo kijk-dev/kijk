@@ -297,3 +297,44 @@ func TestMergeRefused(t *testing.T) {
 		t.Errorf("comment refused with %q", why)
 	}
 }
+
+// The page may ask to delete the branch only where it showed the checkbox, and a failed delete
+// still answers the merge.
+func TestMergeDeleteRoute(t *testing.T) {
+	clone, head, base := prRepo(t)
+	js := func(v any) string { b, _ := json.Marshal(v); return string(b) }
+	branch := strings.Replace(prAnswer("OPEN", head, base), `"isDraft":false,`, `"isDraft":false,"headRef":{"associatedPullRequests":{"totalCount":1}},`, 1)
+	auto := strings.Replace(branch, `"repository":{`, `"repository":{"deleteBranchOnMerge":true,`, 1)
+	merge := gittest.Rule{Has: "mergePullRequest(input", Out: `{"data":{"mergePullRequest":{"pullRequest":{"headRef":{"id":"REF_1","target":{"oid":"` + head + `"}}}}}}`}
+	deleted := gittest.Rule{Has: "deleteRef(input", Out: `{"data":{"deleteRef":{"clientMutationId":null}}}`}
+	body := js(map[string]any{"root": clone, "n": 7, "at": head, "delete": true})
+
+	// GitHub deletes it itself: kijk does not ask, and refuses before any merge.
+	calls := gittest.FakeToolCalls(t, "gh", merge, deleted, ghTarget(head), gittest.Rule{Has: "pullRequest(number", Out: auto})
+	get, post := reviewServer(t, clone)
+	if w := get("/api/pr/view", url.Values{"n": {"7"}}); !strings.Contains(w.Body.String(), `"merge":{"ok":true,"delete":"auto"}`) {
+		t.Fatalf("view %d %s", w.Code, w.Body.String())
+	}
+	n := len(calls())
+	if w := post("/api/pr/merge", body); w.Code != http.StatusBadRequest || len(calls()) != n {
+		t.Fatalf("delete where GitHub deletes it: %d %s", w.Code, w.Body.String())
+	}
+
+	calls = gittest.FakeToolCalls(t, "gh", merge, deleted, ghTarget(head), gittest.Rule{Has: "pullRequest(number", Out: branch})
+	if w := get("/api/pr/view", url.Values{"n": {"7"}}); !strings.Contains(w.Body.String(), `"merge":{"ok":true,"delete":"off"}`) {
+		t.Fatalf("view %d %s", w.Code, w.Body.String())
+	}
+	n = len(calls())
+	if w := post("/api/pr/merge", body); w.Code != 200 || strings.TrimSpace(w.Body.String()) != `{"deleted":true}` {
+		t.Fatalf("merge %d %s", w.Code, w.Body.String())
+	}
+	if c := calls()[n:]; len(c) != 3 || !c[2].Has("ref=REF_1") {
+		t.Fatalf("calls %q", c)
+	}
+
+	refused := gittest.Rule{Has: "deleteRef(input", Out: `{"data":{"deleteRef":null},"errors":[{"message":"Cannot delete this protected branch"}]}`}
+	gittest.FakeToolCalls(t, "gh", merge, refused, ghTarget(head), gittest.Rule{Has: "pullRequest(number", Out: branch})
+	if w := post("/api/pr/merge", body); w.Code != 200 || strings.TrimSpace(w.Body.String()) != `{"deleted":false,"why":"gh: Cannot delete this protected branch"}` {
+		t.Fatalf("merge with a failed delete: %d %s", w.Code, w.Body.String())
+	}
+}

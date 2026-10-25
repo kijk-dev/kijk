@@ -127,10 +127,10 @@ func TestParseMerge(t *testing.T) {
 
 func TestGithubSquashMerge(t *testing.T) {
 	repo := forgeRepo(t, "git@github.com:acme/shop.git")
-	merge := gittest.Rule{Has: "mergePullRequest(input", Out: `{"data":{"mergePullRequest":{"pullRequest":{"id":"PR_7"}}}}`}
+	merge := gittest.Rule{Has: "mergePullRequest(input", Out: `{"data":{"mergePullRequest":{"pullRequest":{"headRef":{"id":"REF_1","target":{"oid":"aaa"}}}}}}`}
 	calls := gittest.FakeToolCalls(t, "gh", merge, ghTarget("aaa", ""))
-	if err := SquashMerge(repo, 7, "aaa"); err != nil {
-		t.Fatal(err)
+	if out, err := SquashMerge(repo, 7, "aaa", nil); err != nil || out != (Merged{}) {
+		t.Fatal(out, err)
 	}
 	c := calls()
 	if len(c) != 2 || !c[1].Has("pr=PR_7", "head=aaa") || !strings.Contains(c[1].Stdin, "mergeMethod: SQUASH, expectedHeadOid: $head") {
@@ -139,22 +139,71 @@ func TestGithubSquashMerge(t *testing.T) {
 
 	// Someone pushed since kijk showed the pull request: nothing is merged.
 	calls = gittest.FakeToolCalls(t, "gh", merge, ghTarget("bbb", ""))
-	err := SquashMerge(repo, 7, "aaa")
+	_, err := SquashMerge(repo, 7, "aaa", nil)
 	if !errors.Is(err, ErrHeadMoved) || err.Error() != "#7 has new commits. kijk shows them now; look at them before you merge." || len(calls()) != 1 {
 		t.Fatalf("err %v, calls %q", err, calls())
 	}
 
 	// GitHub's own reason, as for a required check kijk did not know about.
 	gittest.FakeToolCalls(t, "gh", gittest.Rule{Has: "mergePullRequest(input", Out: `{"data":{"mergePullRequest":null},"errors":[{"message":"Required status check \"build\" is expected."}]}`}, ghTarget("aaa", ""))
-	if err := SquashMerge(repo, 7, "aaa"); err == nil || err.Error() != `gh: Required status check "build" is expected.` {
+	if _, err := SquashMerge(repo, 7, "aaa", nil); err == nil || err.Error() != `gh: Required status check "build" is expected.` {
 		t.Fatalf("err %v", err)
+	}
+}
+
+// GitHub deletes the branch in a second call, after the merge, and only at the merged head.
+func TestGithubMergeDelete(t *testing.T) {
+	repo := forgeRepo(t, "git@github.com:acme/shop.git")
+	yes, no := true, false
+	merged := func(ref string) gittest.Rule {
+		return gittest.Rule{Has: "mergePullRequest(input", Out: `{"data":{"mergePullRequest":{"pullRequest":{"headRef":` + ref + `}}}}`}
+	}
+	at := func(oid string) gittest.Rule { return merged(`{"id":"REF_1","target":{"oid":"` + oid + `"}}`) }
+	deleted := gittest.Rule{Has: "deleteRef(input", Out: `{"data":{"deleteRef":{"clientMutationId":null}}}`}
+	deletes := func(c []gittest.Call) (n int) {
+		for _, x := range c {
+			if strings.Contains(x.Stdin, "deleteRef(input") {
+				n++
+			}
+		}
+		return n
+	}
+
+	calls := gittest.FakeToolCalls(t, "gh", at("aaa"), deleted, ghTarget("aaa", ""))
+	out, err := SquashMerge(repo, 7, "aaa", &yes)
+	if c := calls(); err != nil || out != (Merged{Deleted: true}) || len(c) != 3 || !c[2].Has("ref=REF_1") || deletes(c) != 1 {
+		t.Fatalf("%+v %v, calls %q", out, err, c)
+	}
+
+	// Unticked, the branch stays.
+	calls = gittest.FakeToolCalls(t, "gh", at("aaa"), deleted, ghTarget("aaa", ""))
+	if out, err := SquashMerge(repo, 7, "aaa", &no); err != nil || out != (Merged{}) || deletes(calls()) != 0 {
+		t.Fatalf("%+v %v, calls %q", out, err, calls())
+	}
+
+	// A push after the merge: the branch keeps those commits.
+	calls = gittest.FakeToolCalls(t, "gh", at("bbb"), deleted, ghTarget("aaa", ""))
+	if out, err := SquashMerge(repo, 7, "aaa", &yes); err != nil || out != (Merged{Why: "it has commits that were not merged"}) || deletes(calls()) != 0 {
+		t.Fatalf("%+v %v, calls %q", out, err, calls())
+	}
+
+	// Someone deleted it already.
+	calls = gittest.FakeToolCalls(t, "gh", merged("null"), deleted, ghTarget("aaa", ""))
+	if out, err := SquashMerge(repo, 7, "aaa", &yes); err != nil || out != (Merged{Deleted: true}) || deletes(calls()) != 0 {
+		t.Fatalf("%+v %v, calls %q", out, err, calls())
+	}
+
+	// The merge stands when GitHub refuses the delete.
+	gittest.FakeToolCalls(t, "gh", at("aaa"), gittest.Rule{Has: "deleteRef(input", Out: `{"data":{"deleteRef":null},"errors":[{"message":"Cannot delete this protected branch"}]}`}, ghTarget("aaa", ""))
+	if out, err := SquashMerge(repo, 7, "aaa", &yes); err != nil || out != (Merged{Why: "gh: Cannot delete this protected branch"}) {
+		t.Fatalf("%+v %v", out, err)
 	}
 }
 
 func TestGitlabSquashMerge(t *testing.T) {
 	repo := forgeRepo(t, "https://gitlab.com/acme/shop.git")
 	calls := gittest.FakeToolCalls(t, "glab", gittest.Rule{Has: mr7 + "/merge", Out: `{"iid":7,"state":"merged"}`})
-	if err := SquashMerge(repo, 7, "h1"); err != nil {
+	if _, err := SquashMerge(repo, 7, "h1", nil); err != nil {
 		t.Fatal(err)
 	}
 	c := calls()
@@ -162,13 +211,30 @@ func TestGitlabSquashMerge(t *testing.T) {
 		t.Fatalf("calls %q", c)
 	}
 
+	// The choice goes in the same PUT, also when it is no, against the project's default.
+	yes, no := true, false
+	for _, c := range []struct {
+		del  *bool
+		body string
+		out  Merged
+	}{
+		{&yes, `{"sha":"h1","should_remove_source_branch":true,"squash":true}`, Merged{Deleted: true}},
+		{&no, `{"sha":"h1","should_remove_source_branch":false,"squash":true}`, Merged{}},
+	} {
+		calls := gittest.FakeToolCalls(t, "glab", gittest.Rule{Has: mr7 + "/merge", Out: `{"iid":7,"state":"merged"}`})
+		out, err := SquashMerge(repo, 7, "h1", c.del)
+		if b, _ := json.Marshal(body(t, calls()[0])); err != nil || out != c.out || string(b) != c.body {
+			t.Errorf("%+v %v, body %s", out, err, b)
+		}
+	}
+
 	// GitLab merges only the head kijk showed, and answers 409 when it moved.
 	gittest.FakeToolCalls(t, "glab", gittest.Rule{Has: mr7 + "/merge", Err: "409 Conflict\n", Exit: 1})
-	if err := SquashMerge(repo, 7, "h1"); !errors.Is(err, ErrHeadMoved) || err.Error() != "!7 has new commits. kijk shows them now; look at them before you merge." {
-		t.Fatalf("err %v", err)
+	if out, err := SquashMerge(repo, 7, "h1", &yes); !errors.Is(err, ErrHeadMoved) || err.Error() != "!7 has new commits. kijk shows them now; look at them before you merge." || out.Deleted {
+		t.Fatalf("%+v %v", out, err)
 	}
 	gittest.FakeToolCalls(t, "glab", gittest.Rule{Has: mr7 + "/merge", Err: "405 Method Not Allowed\n", Exit: 1})
-	if err := SquashMerge(repo, 7, "h1"); err == nil || err.Error() != "glab: 405 Method Not Allowed" {
+	if _, err := SquashMerge(repo, 7, "h1", nil); err == nil || err.Error() != "glab: 405 Method Not Allowed" {
 		t.Fatalf("err %v", err)
 	}
 }
