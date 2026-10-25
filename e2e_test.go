@@ -515,6 +515,11 @@ func TestBrowser(t *testing.T) {
 		b.waitFor("one match", `document.querySelectorAll('#prs-list li.prrow').length === 1 && `+prRow(477))
 		b.key("Escape", kb.Escape)
 		b.waitFor("the search cleared", `document.querySelector('#prs-list .prsearch input').value === '' && document.querySelectorAll('#prs-list li.prrow').length === 9`)
+		// The row the keys moved to keeps the Tab stop, so Tab back into the list lands on it.
+		b.key("↓", kb.ArrowDown)
+		b.waitFor("this branch focused", `document.activeElement === `+prRow(482))
+		b.key("↓", kb.ArrowDown)
+		b.waitFor("#477 focused, with the Tab stop", `document.activeElement === `+prRow(477)+` && `+prRow(477)+`.tabIndex === 0 && document.querySelectorAll('#prs-list li.prrow[tabindex="0"]').length === 1`)
 
 		// A teammate's pull request.
 		b.click("#477", prRow(477))

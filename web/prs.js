@@ -242,6 +242,11 @@ function prRow(r) {
     key: r.number || 'branch', class: 'prrow', tabIndex: -1, data: { n: r.number || 'branch' },
     title: r.number ? `${w.num}${r.number} ${r.title}\n${r.head} → ${r.base}` : r.title,
     onclick: () => open(r.number ? r.number : 'branch'),
+    onfocus: () => {
+      if (listAt === String(r.number || 'branch')) return;
+      listAt = String(r.number || 'branch');
+      draw();
+    },
   },
   h('div', 'l1', h('span', { class: `prstate${r.draft ? ' draft' : ''}`, html: !r.number ? ICON.branch : r.draft ? ICON.draft : ICON.pr }),
     r.number > 0 && h('span', 'prnum', `${w.num}${r.number}`), h('span', 'prt', r.title),
@@ -304,13 +309,6 @@ function drawList() {
   if (stop) stop.props.tabIndex = 0;
   patch(listEl, searchBox(), h('div', {
     key: 'list', class: 'prs-scroll',
-    onfocusin: e => {
-      const n = e.target.closest?.('li.prrow')?.dataset.n;
-      if (n && n !== listAt) {
-        listAt = n;
-        draw();
-      }
-    },
     onkeydown: e => {
       const rowsNow = [...e.currentTarget.querySelectorAll('li.prrow')];
       const at = rowsNow.indexOf(e.target.closest?.('li.prrow'));
