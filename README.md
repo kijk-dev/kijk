@@ -91,6 +91,8 @@ kijk ~/code/api ~/notes
 - A changed Mermaid, PlantUML or Excalidraw file shows the before and after diagrams side by side, with a switch to its line diff.
 - A branch graph shows your branch, the main line and the pull request target, with the commits that are not pushed yet.
 - Stage, commit, push and fetch. There is no discard, checkout, pull or stash, so a click cannot destroy an agent's work.
+- After a rebase, the branch and its upstream each have commits the other has not, so a plain push is refused. Then Push reads **Force push…**. It first asks you, and says how many commits on the upstream go away. kijk never offers it on the main line.
+- A force push stops in two cases. Git stops when the upstream moved since kijk showed it. kijk stops when the upstream has commits that were never on your branch, as after a fetch brought a teammate's work. Rebase onto them, then push.
 - kijk uses your installed `git`, so your config, credentials and hooks apply.
 
 ### Pull requests
@@ -223,7 +225,7 @@ kijk uses the IntelliJ default keys.
 | Back to the list of pull requests | ⌥← | Alt+← |
 | Mark the file viewed, or clear the mark (pull request) | V | V |
 | Commit | ⌘K | Ctrl+K |
-| Push | ⇧⌘K | Ctrl+Shift+K |
+| Push, or Force push after a rebase (asks first) | ⇧⌘K | Ctrl+Shift+K |
 | Close tab | ⌘W | Ctrl+F4 |
 | Remove the focused folder (folders window) | Delete or Backspace | Delete or Backspace |
 | Undo the removal | ⌘Z | Ctrl+Z |

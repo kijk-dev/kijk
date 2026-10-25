@@ -9,6 +9,8 @@ import { setupPrs, setPrsFolder, prsState, prsStatus, prsShown, showPrsItem, foc
 import { marks, showChanges, showGraph, revealHead, reviewKey, ago, lineCount } from './git.js';
 import { openFind, findAgain, openGotoLine, openGotoFile, openRecent } from './find.js';
 import { onKey, keyLabel, keyNames } from './keys.js';
+import { confirm } from './dialog.js';
+import { plural } from './boxes.js';
 
 // The view of the open folder: its tree, file tabs, and the Files, Git and PRs sidebar tabs.
 const filesEl = document.getElementById('files');
@@ -285,8 +287,10 @@ async function refreshGit() {
   behindEl.title = `${st.behind} on ${st.upstream} not in this branch yet`;
   showSync(st);
   pushBtn.hidden = !canPush;
-  pushBtn.textContent = st.upstream ? 'Push' : 'Publish';
-  pushBtn.title = `${st.upstream ? `Push to ${st.upstream}` : 'Publish this branch to origin'} (${keyLabel('push')})`;
+  pushBtn.textContent = forced(st) ? 'Force push…' : st.upstream ? 'Push' : 'Publish';
+  pushBtn.title = forced(st)
+    ? `Force push to ${st.upstream} (${keyLabel('push')})\nThis branch and ${st.upstream} have split, as after a rebase, so a plain push would be refused.`
+    : `${st.upstream ? `Push to ${st.upstream}` : 'Publish this branch to origin'} (${keyLabel('push')})`;
   pushAfterEl.parentElement.hidden = !canPush;
   pushAfterText.textContent = st.upstream ? `Push to ${st.upstream}` : 'Publish to origin';
   updatePush();
@@ -368,8 +372,37 @@ async function run(kind, body = {}) {
 }
 
 async function pushNow() {
+  if (forced(git)) return forcePush(git);
   const res = await run('push');
   if (res) showOutput(res.output || 'Pushed', true);
+}
+
+// A force push needs the upstream commit on screen: it is the lease, so git stops if it moved.
+const forced = st => !!st?.force && !!st.upHash;
+
+async function forcePush(st) {
+  if (busy || offline) return;
+  const root = openKey, up = st.upstream, lease = st.upHash;
+  let output = '';
+  const done = await confirm({
+    title: `Force push to ${up}?`,
+    sub: `This branch and ${up} have split, as after a rebase.`,
+    rows: [['Removes', `${plural(st.behind, 'commit')} that only ${up} has`]],
+    note: `Git stops if ${up} moved since your last fetch.`,
+    busy: 'Pushing…',
+    ok: 'Force push',
+    run: async () => {
+      try {
+        output = (await post('push', { root, lease })).output;
+      } catch (err) {
+        page.announce(err.message);
+        throw err;
+      }
+    },
+  });
+  if (!done || root !== openKey) return;
+  showOutput(output || 'Force pushed', true);
+  refreshGit();
 }
 
 pushBtn.onclick = pushNow;
