@@ -1,5 +1,5 @@
-import { el, svg, keepFocus, patch } from './api.js';
-import { lineCount, fileRow } from './git.js';
+import { h, patch } from './api.js';
+import { lineCount, kind } from './git.js';
 import { forgeMark, forgeWords, prChips } from './pr.js';
 import { onKey, keyLabel } from './keys.js';
 import { pull, read, line, own, list, askList, watch, redraw, mark, setSince, rowCounts } from './prstore.js';
@@ -66,8 +66,9 @@ export function setPrsFolder(key, state) {
   allOpen = false;
   lastAsk = 0;
   ownSeen = 0;
-  listEl.replaceChildren();
-  prEl.replaceChildren();
+  listAt = '';
+  patch(listEl);
+  patch(prEl);
   page?.setCount(0);
 }
 
@@ -205,70 +206,51 @@ function draw() {
 }
 
 function searchBox() {
-  const box = el('div', 'prsearch');
-  const input = el('input');
-  input.type = 'search';
-  input.oninput = () => {
-    query = input.value.trim();
-    search();
-    draw();
-  };
-  input.onkeydown = e => {
-    if (e.key === 'Escape' && input.value) {
-      e.preventDefault();
-      e.stopPropagation();
-      input.value = '';
-      query = '';
+  const w = words(), l = list(folder);
+  return h('div', { key: 'search', class: 'prsearch' }, h('span', { html: ICON.search }), h('input', {
+    type: 'search', disabled: !hasList(), placeholder: l?.total ? `Search all ${l.total} open ${w.kind}s` : `Search open ${w.kind}s`,
+    attrs: { 'aria-label': `Search open ${w.kind}s` },
+    oninput: e => {
+      query = e.currentTarget.value.trim();
+      search();
       draw();
-    } else if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      listEl.querySelector('li.prrow')?.focus();
-    }
-  };
-  box.append(svg(ICON.search), input);
-  return box;
+    },
+    onkeydown: e => {
+      if (e.key === 'Escape' && e.currentTarget.value) {
+        e.preventDefault();
+        e.stopPropagation();
+        e.currentTarget.value = '';
+        query = '';
+        draw();
+      } else if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        listEl.querySelector('li.prrow')?.focus();
+      }
+    },
+  }));
 }
 
 function section(title, n, open, toggle) {
-  const b = el('button', 'section-toggle');
-  b.append(svg(ICON.chev, `chev${open ? ' open' : ''}`), title);
-  if (n !== '') b.append(' ', el('span', 'n', String(n)));
-  b.setAttribute('aria-expanded', open);
-  if (toggle) b.onclick = toggle;
-  else b.disabled = true;
-  return b;
+  return h('button', { key: title, class: 'section-toggle', attrs: { 'aria-expanded': String(open) }, onclick: toggle, disabled: !toggle },
+    h('span', { class: `chev${open ? ' open' : ''}`, html: ICON.chev }), title, n !== '' && [' ', h('span', 'n', n)]);
 }
 
-function prRowEl(r) {
-  const li = el('li', 'prrow');
-  li.dataset.n = r.number || 'branch';
-  li.tabIndex = -1;
-  const l1 = el('div', 'l1');
-  l1.append(svg(!r.number ? ICON.branch : r.draft ? ICON.draft : ICON.pr, `prstate${r.draft ? ' draft' : ''}`));
-  if (r.number) l1.append(el('span', 'prnum', `${words().num}${r.number}`));
-  l1.append(el('span', 'prt', r.title));
-  if (!r.number && line(folder)?.create) {
-    const a = el('a', 'pr-link', 'Create ↗');
-    Object.assign(a, { href: line(folder).create, target: '_blank', rel: 'noopener', title: `Create a ${words().kind} on ${words().name}` });
-    a.onclick = e => e.stopPropagation();
-    l1.append(a);
-  }
-  const l2 = el('div', 'l2');
-  if (CI[r.ci]) {
-    const dot = el('span', `ci ${CI[r.ci][0]}`);
-    dot.title = CI[r.ci][1];
-    l2.append(dot);
-  }
-  l2.append(el('span', 'who', r.number ? `${r.author} · ${age(r.createdAt)}` : `No ${words().kind} yet`));
-  const c = rowCounts(folder, r);
+function prRow(r) {
+  const w = words(), c = rowCounts(folder, r);
   const yours = [c.drafts ? plural(c.drafts, 'draft') : '', c.viewed ? `${c.viewed}/${c.files} viewed` : ''].filter(Boolean);
-  if (yours.length) l2.append(el('span', 'yours', yours.join(' · ')));
-  const lc = lineCount(r.add, r.del);
-  if (lc) l2.append(lc);
-  li.append(l1, l2);
-  li.title = r.number ? `${words().num}${r.number} ${r.title}\n${r.head} → ${r.base}` : r.title;
-  li.onclick = () => open(r.number ? r.number : 'branch');
-  return li;
+  return h('li', {
+    key: r.number || 'branch', class: 'prrow', tabIndex: -1, data: { n: r.number || 'branch' },
+    title: r.number ? `${w.num}${r.number} ${r.title}\n${r.head} → ${r.base}` : r.title,
+    onclick: () => open(r.number ? r.number : 'branch'),
+  },
+  h('div', 'l1', h('span', { class: `prstate${r.draft ? ' draft' : ''}`, html: !r.number ? ICON.branch : r.draft ? ICON.draft : ICON.pr }),
+    r.number > 0 && h('span', 'prnum', `${w.num}${r.number}`), h('span', 'prt', r.title),
+    !r.number && line(folder)?.create && h('a', {
+      class: 'pr-link', href: line(folder).create, target: '_blank', rel: 'noopener', title: `Create a ${w.kind} on ${w.name}`, onclick: e => e.stopPropagation(),
+    }, 'Create ↗')),
+  h('div', 'l2', CI[r.ci] && h('span', { class: `ci ${CI[r.ci][0]}`, title: CI[r.ci][1] }),
+    h('span', 'who', r.number ? `${r.author} · ${age(r.createdAt)}` : `No ${w.kind} yet`),
+    yours.length > 0 && h('span', 'yours', yours.join(' · ')), lineCount(r.add, r.del)));
 }
 
 // thisBranch is the row of the folder's own branch: its pull request, or the branch alone.
@@ -285,98 +267,83 @@ function matches(r, q) {
   return String(r.number) === q || [r.title, r.author, r.head].some(s => s?.toLowerCase().includes(q));
 }
 
+let listAt = ''; // the data-n of the list row that holds the Tab stop
+
 function drawList() {
-  if (!listEl.firstChild) listEl.append(searchBox(), el('div', 'prs-scroll'));
-  const input = listEl.querySelector('.prsearch input');
   const w = words(), l = list(folder);
-  input.placeholder = l?.total ? `Search all ${l.total} open ${w.kind}s` : `Search open ${w.kind}s`;
-  input.setAttribute('aria-label', `Search open ${w.kind}s`);
-  input.disabled = !hasList();
-  const scroll = listEl.querySelector('.prs-scroll');
-  const focused = listEl.contains(document.activeElement) && document.activeElement.closest('li.prrow')?.dataset.n;
-  const parts = [];
   const rows = l?.prs || [];
   const mine = own(folder);
-  const ul = items => {
-    const u = el('ul');
-    u.append(...items.map(prRowEl));
-    return u;
-  };
+  const ul = (key, items) => h('ul', { key }, items.map(prRow));
+  const parts = [];
   if (query) {
     const found = list(folder, query)?.prs || [];
     const hits = [...rows.filter(r => matches(r, query)), ...found.filter(r => !rows.some(x => x.number === r.number))];
-    parts.push(section('Found', hits.length), ul(hits));
-    if (!hits.length) parts.push(el('p', 'prmore', `No open ${w.kind} matches “${query}”.`));
+    parts.push(section('Found', hits.length), ul('found', hits));
+    if (!hits.length) parts.push(h('p', 'prmore', `No open ${w.kind} matches “${query}”.`));
   } else {
-    if (onBranch()) parts.push(section('This branch', ''), ul([thisBranch()]));
+    if (onBranch()) parts.push(section('This branch', ''), ul('branch', [thisBranch()]));
     if (l?.note || (line(folder)?.forge && !maybeList())) {
-      parts.push(el('p', 'note', l?.note || line(folder).note)); // the tool is missing or not logged in
+      parts.push(h('p', 'note', l?.note || line(folder).note)); // the tool is missing or not logged in
     } else if (!l) {
-      parts.push(el('p', 'note', 'Loading…'));
+      parts.push(h('p', 'note', 'Loading…'));
     } else {
       const asked = rows.filter(r => r.requested && r.number !== mine);
       const yours = rows.filter(r => r.author === l.me && r.number !== mine);
-      parts.push(section('Review requested', asked.length), ul(asked));
-      parts.push(section('Yours', yours.length), ul(yours));
+      parts.push(section('Review requested', asked.length), ul('asked', asked));
+      parts.push(section('Yours', yours.length), ul('yours', yours));
       parts.push(section('All open', l.total, allOpen, () => {
         allOpen = !allOpen;
         draw();
       }));
-      if (allOpen) parts.push(ul(rows));
-      if (allOpen && l.total > rows.length) parts.push(el('p', 'prmore', `Search above to find any of the ${l.total}.`));
+      if (allOpen) parts.push(ul('all', rows));
+      if (allOpen && l.total > rows.length) parts.push(h('p', 'prmore', `Search above to find any of the ${l.total}.`));
     }
   }
-  scroll.replaceChildren(...parts);
-  const all = [...scroll.querySelectorAll('li.prrow')];
-  const keep = all.find(li => li.dataset.n === focused);
-  (keep || all[0])?.setAttribute('tabindex', '0');
-  if (keep) keep.focus();
-  scroll.onkeydown = e => {
-    const rowsNow = [...scroll.querySelectorAll('li.prrow')];
-    const at = rowsNow.indexOf(e.target.closest?.('li.prrow'));
-    if (at < 0) return;
-    const to = { ArrowDown: at + 1, ArrowUp: at - 1, Home: 0, End: rowsNow.length - 1 }[e.key];
-    if (to !== undefined && rowsNow[to]) {
-      rowsNow[at].tabIndex = -1;
-      rowsNow[to].tabIndex = 0;
-      rowsNow[to].focus();
-    } else if (e.key === 'ArrowUp' && at === 0) {
-      input.focus();
-    } else if (e.key === 'Enter') {
-      rowsNow[at].click();
-    } else {
-      return;
-    }
-    e.preventDefault();
-  };
+  const made = parts.flatMap(d => (d.tag === 'ul' ? d.children.flat() : []));
+  const stop = made.find(d => String(d.props.data.n) === listAt) || made[0];
+  if (stop) stop.props.tabIndex = 0;
+  patch(listEl, searchBox(), h('div', {
+    key: 'list', class: 'prs-scroll',
+    onfocusin: e => {
+      const n = e.target.closest?.('li.prrow')?.dataset.n;
+      if (n && n !== listAt) {
+        listAt = n;
+        draw();
+      }
+    },
+    onkeydown: e => {
+      const rowsNow = [...e.currentTarget.querySelectorAll('li.prrow')];
+      const at = rowsNow.indexOf(e.target.closest?.('li.prrow'));
+      if (at < 0) return;
+      const to = { ArrowDown: at + 1, ArrowUp: at - 1, Home: 0, End: rowsNow.length - 1 }[e.key];
+      if (to !== undefined && rowsNow[to]) rowsNow[to].focus();
+      else if (e.key === 'ArrowUp' && at === 0) listEl.querySelector('.prsearch input').focus();
+      else if (e.key === 'Enter') rowsNow[at].click();
+      else return;
+      e.preventDefault();
+    },
+  }, parts));
 }
 
 function backButton() {
-  const b = svg(ICON.back, 'icon-btn back', 'button');
-  b.setAttribute('aria-label', `Back to ${words().short}s`);
-  b.dataset.tip = `Back to ${words().short}s\n${keyLabel('prsBack')}`;
-  b.onclick = e => {
-    e.stopPropagation();
-    open('list');
-    focusPrs();
-  };
-  return b;
+  return h('button', {
+    key: 'back', class: 'icon-btn back', html: ICON.back,
+    attrs: { 'aria-label': `Back to ${words().short}s` }, data: { tip: `Back to ${words().short}s\n${keyLabel('prsBack')}` },
+    onclick: e => {
+      e.stopPropagation();
+      open('list');
+      focusPrs();
+    },
+  });
 }
 
 function modeSwitch(active) {
-  const wrap = el('div', 'prmode');
-  const group = el('div', 'mode');
-  group.setAttribute('role', 'group');
-  group.setAttribute('aria-label', 'Which diff');
-  for (const [mode, text, tip] of [['local', 'Local', 'What the agent did, also work not pushed'], ['forge', `As on ${words().name}`, 'What reviewers see']]) {
-    const b = el('button', null, text);
-    b.setAttribute('aria-pressed', mode === active);
-    b.dataset.tip = `${text}\n${tip}`;
-    b.onclick = () => { if (mode !== saved.mode) setMode(mode); };
-    group.append(b);
-  }
-  wrap.append(group);
-  return wrap;
+  const modes = [['local', 'Local', 'What the agent did, also work not pushed'], ['forge', `As on ${words().name}`, 'What reviewers see']];
+  return h('div', { key: 'mode', class: 'prmode' }, h('div', { class: 'mode', attrs: { role: 'group', 'aria-label': 'Which diff' } },
+    modes.map(([mode, text, tip]) => h('button', {
+      key: mode, attrs: { 'aria-pressed': String(mode === active) }, data: { tip: `${text}\n${tip}` },
+      onclick: () => { if (mode !== saved.mode) setMode(mode); },
+    }, text))));
 }
 
 // branchHead is what review.js adds to the head of the own branch: back, and the switch.
@@ -390,46 +357,32 @@ export function branchHead() {
 }
 
 // overviewRow is the first row of a file list: the Overview of pull request n, or of the branch.
-export function overviewRow(n, res) {
-  const li = el('li', 'item ov');
-  li.tabIndex = -1;
-  li.dataset.path = '';
-  const parts = [];
+// stop says it holds the list's Tab stop.
+export function overviewRow(n, res, stop) {
   const open = (res?.threads || []).filter(t => !t.resolved && !t.outdated && !t.draft).length;
-  if (open) parts.push(plural(open, 'open thread'));
   const said = (res?.comments || []).filter(c => !c.draft).length;
-  if (!open && said) parts.push(plural(said, 'comment'));
-  li.append(svg(ICON.doc), el('span', 'name', 'Overview'), el('span', 'dir', parts.join(' · ')));
-  li.onclick = () => {
-    page.openTab({ kind: 'overview', n, path: '' }, true);
-    selectFile('');
-  };
-  return li;
+  return h('li', {
+    key: 'overview', class: 'item ov', tabIndex: stop ? 0 : -1, data: { path: '' },
+    onclick: () => {
+      page.openTab({ kind: 'overview', n, path: '' }, true);
+      selectFile('');
+    },
+  }, h('span', { html: ICON.doc }), h('span', 'name', 'Overview'), h('span', 'dir', open ? plural(open, 'open thread') : said ? plural(said, 'comment') : ''));
 }
 
-function prHead(pr, mine, row) {
-  const n = pr.n, res = pr.res, p = res || row || {};
+function prHead(p, mine, row) {
+  const n = p.n, res = p.res, d = res || row || {};
   const w = words();
-  const h = el('div', 'prhead');
-  const top = el('div', 'pr-top');
-  top.append(backButton(), forgeMark(forgeKind() || 'github'), el('span', 'pr-num', `${w.num}${n}`), el('span', 'pr-title', p.title || ''));
-  if (p.url) {
-    const a = el('a', 'pr-link', '↗');
-    Object.assign(a, { href: p.url, target: '_blank', rel: 'noopener' });
-    a.dataset.tip = `Open on ${w.name}`;
-    a.setAttribute('aria-label', `Open on ${w.name}`);
-    top.append(a);
-  }
-  const meta = el('div', 'prmeta');
-  if (p.author) meta.append(avatar(p.author), el('span', null, p.author));
-  if (p.head) meta.append(el('span', `ref${mine ? ' head' : ''}`, p.head), svg(ICON.arrow, 'arrow'), el('span', 'ref lane-main', p.base));
-  h.append(top, meta);
-  if (mine) h.append(modeSwitch('forge'));
-  const ci = res?.checks ? res.ci : p.ci;
-  const chips = prChips({ ...p, ci, ciUrl: p.url && forgeKind() === 'github' ? `${p.url}/checks` : '', target: p.base }, w, line(folder)?.default || p.base);
-  if (chips) h.append(chips);
-  h.append(...sinceParts(pr, yes => { if (yes) page.openTab({ kind: 'pr', n, path: '' }, true); }));
-  return h;
+  const ci = res?.checks ? res.ci : d.ci;
+  return h('div', 'prhead',
+    h('div', 'pr-top', backButton(), forgeMark(forgeKind() || 'github'), h('span', 'pr-num', `${w.num}${n}`), h('span', 'pr-title', d.title || ''),
+      d.url && h('a', { class: 'pr-link', href: d.url, target: '_blank', rel: 'noopener', data: { tip: `Open on ${w.name}` }, attrs: { 'aria-label': `Open on ${w.name}` } },
+        '↗')),
+    h('div', 'prmeta', d.author && [avatar(d.author), h('span', null, d.author)],
+      d.head && [h('span', `ref${mine ? ' head' : ''}`, d.head), h('span', { class: 'arrow', html: ICON.arrow }), h('span', 'ref lane-main', d.base)]),
+    mine && modeSwitch('forge'),
+    prChips({ ...d, ci, ciUrl: d.url && forgeKind() === 'github' ? `${d.url}/checks` : '', target: d.base }, w, line(folder)?.default || d.base),
+    sinceParts(p, yes => { if (yes) page.openTab({ kind: 'pr', n, path: '' }, true); }));
 }
 
 // sinceParts are the switch under a pull request's header, and the note after a rebase; pick(yes)
@@ -437,117 +390,84 @@ function prHead(pr, mine, row) {
 function sinceParts(p, pick) {
   const s = p.since;
   if (!s) return [];
-  const wrap = el('div', 'prmode since');
-  const group = el('div', 'mode');
-  group.setAttribute('role', 'group');
-  group.setAttribute('aria-label', 'Which changes');
   const a = s.answer;
   const ago = s.time ? `\nReviewed ${age(new Date(s.time).toISOString())} ago` : '';
   const count = a && !a.note ? `${ago ? ' · ' : '\n'}${plural(a.commits, 'new commit')}` : '';
   const kind = forgeWords(p.res).kind;
-  for (const [yes, text, tip] of [[false, 'All changes', `All changes\nEvery file of the ${kind}`], [true, 'Since your review', `Only what changed since your review${ago}${count}`]]) {
-    const b = el('button', null, text);
-    b.setAttribute('aria-pressed', yes === s.on);
-    b.dataset.tip = tip;
-    b.onclick = () => {
-      if (yes !== s.on) setSince(folder, p.n, yes);
-      pick?.(yes);
-    };
-    group.append(b);
-  }
-  wrap.append(group);
-  return s.on && a?.note ? [wrap, el('p', 'since-note', a.note)] : [wrap];
+  const modes = [[false, 'All changes', `All changes\nEvery file of the ${kind}`], [true, 'Since your review', `Only what changed since your review${ago}${count}`]];
+  return [h('div', { key: 'since', class: 'prmode since' }, h('div', { class: 'mode', attrs: { role: 'group', 'aria-label': 'Which changes' } },
+    modes.map(([yes, text, tip]) => h('button', {
+      key: String(yes), attrs: { 'aria-pressed': String(yes === s.on) }, data: { tip },
+      onclick: () => {
+        if (yes !== s.on) setSince(folder, p.n, yes);
+        pick?.(yes);
+      },
+    }, text)))),
+  s.on && a?.note && h('p', 'since-note', a.note)];
 }
-
-// The review box draws in place in its own element, which the draw does not move, so typing in it
-// goes on; keepFocus keeps the focus in the rest.
-const reviewEl = el('div');
-reviewEl.style.display = 'contents';
 
 function drawPR(n, mine) {
-  const top = prEl.querySelector('.prs-scroll')?.scrollTop, p = pull(folder, n);
-  patch(reviewEl, p.res && reviewBox(p));
-  keepFocus(prEl, () => {
-    for (const c of [...prEl.childNodes]) if (c !== reviewEl) c.remove();
-    prEl.prepend(...prParts(n, mine));
-    if (!reviewEl.isConnected) prEl.append(reviewEl);
-  });
-  if (top) prEl.querySelector('.prs-scroll').scrollTop = top;
+  const p = pull(folder, n);
+  patch(prEl, prParts(p, mine), p.res && reviewBox(p));
 }
 
-function prParts(n, mine) {
-  const p = pull(folder, n), res = p.res;
-  const row = list(folder)?.prs.find(r => r.number === n);
-  const parts = [prHead(p, mine, row)];
-  const why = p.why || res?.error;
-  if (why) parts.push(el('p', 'note error', why));
-  const wrap = el('div', 'prs-scroll prfiles');
-  const files = p.files || res?.files || [];
-  const h = el('h3', null, `Files ${files.length}`);
+function prParts(p, mine) {
+  const n = p.n, res = p.res, files = p.files || res?.files || [], why = p.why || res?.error;
   const sum = files.reduce(([a, d], f) => [a + (f.add || 0), d + (f.del || 0)], [0, 0]);
-  const lc = lineCount(...sum);
-  if (lc) h.append(lc);
-  const { marks, own } = p;
-  const viewedNow = files.filter(f => own(f) && marks.state(own(f)) === 'viewed').length;
-  if (files.length) h.append(el('span', 'viewedcount', `${viewedNow} of ${files.length} viewed`));
-  const ul = el('ul');
-  ul.setAttribute('aria-label', `Files of ${words().num}${n}`);
-  ul.append(overviewRow(n, res));
-  for (const f of files) {
-    const r = fileRow(f, () => {
-      page.openTab({ kind: 'pr', n, path: '' }, true);
-      goToChange(folder, n, f.path);
-      selectFile(f.path);
-    });
-    r.dataset.path = f.path;
-    const tc = threadCount((res.threads || []).filter(t => t.path === f.path));
-    if (tc) r.insertBefore(tc, r.querySelector('.lc'));
-    const state = own(f) ? marks.state(own(f)) : '';
-    r.classList.toggle('viewed', state === 'viewed');
-    if (state === 'changed') {
-      const again = el('span', 'again', 'changed');
-      again.dataset.tip = 'Changed since you viewed it';
-      r.insertBefore(again, r.querySelector('.tc, .lc'));
-    }
-    if (own(f)) r.append(viewedBox(n, own(f), state));
-    if (f.path === selectedFile) r.classList.add('selected');
-    ul.append(r);
+  const state = f => (p.own(f) ? p.marks.state(p.own(f)) : '');
+  const viewedNow = files.filter(f => state(f) === 'viewed').length;
+  return [
+    prHead(p, mine, list(folder)?.prs.find(r => r.number === n)),
+    why && h('p', 'note error', why),
+    h('div', { key: 'files', class: 'prs-scroll prfiles' },
+      h('h3', null, `Files ${files.length}`, lineCount(...sum), files.length > 0 && h('span', 'viewedcount', `${viewedNow} of ${files.length} viewed`)),
+      h('ul', { attrs: { 'aria-label': `Files of ${words().num}${n}` }, onkeydown: rowKeys },
+        overviewRow(n, res, !files.some(f => f.path === selectedFile)),
+        files.map(f => fileItem(f, state(f), () => {
+          page.openTab({ kind: 'pr', n, path: '' }, true);
+          goToChange(folder, n, f.path);
+          selectFile(f.path);
+        }, threadCount((res?.threads || []).filter(t => t.path === f.path)), p.own(f) && viewedBox(n, p.own(f), state(f))))),
+      !res && !why && h('p', 'note', `Fetching ${words().num}${n}…`)),
+  ];
+}
+
+// fileItem is a file row of a pull request, as fileRow draws it in the Git tab, with its mark.
+function fileItem(f, state, onclick, tc, box) {
+  const slash = f.path.lastIndexOf('/'), k = kind(f.status);
+  return h('li', {
+    key: f.path, class: `item${state === 'viewed' ? ' viewed' : ''}${f.path === selectedFile ? ' selected' : ''}`,
+    tabIndex: f.path === selectedFile ? 0 : -1, title: f.orig ? `${f.orig} → ${f.path}` : f.path, data: { path: f.path }, onclick,
+  },
+  h('span', `letter ${k}`, f.status), h('span', `name ${k}`, f.path.slice(slash + 1)), h('span', 'dir', slash > 0 ? f.path.slice(0, slash) : ''),
+  state === 'changed' && h('span', { class: 'again', data: { tip: 'Changed since you viewed it' } }, 'changed'), tc, lineCount(f.add, f.del), box);
+}
+
+// rowKeys moves in a file list: a row the arrows reach shows at once.
+function rowKeys(e) {
+  const rows = [...e.currentTarget.children];
+  const at = rows.indexOf(e.target.closest('li'));
+  const to = { ArrowDown: at + 1, ArrowUp: at - 1, Home: 0, End: rows.length - 1 }[e.key];
+  if (to !== undefined && rows[to]) {
+    rows[to].focus();
+    rows[to].click();
+  } else if (e.key === 'Enter' && rows[at]) {
+    rows[at].click();
+  } else {
+    return;
   }
-  (ul.querySelector('.selected') || ul.firstChild).tabIndex = 0;
-  ul.onkeydown = e => {
-    const rows = [...ul.children];
-    const at = rows.indexOf(e.target.closest('li'));
-    const to = { ArrowDown: at + 1, ArrowUp: at - 1, Home: 0, End: rows.length - 1 }[e.key];
-    if (to !== undefined && rows[to]) {
-      rows[at].tabIndex = -1;
-      rows[to].tabIndex = 0;
-      rows[to].focus();
-      rows[to].click();
-    } else if (e.key === 'Enter' && rows[at]) {
-      rows[at].click();
-    } else {
-      return;
-    }
-    e.preventDefault();
-    e.stopPropagation();
-  };
-  wrap.append(h, ul);
-  if (!res && !why) wrap.append(el('p', 'note', `Fetching ${words().num}${n}…`));
-  parts.push(wrap);
-  return parts;
+  e.preventDefault();
+  e.stopPropagation();
 }
 
 // viewedBox is a file row's Viewed box. It takes no Tab stop: V works on the focused row.
 function viewedBox(n, f, state) {
-  const box = el('input', 'viewedbox');
-  box.type = 'checkbox';
-  box.checked = state === 'viewed';
-  box.tabIndex = -1;
-  box.setAttribute('aria-label', 'Viewed');
-  box.dataset.tip = `Viewed\n${keyLabel('markViewed')}`;
-  box.onclick = e => e.stopPropagation();
-  box.onchange = () => { if (!mark(folder, n, f, box.checked)) box.checked = !box.checked; };
-  return box;
+  return h('input', {
+    key: 'viewed', class: 'viewedbox', type: 'checkbox', checked: state === 'viewed', tabIndex: -1,
+    attrs: { 'aria-label': 'Viewed' }, data: { tip: `Viewed\n${keyLabel('markViewed')}` },
+    onclick: e => e.stopPropagation(),
+    onchange: e => { if (!mark(folder, n, f, e.currentTarget.checked)) e.currentTarget.checked = !e.currentTarget.checked; },
+  });
 }
 
 // markRow is V on a file row: it marks or clears the row's file, and after a mark goes to the next
@@ -559,23 +479,19 @@ function markRow(li) {
   const on = f && before.marks.state(f) !== 'viewed';
   if (!f || !mark(folder, w.n, f, on)) return;
   const p = pull(folder, w.n);
-  const rows = [...prEl.querySelectorAll('.prfiles li')];
   const files = (p.files || p.res.files).map(p.own).filter(Boolean);
   const next = on && files.slice(files.indexOf(f) + 1).find(x => p.marks.state(x) !== 'viewed');
-  const to = rows.find(r => r.dataset.path === (next ? next.path : f.path));
+  const to = [...prEl.querySelectorAll('.prfiles li')].find(r => r.dataset.path === (next ? next.path : f.path));
   if (!to) return;
-  for (const r of rows) r.tabIndex = r === to ? 0 : -1;
   if (next) to.click(); // shows it in Changes, which takes the focus
   to.focus();
 }
 
 function selectFile(path) {
+  const was = selectedFile, w = which();
   selectedFile = path;
-  for (const li of prEl.querySelectorAll('.prfiles li')) {
-    const on = li.dataset.path === path;
-    li.classList.toggle('selected', on);
-    if (on) li.scrollIntoView({ block: 'nearest' });
-  }
+  if (path !== was && w.panel === 'pr') drawPR(w.n, w.mine);
+  prEl.querySelector('.prfiles li.selected')?.scrollIntoView({ block: 'nearest' });
 }
 
 onKey('refreshPrs', () => {

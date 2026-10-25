@@ -1,4 +1,4 @@
-import { el } from './api.js';
+import { el, h, patch } from './api.js';
 
 // Forge marks from Simple Icons (CC0).
 export const FORGE = {
@@ -21,15 +21,13 @@ export const ownPR = res => (['open', 'draft'].includes(res?.pr?.state) ? res.pr
 const MERGE = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 0 0 9 9"/></svg>';
 const STATE = { draft: 'Draft', merged: 'Merged', closed: 'Closed' };
 
-function link(cls, href, text) {
-  const a = el(href ? 'a' : 'span', cls, text);
-  if (href) {
-    a.href = href;
-    a.target = '_blank';
-    a.rel = 'noopener';
-  }
-  return a;
-}
+const link = (cls, href, props, ...children) => h(href ? 'a' : 'span', { class: cls, ...(href && { href, target: '_blank', rel: 'noopener' }), ...props }, children);
+
+const mergeIcon = () => {
+  const t = document.createElement('template');
+  t.innerHTML = MERGE;
+  return t.content.firstChild;
+};
 
 // forgeMark is the forge's own mark, with its name as the tooltip.
 export function forgeMark(kind) {
@@ -44,65 +42,41 @@ export function forgeMark(kind) {
 export function showPR(line, res, open) {
   const f = res?.forge;
   line.hidden = !f;
-  if (!f) return line.replaceChildren();
-  const h = FORGE[f.kind];
-  const top = el('div', 'pr-top');
-  top.append(forgeMark(f.kind));
-
-  const p = res.pr;
+  if (!f) return patch(line);
+  const w = FORGE[f.kind], p = res.pr;
   if (!p && (res.note || !res.tool)) {
-    top.append(link('pr-link', f.web, `Open on ${h.name} ↗`));
-    if (res.create) top.append(link('pr-link', res.create, `Create ${h.short} ↗`));
-    return line.replaceChildren(top, ...(res.note ? [el('div', 'pr-note', res.note)] : []));
+    return patch(line, h('div', 'pr-top', forgeMark(f.kind), link('pr-link', f.web, {}, `Open on ${w.name} ↗`), res.create && link('pr-link', res.create, {}, `Create ${w.short} ↗`)),
+      res.note && h('div', 'pr-note', res.note));
   }
-  if (!p) {
-    top.append(el('span', 'pr-title none', `No ${h.kind}`), link('pr-link', res.create, 'Create ↗'));
-    return line.replaceChildren(top);
-  }
-
-  const title = link('pr-title', p.url, p.title);
-  if (open) {
-    // The title opens the pull request in the PRs tab; ↗ still opens the website.
-    title.removeAttribute('href');
-    title.removeAttribute('target');
-    title.tabIndex = 0;
-    title.setAttribute('role', 'link');
-    title.dataset.tip = 'Open in the PRs tab';
-    title.onclick = e => {
-      e.preventDefault();
-      open(p.number);
-    };
-    title.onkeydown = e => { if (e.key === 'Enter') title.onclick(e); };
-  }
-  top.append(el('span', 'pr-num', `${h.num}${p.number}`), title, link('pr-link', p.url, '↗'));
-  top.lastChild.dataset.tip = `Open on ${h.name}`;
-  top.lastChild.setAttribute('aria-label', `Open on ${h.name}`);
-  const chips = prChips(p, h, res.default);
-  line.replaceChildren(top, ...(chips ? [chips] : []));
+  if (!p) return patch(line, h('div', 'pr-top', forgeMark(f.kind), h('span', 'pr-title none', `No ${w.kind}`), link('pr-link', res.create, {}, 'Create ↗')));
+  const go = e => {
+    e.preventDefault();
+    open(p.number);
+  };
+  // The title opens the pull request in the PRs tab; ↗ still opens the website.
+  const title = open
+    ? h('a', {
+      class: 'pr-title', tabIndex: 0, attrs: { role: 'link' }, data: { tip: 'Open in the PRs tab' }, onclick: go, onkeydown: e => { if (e.key === 'Enter') go(e); },
+    }, p.title)
+    : link('pr-title', p.url, {}, p.title);
+  patch(line, h('div', 'pr-top', forgeMark(f.kind), h('span', 'pr-num', `${w.num}${p.number}`), title,
+    link('pr-link', p.url, { data: { tip: `Open on ${w.name}` }, attrs: { 'aria-label': `Open on ${w.name}` } }, '↗')), prChips(p, w, res.default));
 }
 
 // prChips are the chips of a pull request's state, CI and review, or null when there are none.
-export function prChips(p, h, defaultBranch) {
-  const chips = el('div', 'chips');
-  const chip = (cls, text, href, tip) => {
-    const c = link(`chip ${cls}`, href, text);
-    if (tip) c.title = tip;
-    chips.append(c);
-    return c;
-  };
+export function prChips(p, w, defaultBranch) {
+  const chip = (cls, text, href, tip) => link(`chip ${cls}`, href, tip ? { title: tip } : {}, text);
   // Open is the normal case, so only other states get a chip.
-  if (STATE[p.state]) chip(p.state, STATE[p.state]);
-  if (p.ci === 'failed') chip('fail', `✗ ${h.ci} failed`, p.ciUrl, p.failed ? `Failed: ${p.failed.join(', ')}` : '');
-  if (p.ci === 'running') chip('run', `${h.ci} running`, p.ciUrl).prepend(el('span', 'dot'));
-  if (p.ci === 'passed') chip('pass', `✓ ${h.ci} passed`, p.ciUrl);
-  if (p.review === 'approved') chip('pass', '✓ Approved');
-  else if (p.review === 'changes') chip('fail', 'Changes requested');
-  else if (p.approvals) chip('pass', `✓ ${p.approvals} ${p.approvals === 1 ? 'approval' : 'approvals'}`);
-  else if (p.review === 'needed') chip('', 'Review needed');
-  if (p.target && p.target !== defaultBranch) {
-    const c = chip('target', p.target, null, `Merges into ${p.target}`);
-    c.setAttribute('aria-label', `Merges into ${p.target}`);
-    c.insertAdjacentHTML('afterbegin', MERGE);
-  }
-  return chips.children.length ? chips : null;
+  const chips = [
+    STATE[p.state] && chip(p.state, STATE[p.state]),
+    p.ci === 'failed' && chip('fail', `✗ ${w.ci} failed`, p.ciUrl, p.failed ? `Failed: ${p.failed.join(', ')}` : ''),
+    p.ci === 'running' && chip('run', [h('span', 'dot'), `${w.ci} running`], p.ciUrl),
+    p.ci === 'passed' && chip('pass', `✓ ${w.ci} passed`, p.ciUrl),
+    p.review === 'approved' ? chip('pass', '✓ Approved')
+      : p.review === 'changes' ? chip('fail', 'Changes requested')
+        : p.approvals ? chip('pass', `✓ ${p.approvals} ${p.approvals === 1 ? 'approval' : 'approvals'}`)
+          : p.review === 'needed' && chip('', 'Review needed'),
+    p.target && p.target !== defaultBranch && link('chip target', null, { title: `Merges into ${p.target}`, attrs: { 'aria-label': `Merges into ${p.target}` } }, mergeIcon(), p.target),
+  ].filter(Boolean);
+  return chips.length ? h('div', { key: 'chips', class: 'chips' }, chips) : null;
 }

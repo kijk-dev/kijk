@@ -109,3 +109,18 @@ func TestPRsTabAsksThroughTheStore(t *testing.T) {
 		}
 	}
 }
+
+// TestPRsTabDrawsInPlace checks that the PRs tab draws through patch, which keeps the elements the
+// user holds, instead of building them again and putting back the focus or the scroll place by hand.
+func TestPRsTabDrawsInPlace(t *testing.T) {
+	rebuilds := regexp.MustCompile(`\bkeepFocus\b|\.replaceChildren\(|\.scrollTop\s*=[^=]`)
+	for _, name := range []string{"pr.js", "prs.js", "overview.js"} {
+		b, err := fs.ReadFile(webFiles, "web/"+name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, m := range rebuilds.FindAll(b, -1) {
+			t.Errorf("%s: %s; draw through patch", name, m)
+		}
+	}
+}

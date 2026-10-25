@@ -1,7 +1,7 @@
-import { el, get, svg, patch, keepFocus } from './api.js';
+import { el, h, get, patch } from './api.js';
 import { setView, isCurrent } from './view.js';
 import { pull, read, watch } from './prstore.js';
-import { avatar, comment, age } from './threads.js';
+import { avatar, comment, age, newTab } from './threads.js';
 import { forgeWords } from './pr.js';
 import { mac } from './keys.js';
 import { threadOpts, writable, summarySlot, commentFoot } from './drafts.js';
@@ -28,12 +28,8 @@ const STATE = { ok: 'Passed', bad: 'Failed', cancel: 'Cancelled', run: 'Running'
 const REVIEW = { approved: ['ok', ICON.check, 'Approved'], commented: ['', ICON.msg, 'Commented'], changes: ['bad', ICON.x, 'Changes requested'], requested: ['', ICON.wait, 'Review requested'] };
 
 function jobIcon(state) {
-  if (state === 'run') {
-    const s = el('span', 'ji');
-    s.append(el('span', 'rundot'));
-    return s;
-  }
-  return svg({ ok: ICON.check, bad: ICON.x, skip: ICON.skip, cancel: ICON.skip, wait: ICON.wait }[state] || ICON.wait, `ji ${{ ok: 'ok', bad: 'bad' }[state] || 'skip'}`);
+  if (state === 'run') return h('span', 'ji', h('span', 'rundot'));
+  return h('span', { class: `ji ${{ ok: 'ok', bad: 'bad' }[state] || 'skip'}`, html: { ok: ICON.check, bad: ICON.x, skip: ICON.skip, cancel: ICON.skip, wait: ICON.wait }[state] || ICON.wait });
 }
 
 export function setupOverview(h) {
@@ -47,10 +43,10 @@ export async function openOverview(viewer, root, tab) {
   if (!tab.n) return drawBranch(v);
   const known = pull(root, tab.n).res;
   if (known) draw(v, known);
-  else viewer.replaceChildren(el('p', 'empty', `Fetching ${tab.num || '#'}${tab.n}…`));
+  else patch(viewer, h('p', 'empty', `Fetching ${tab.num || '#'}${tab.n}…`));
   await read(root, tab.n);
   const why = pull(root, tab.n).why;
-  if (why && isCurrent(v) && !v.res) viewer.replaceChildren(el('p', 'empty', why));
+  if (why && isCurrent(v) && !v.res) patch(viewer, h('p', 'empty', why));
 }
 
 watch(root => {
@@ -60,75 +56,45 @@ watch(root => {
 });
 
 function ref(name, cls) {
-  return el('span', `ref${cls ? ` ${cls}` : ''}`, name);
+  return h('span', `ref${cls ? ` ${cls}` : ''}`, name);
 }
 
+// column puts the view's page in the viewer, once per view; each draw then changes it in place.
 function column(v, ...parts) {
-  const doc = el('article', 'md ov');
-  doc.append(...parts);
-  const scroll = el('div', 'scroll');
-  scroll.append(doc);
-  const pane = el('div', 'pane');
-  pane.append(scroll);
-  const top = v.scroll?.scrollTop;
-  v.viewer.replaceChildren(pane);
-  v.scroll = scroll;
-  if (top) scroll.scrollTop = top;
-  return doc;
+  if (!v.doc) {
+    v.doc = el('article', 'md ov');
+    v.scroll = el('div', 'scroll');
+    v.scroll.append(v.doc);
+    patch(v.viewer, h('div', 'pane', v.scroll));
+  }
+  patch(v.doc, parts);
 }
 
-// Building the page moves the conversation, which is kept, so keepFocus wraps all of it.
 function draw(v, res) {
   v.res = res;
-  keepFocus(v.viewer, () => column(v, ...content(v, res)));
+  column(v, content(v, res));
   requestAnimationFrame(() => drawEdges(v));
 }
 
 function content(v, res) {
   const words = forgeWords(res);
-  const h1 = el('h1', null, res.title);
-  h1.append(' ', el('span', 'muted', `${words.num}${res.number}`));
-  const meta = el('div', 'meta');
-  meta.append(avatar(res.author), el('span', null, `${res.author === res.me ? 'You want' : `${res.author} wants`} to merge`), ref(res.head),
-    el('span', null, 'into'), ref(res.base, 'lane-main'), el('span', null, `· ${age(res.createdAt)} ago · ${res.commits} ${res.commits === 1 ? 'commit' : 'commits'}`));
-  const parts = [h1, meta];
-  if (res.reviewers?.length) {
-    const people = el('div', 'people');
-    people.append(el('span', 'muted', 'Reviewers'));
-    for (const r of res.reviewers) {
-      const [cls, icon, word] = REVIEW[r.state] || REVIEW.requested;
-      const p = el('span', `person${r.name === res.me ? ' me' : ''}`);
-      p.append(avatar(r.name), r.name, svg(icon, `rs ${cls}`));
-      p.dataset.tip = `${r.name}\n${word}`;
-      p.setAttribute('aria-label', `${r.name}: ${word}`);
-      people.append(p);
-    }
-    parts.push(people);
-  }
-  const desc = el('div', 'desc');
-  if (res.bodyHtml) {
-    const t = document.createElement('template'); // inert until it is in the page
-    t.innerHTML = res.bodyHtml; // rendered by kijk's server, which drops raw HTML
-    for (const a of t.content.querySelectorAll('a[href]')) {
-      a.target = '_blank';
-      a.rel = 'noopener';
-    }
-    desc.append(t.content);
-  } else {
-    desc.append(el('p', 'muted', 'No description.'));
-  }
-  parts.push(desc, ...checks(v, res, words));
-  const talk = el('h2', null, 'Conversation');
   const said = res.comments.filter(c => !c.draft).length;
-  talk.append(el('span', 'muted', said ? `${said} ${said === 1 ? 'comment' : 'comments'}` : 'no comments yet'));
-  parts.push(talk);
-  // Where kijk may write, the conversation ends in your drafts, your summary and a box for more.
-  const write = writable(res);
-  if (res.comments.length || write) {
-    drawConv(v);
-    parts.push(v.conv);
-  }
-  return parts;
+  if (writable(res) || res.comments.length) drawConv(v);
+  return [
+    h('h1', null, res.title, ' ', h('span', 'muted', `${words.num}${res.number}`)),
+    h('div', 'meta', avatar(res.author), h('span', null, `${res.author === res.me ? 'You want' : `${res.author} wants`} to merge`), ref(res.head),
+      h('span', null, 'into'), ref(res.base, 'lane-main'), h('span', null, `· ${age(res.createdAt)} ago · ${res.commits} ${res.commits === 1 ? 'commit' : 'commits'}`)),
+    res.reviewers?.length > 0 && h('div', { key: 'people', class: 'people' }, h('span', 'muted', 'Reviewers'), res.reviewers.map(r => {
+      const [cls, icon, word] = REVIEW[r.state] || REVIEW.requested;
+      return h('span', { class: `person${r.name === res.me ? ' me' : ''}`, data: { tip: `${r.name}\n${word}` }, attrs: { 'aria-label': `${r.name}: ${word}` } },
+        avatar(r.name), r.name, h('span', { class: `rs ${cls}`, html: icon }));
+    })),
+    res.bodyHtml ? h('div', { key: 'desc', class: 'desc', html: res.bodyHtml, onclick: newTab }) : h('div', { key: 'nodesc', class: 'desc' }, h('p', 'muted', 'No description.')),
+    checks(v, res, words),
+    h('h2', { key: 'talk' }, 'Conversation', h('span', 'muted', said ? `${said} ${said === 1 ? 'comment' : 'comments'}` : 'no comments yet')),
+    // Where kijk may write, the conversation ends in your drafts, your summary and a box for more.
+    (res.comments.length || writable(res)) && v.conv,
+  ];
 }
 
 // drawConv draws the conversation in place: what is typed, busy or refused in it changes alone.
@@ -141,55 +107,40 @@ function drawConv(v) {
 // job's log, and the checks of other apps.
 function checks(v, res, words) {
   const c = res.checks;
-  const head = el('h2', null, words.ci);
-  if (!c || (!c.groups.length && !c.other?.length)) {
-    head.append(el('span', 'muted', 'none'));
-    return [head];
-  }
+  if (!c || (!c.groups.length && !c.other?.length)) return h('h2', { key: 'ci' }, words.ci, h('span', 'muted', 'none'));
   const jobs = [...c.groups.flatMap(g => g.jobs), ...(c.other || [])];
   const count = st => jobs.filter(j => j.state === st).length;
   const said = [['bad', 'failed'], ['cancel', 'cancelled'], ['run', 'running'], ['wait', 'waiting'], ['skip', 'skipped']]
     .filter(([st]) => count(st)).map(([st, word]) => `${count(st)} ${word}`);
-  head.append(el('span', 'muted', said.length ? said.join(' · ') : 'all passed'));
-  const out = [head];
-  if (c.groups.some(g => g.graph)) {
-    const mode = el('span', 'mode h2mode');
-    mode.setAttribute('role', 'group');
-    mode.setAttribute('aria-label', 'Show as');
-    for (const [list, text] of [[false, 'Graph'], [true, 'List']]) {
-      const b = el('button', null, text);
-      b.setAttribute('aria-pressed', asList === list);
-      b.onclick = () => {
-        asList = list;
-        draw(v, v.res);
-      };
-      mode.append(b);
-    }
-    head.append(mode);
-  }
-  for (const g of c.groups) {
-    const wrap = el('div', 'dagwrap');
-    const title = el('div', 'dagtitle');
-    title.append(el('b', null, g.title));
-    if (g.number) title.append(el('span', 'muted', `· ${words.ci === 'Pipeline' ? 'pipeline' : 'run'} #${g.number}`));
-    if (g.url) {
-      const a = el('a', null, '↗');
-      Object.assign(a, { href: g.url, target: '_blank', rel: 'noopener' });
-      a.dataset.tip = `Open on ${words.name}`;
-      a.setAttribute('aria-label', `Open the ${words.ci === 'Pipeline' ? 'pipeline' : 'run'} on ${words.name}`);
-      title.append(a);
-    }
-    wrap.append(title, g.graph && !asList ? graph(g) : jobList(g.jobs, 'jobs'));
-    out.push(wrap);
-  }
+  // A graph stays while its run is the same, with the lines drawEdges put in it.
+  const was = v.graphs || new Map();
+  v.graphs = new Map();
+  const dag = g => {
+    const k = JSON.stringify(g);
+    v.graphs.set(k, was.get(k) || graph(g));
+    return v.graphs.get(k);
+  };
+  const run = words.ci === 'Pipeline' ? 'pipeline' : 'run';
   const own = hooks.own?.(res.number);
-  for (const j of c.groups.flatMap(g => g.jobs).filter(j => j.state === 'bad' && j.id).slice(0, 3)) out.push(jobLog(v, res, j, own, words));
-  if (c.other?.length) {
-    const title = el('div', 'dagtitle');
-    title.append(el('b', null, 'Other checks'));
-    out.push(title, jobList(c.other, 'other'));
-  }
-  return out;
+  return [
+    h('h2', { key: 'ci' }, words.ci, h('span', 'muted', said.length ? said.join(' · ') : 'all passed'),
+      c.groups.some(g => g.graph) && h('span', { class: 'mode h2mode', attrs: { role: 'group', 'aria-label': 'Show as' } },
+        [[false, 'Graph'], [true, 'List']].map(([list, text]) => h('button', {
+          key: text, attrs: { 'aria-pressed': String(asList === list) },
+          onclick: () => {
+            asList = list;
+            draw(v, v.res);
+          },
+        }, text)))),
+    c.groups.map((g, i) => h('div', { key: `run:${i}`, class: 'dagwrap' },
+      h('div', 'dagtitle', h('b', null, g.title), !!g.number && h('span', 'muted', `· ${run} #${g.number}`),
+        g.url && h('a', {
+          href: g.url, target: '_blank', rel: 'noopener', data: { tip: `Open on ${words.name}` }, attrs: { 'aria-label': `Open the ${run} on ${words.name}` },
+        }, '↗')),
+      g.graph && !asList ? dag(g) : jobList(g.jobs, 'jobs'))),
+    c.groups.flatMap(g => g.jobs).filter(j => j.state === 'bad' && j.id).slice(0, 3).map(j => jobLog(v, res, j, own, words)),
+    c.other?.length > 0 && [h('div', { key: 'other', class: 'dagtitle' }, h('b', null, 'Other checks')), jobList(c.other, 'other')],
+  ];
 }
 
 function jobTip(j) {
@@ -210,26 +161,14 @@ function graph(g) {
   };
   const cols = [];
   for (const j of g.jobs) (cols[deep(j)] ||= []).push(j);
-  const dag = el('div', 'dag');
   const edges = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   edges.classList.add('edges');
   edges.setAttribute('aria-hidden', 'true');
-  const row = el('div', 'dagcols');
-  for (const col of cols.filter(Boolean)) {
-    const c = el('div', 'dagcol');
-    for (const j of col) {
-      const pill = el(j.url ? 'a' : 'span', `job ${j.state}`);
-      if (j.url) Object.assign(pill, { href: j.url, target: '_blank', rel: 'noopener' });
-      pill.dataset.name = j.name;
-      pill.dataset.needs = JSON.stringify((j.needs || []).filter(n => byName.has(n)));
-      pill.dataset.tip = jobTip(j);
-      pill.setAttribute('aria-label', `${j.name}: ${STATE[j.state]}`);
-      pill.append(jobIcon(j.state), el('span', 'jn', j.name));
-      c.append(pill);
-    }
-    row.append(c);
-  }
-  dag.append(edges, row);
+  const dag = el('div', 'dag');
+  patch(dag, edges, h('div', 'dagcols', cols.filter(Boolean).map(col => h('div', 'dagcol', col.map(j => h(j.url ? 'a' : 'span', {
+    class: `job ${j.state}`, ...(j.url && { href: j.url, target: '_blank', rel: 'noopener' }),
+    data: { name: j.name, needs: JSON.stringify((j.needs || []).filter(n => byName.has(n))), tip: jobTip(j) }, attrs: { 'aria-label': `${j.name}: ${STATE[j.state]}` },
+  }, jobIcon(j.state), h('span', 'jn', j.name)))))));
   return dag;
 }
 
@@ -257,52 +196,20 @@ function drawEdges(v) {
         paths.push(path);
       }
     }
-    svgEl.replaceChildren(...paths);
+    patch(svgEl, paths);
   }
 }
 
 function jobList(jobs, cls) {
-  const ul = el('ul', `ovlist ${cls}`);
-  for (const j of jobs) {
-    const li = el('li');
-    li.append(jobIcon(j.state), el('span', 'grow', j.name));
-    if (j.note || j.time) li.append(el('span', 'muted', j.note || j.time));
-    if (j.url) {
-      const a = el('a', null, 'Details ↗');
-      Object.assign(a, { href: j.url, target: '_blank', rel: 'noopener' });
-      li.append(a);
-    }
-    li.title = jobTip(j);
-    ul.append(li);
-  }
-  return ul;
+  return h('ul', `ovlist ${cls}`, jobs.map(j => h('li', { title: jobTip(j) }, jobIcon(j.state), h('span', 'grow', j.name), (j.note || j.time) && h('span', 'muted', j.note || j.time),
+    j.url && h('a', { href: j.url, target: '_blank', rel: 'noopener' }, 'Details ↗'))));
 }
 
 // jobLog shows the last lines of a failed job's log, and on your own branch hands them to the agent.
 function jobLog(v, res, j, own, words) {
-  const box = el('div', 'joblog');
-  const head = el('div', 'jlhead');
-  head.append(jobIcon('bad'), el('b', null, j.name), el('span', 'muted', `failed${j.time ? ` after ${j.time}` : ''} · last lines of the log`));
-  const pre = el('pre');
-  pre.tabIndex = 0;
   // A log that could not be read, as while its run still went, is asked for again with a new answer.
   if (logs.get(j.id)?.error && logs.get(j.id).res !== res) logs.delete(j.id);
   const known = logs.get(j.id);
-  if (known?.lines) pre.textContent = known.lines.join('\n');
-  else pre.textContent = known?.error || 'Reading the log…';
-  if (own && known?.lines?.length) {
-    const copy = el('button', 'tool');
-    copy.innerHTML = ICON.copy;
-    copy.append('Copy for agent');
-    copy.onclick = () => copyFailure(res, j, known.lines, pre, words);
-    head.append(copy);
-  }
-  if (j.url) {
-    const a = el('a', 'grow-end', 'Full log ↗');
-    Object.assign(a, { href: j.url, target: '_blank', rel: 'noopener' });
-    head.append(a);
-  }
-  box.append(head, pre);
   if (!known) {
     logs.set(j.id, { loading: true });
     get('pr/log', { root: v.root, job: j.id })
@@ -310,7 +217,14 @@ function jobLog(v, res, j, own, words) {
       .catch(err => logs.set(j.id, { error: err.message, res }))
       .then(() => { if (isCurrent(v) && v.res) draw(v, v.res); });
   }
-  return box;
+  return h('div', { key: `log:${j.id}`, class: 'joblog' },
+    h('div', 'jlhead', jobIcon('bad'), h('b', null, j.name), h('span', 'muted', `failed${j.time ? ` after ${j.time}` : ''} · last lines of the log`),
+      own && known?.lines?.length > 0 && h('button', {
+        class: 'tool', html: `${ICON.copy}Copy for agent`,
+        onclick: e => copyFailure(res, j, known.lines, e.currentTarget.closest('.joblog').querySelector('pre'), words),
+      }),
+      j.url && h('a', { class: 'grow-end', href: j.url, target: '_blank', rel: 'noopener' }, 'Full log ↗')),
+    h('pre', { tabIndex: 0 }, known?.lines ? known.lines.join('\n') : known?.error || 'Reading the log…'));
 }
 
 async function copyFailure(res, j, lines, pre, words) {
@@ -331,17 +245,8 @@ async function copyFailure(res, j, lines, pre, words) {
 function drawBranch(v) {
   const b = hooks.branch?.() || {};
   const words = forgeWords(b);
-  const meta = el('div', 'meta');
-  meta.append(avatar('you'), el('span', null, 'Your branch, against'), ref(b.base || 'main', 'lane-main'));
-  if (b.ahead) meta.append(el('span', null, `· ${b.ahead} not pushed`));
-  const parts = [el('h1', null, b.branch || 'This branch'), meta,
-    el('p', null, `There is no ${words.kind} for this branch yet. You can still review the branch changes and leave agent notes.`)];
-  if (b.create && b.forge) {
-    const a = el('a', null, `Create ${words.kind} on ${words.name} ↗`);
-    Object.assign(a, { href: b.create, target: '_blank', rel: 'noopener' });
-    const p = el('p');
-    p.append(a);
-    parts.push(p);
-  }
-  column(v, ...parts);
+  column(v, h('h1', null, b.branch || 'This branch'),
+    h('div', 'meta', avatar('you'), h('span', null, 'Your branch, against'), ref(b.base || 'main', 'lane-main'), b.ahead > 0 && h('span', null, `· ${b.ahead} not pushed`)),
+    h('p', null, `There is no ${words.kind} for this branch yet. You can still review the branch changes and leave agent notes.`),
+    b.create && b.forge && h('p', null, h('a', { href: b.create, target: '_blank', rel: 'noopener' }, `Create ${words.kind} on ${words.name} ↗`)));
 }

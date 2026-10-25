@@ -209,8 +209,8 @@ function header() {
   meta.append(el('span', 'ref head', data.branch), arrow, base);
   h.append(top, meta);
   const extra = page.branchHead?.() || {};
-  top.prepend(...(extra.before || []));
-  h.append(...(extra.after || []));
+  top.prepend(...(extra.before || []).map(made));
+  h.append(...(extra.after || []).map(made));
   if (extra.note) h.append(el('p', 'pr-note', extra.note));
   return h;
 }
@@ -288,15 +288,18 @@ function fileList() {
     e.preventDefault();
     e.stopPropagation();
   };
-  const ov = page.overviewRow?.(own(folder), branchPR());
-  if (ov) {
-    ov.tabIndex = ul.querySelector('[tabindex="0"]') ? -1 : 0;
-    ul.prepend(ov);
-  }
+  if (page.overviewRow) ul.prepend(made(page.overviewRow(own(folder), branchPR(), !ul.querySelector('[tabindex="0"]'))));
   wrap.append(h, ul);
   if (!data.files.length) wrap.append(el('p', 'note', 'No changes yet'));
   return wrap;
 }
+
+// made is the element of a description from the PRs tab, until this panel draws through patch.
+const made = d => {
+  const host = el('div');
+  patch(host, d);
+  return host.firstChild;
+};
 
 function mark(row, on) {
   row.classList.toggle('selected', on);

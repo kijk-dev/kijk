@@ -42,7 +42,7 @@ export function comment(c, drafts) {
 }
 
 // The html is rendered by kijk's server, which drops raw HTML; its links open in a new tab.
-const newTab = e => Object.assign(e.target.closest('a[href]') || {}, { target: '_blank', rel: 'noopener' });
+export const newTab = e => Object.assign(e.target.closest('a[href]') || {}, { target: '_blank', rel: 'noopener' });
 
 // threadEl draws a thread. opts: {redraw(), line, foot, drafts, reply(t), resolve(t, on), busy(id), error(t)}.
 // foot is Local mode's reply strip, reply(t) forge mode's; line is where it shows, if not its own.
