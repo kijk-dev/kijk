@@ -241,4 +241,59 @@ func TestReviewWriteRules(t *testing.T) {
 	if w.Code != http.StatusConflict || strings.TrimSpace(w.Body.String()) != "This pull request is merged." {
 		t.Errorf("reply on a merged pull request: %d %s", w.Code, w.Body.String())
 	}
+	w = post("/api/pr/merge", fmt.Sprintf(`{"root":%q,"n":7,"at":%q}`, clone, head))
+	if w.Code != http.StatusConflict || strings.TrimSpace(w.Body.String()) != "This pull request is merged." {
+		t.Errorf("merge of a merged pull request: %d %s", w.Code, w.Body.String())
+	}
+}
+
+// A merge goes only to the head on screen, and not when the forge last said it would refuse it.
+func TestMergeRoute(t *testing.T) {
+	clone, head, base := prRepo(t)
+	js := func(v any) string { b, _ := json.Marshal(v); return string(b) }
+	merge := gittest.Rule{Has: "mergePullRequest(input", Out: `{"data":{"mergePullRequest":{"pullRequest":{"id":"PR_7"}}}}`}
+	calls := gittest.FakeToolCalls(t, "gh", merge, ghTarget(head), gittest.Rule{Has: "pullRequest(number", Out: prAnswer("OPEN", head, base)})
+	get, post := reviewServer(t, clone)
+	body := js(map[string]any{"root": clone, "n": 7, "at": head})
+
+	if w := post("/api/pr/merge", body); w.Code != http.StatusPreconditionRequired || len(calls()) != 0 {
+		t.Fatalf("before the view: %d %s", w.Code, w.Body.String())
+	}
+	if w := get("/api/pr/view", url.Values{"n": {"7"}}); w.Code != 200 || !strings.Contains(w.Body.String(), `"merge":{"ok":true}`) {
+		t.Fatalf("view %d %s", w.Code, w.Body.String())
+	}
+	n := len(calls())
+	if w := post("/api/pr/merge", js(map[string]any{"root": clone, "n": 7})); w.Code != http.StatusBadRequest || len(calls()) != n {
+		t.Fatalf("a merge that does not say its head: %d %s", w.Code, w.Body.String())
+	}
+	if w := post("/api/pr/merge", js(map[string]any{"root": clone, "n": 7, "at": "ffff"})); w.Code != http.StatusConflict ||
+		strings.TrimSpace(w.Body.String()) != "#7 has new commits. kijk shows them now; look at them before you merge." || len(calls()) != n {
+		t.Fatalf("a merge of a head another page replaced: %d %s", w.Code, w.Body.String())
+	}
+	if w := post("/api/pr/merge", body); w.Code != 200 {
+		t.Fatalf("merge %d %s", w.Code, w.Body.String())
+	}
+	if c := calls()[n:]; len(c) != 2 || !c[1].Has("pr=PR_7", "head="+head) {
+		t.Fatalf("calls %q", c)
+	}
+
+	// The forge said the merge would fail: kijk does not ask it.
+	conflicts := strings.Replace(prAnswer("OPEN", head, base), `"isDraft":false,`, `"isDraft":false,"mergeable":"CONFLICTING",`, 1)
+	calls = gittest.FakeToolCalls(t, "gh", merge, ghTarget(head), gittest.Rule{Has: "pullRequest(number", Out: conflicts})
+	get("/api/pr/view", url.Values{"n": {"7"}})
+	n = len(calls())
+	if w := post("/api/pr/merge", body); w.Code != http.StatusConflict || strings.TrimSpace(w.Body.String()) != "This pull request has conflicts with main." || len(calls()) != n {
+		t.Fatalf("merge with conflicts: %d %s", w.Code, w.Body.String())
+	}
+}
+
+// Merging and reviews are apart: a forge that takes no review from kijk may still take a merge.
+func TestMergeRefused(t *testing.T) {
+	p := openedPR{head: "h1", write: git.Write{Note: "Reviews from kijk need GitLab 16.3."}, merge: git.Merge{OK: true}}
+	if why := refused(p, true, writeRequest{At: "h1", merge: true}); why != "" {
+		t.Errorf("merge refused: %s", why)
+	}
+	if why := refused(p, true, writeRequest{At: "h1"}); why != "Reviews from kijk need GitLab 16.3." {
+		t.Errorf("comment refused with %q", why)
+	}
 }

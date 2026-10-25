@@ -1,7 +1,12 @@
 package git
 
 import (
+	"encoding/json"
+	"errors"
+	"strings"
 	"testing"
+
+	"github.com/kijk-dev/kijk/internal/gittest"
 )
 
 func TestMergeRules(t *testing.T) {
@@ -56,5 +61,53 @@ func TestParseMerge(t *testing.T) {
 	}
 	if want := (Merge{Why: "This merge request is a draft."}); gl.Merge != want {
 		t.Errorf("GitLab: %+v", gl.Merge)
+	}
+}
+
+func TestGithubSquashMerge(t *testing.T) {
+	repo := forgeRepo(t, "git@github.com:acme/shop.git")
+	merge := gittest.Rule{Has: "mergePullRequest(input", Out: `{"data":{"mergePullRequest":{"pullRequest":{"id":"PR_7"}}}}`}
+	calls := gittest.FakeToolCalls(t, "gh", merge, ghTarget("aaa", ""))
+	if err := SquashMerge(repo, 7, "aaa"); err != nil {
+		t.Fatal(err)
+	}
+	c := calls()
+	if len(c) != 2 || !c[1].Has("pr=PR_7", "head=aaa") || !strings.Contains(c[1].Stdin, "mergeMethod: SQUASH, expectedHeadOid: $head") {
+		t.Fatalf("calls %q", c)
+	}
+
+	// Someone pushed since kijk showed the pull request: nothing is merged.
+	calls = gittest.FakeToolCalls(t, "gh", merge, ghTarget("bbb", ""))
+	err := SquashMerge(repo, 7, "aaa")
+	if !errors.Is(err, ErrHeadMoved) || err.Error() != "#7 has new commits. kijk shows them now; look at them before you merge." || len(calls()) != 1 {
+		t.Fatalf("err %v, calls %q", err, calls())
+	}
+
+	// GitHub's own reason, as for a required check kijk did not know about.
+	gittest.FakeToolCalls(t, "gh", gittest.Rule{Has: "mergePullRequest(input", Out: `{"data":{"mergePullRequest":null},"errors":[{"message":"Required status check \"build\" is expected."}]}`}, ghTarget("aaa", ""))
+	if err := SquashMerge(repo, 7, "aaa"); err == nil || err.Error() != `gh: Required status check "build" is expected.` {
+		t.Fatalf("err %v", err)
+	}
+}
+
+func TestGitlabSquashMerge(t *testing.T) {
+	repo := forgeRepo(t, "https://gitlab.com/acme/shop.git")
+	calls := gittest.FakeToolCalls(t, "glab", gittest.Rule{Has: mr7 + "/merge", Out: `{"iid":7,"state":"merged"}`})
+	if err := SquashMerge(repo, 7, "h1"); err != nil {
+		t.Fatal(err)
+	}
+	c := calls()
+	if b, _ := json.Marshal(body(t, c[0])); len(c) != 1 || !c[0].Has("--method", "PUT", mr7+"/merge") || string(b) != `{"sha":"h1","squash":true}` {
+		t.Fatalf("calls %q", c)
+	}
+
+	// GitLab merges only the head kijk showed, and answers 409 when it moved.
+	gittest.FakeToolCalls(t, "glab", gittest.Rule{Has: mr7 + "/merge", Err: "409 Conflict\n", Exit: 1})
+	if err := SquashMerge(repo, 7, "h1"); !errors.Is(err, ErrHeadMoved) || err.Error() != "!7 has new commits. kijk shows them now; look at them before you merge." {
+		t.Fatalf("err %v", err)
+	}
+	gittest.FakeToolCalls(t, "glab", gittest.Rule{Has: mr7 + "/merge", Err: "405 Method Not Allowed\n", Exit: 1})
+	if err := SquashMerge(repo, 7, "h1"); err == nil || err.Error() != "glab: 405 Method Not Allowed" {
+		t.Fatalf("err %v", err)
 	}
 }

@@ -1,6 +1,7 @@
 package git
 
 import (
+	"fmt"
 	"slices"
 )
 
@@ -86,4 +87,57 @@ func gitlabMerge(pr *PR, m gitlabMergeJSON) Merge {
 		return Merge{Why: why}
 	}
 	return Merge{Why: "GitLab does not allow the merge now."}
+}
+
+// ErrMergeMoved is ErrHeadMoved for a merge, which would take along commits kijk did not show.
+var ErrMergeMoved = movedErr("has new commits. kijk shows them now; look at them before you merge.")
+
+type movedErr string
+
+func (e movedErr) Error() string        { return string(e) }
+func (e movedErr) Is(target error) bool { return target == ErrHeadMoved }
+
+// SquashMerge squashes pull request n into one commit on its base, only while its head is head,
+// the head kijk showed. The forge's settings make the commit message and may delete the branch.
+func SquashMerge(root string, n int, head string) error {
+	if head == "" {
+		return badInput("no head to merge")
+	}
+	f, tool, err := writer(root)
+	if err != nil {
+		return err
+	}
+	if tool == "gh" {
+		err = githubSquash(f, n, head)
+	} else {
+		err = gitlabSquash(f, n, head)
+	}
+	return toolErr(tool, err)
+}
+
+func mergeMoved(f *forge, n int) error {
+	return fmt.Errorf("%s %w", f.Ref(n), ErrMergeMoved)
+}
+
+// githubSquash checks the head first to say so in kijk's words; expectedHeadOid still holds a push
+// that lands between the two calls.
+func githubSquash(f *forge, n int, head string) error {
+	t, err := githubTargetOf(f, n)
+	if err != nil {
+		return err
+	}
+	if t.head != head {
+		return mergeMoved(f, n)
+	}
+	return mutate("gh", f, `mutation($pr: ID!, $head: GitObjectID!) { mergePullRequest(input: {pullRequestId: $pr, mergeMethod: SQUASH, expectedHeadOid: $head}) { pullRequest { id } } }`,
+		map[string]any{"pr": t.id, "head": head}, nil)
+}
+
+// gitlabSquash: with sha GitLab merges only that head, and answers 409 when it moved.
+func gitlabSquash(f *forge, n int, head string) error {
+	_, err := gitlabREST(f, "PUT", gitlabMR(f, n)+"/merge", map[string]any{"squash": true, "sha": head})
+	if err != nil && conflictRe.MatchString(err.Error()) {
+		return mergeMoved(f, n)
+	}
+	return err
 }
