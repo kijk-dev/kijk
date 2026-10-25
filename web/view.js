@@ -60,8 +60,9 @@ export function setView(v) { current = v; }
 
 export const isCurrent = v => current === v;
 
-// content is plain text, or colored pieces [class, text] from the server. marks are find matches.
-export function line(numbers, content, cls, key) {
+// content is plain text, or colored pieces [class, text] from the server. marks are find matches;
+// side ('l' or 'r') takes only those of one half of a split row. words are [from, to] to underline.
+export function line(numbers, content, cls, key, side, words = []) {
   const row = el('div', cls ? `ln ${cls}` : 'ln');
   const flash = current?.flash;
   if (flash && flash.key === key && Date.now() < flash.until) row.classList.add('flash');
@@ -69,28 +70,102 @@ export function line(numbers, content, cls, key) {
   for (const n of numbers) gut.append(el('span', null, n || ''));
   const tx = el('span', 'tx');
   const pieces = Array.isArray(content) ? content : [['', content]];
-  const marks = current?.hits?.get(key) || [];
-  let pos = 0, m = 0;
+  let marks = current?.hits?.get(key) || [];
+  if (side) marks = marks.filter(m => m[3] === side);
+  let pos = 0, m = 0, w = 0;
   for (const [c, text] of pieces) {
     for (let i = 0; i < text.length;) {
       while (m < marks.length && marks[m][1] <= pos + i) m++;
-      const mark = marks[m];
+      while (w < words.length && words[w][1] <= pos + i) w++;
+      const mark = marks[m], word = words[w];
       const inside = mark && mark[0] <= pos + i;
-      const end = Math.min(text.length, (inside ? mark[1] : mark ? mark[0] : Infinity) - pos);
-      const part = c ? el('span', `h${c}`, text.slice(i, end)) : document.createTextNode(text.slice(i, end));
+      const changed = word && word[0] <= pos + i;
+      const end = Math.min(text.length, (inside ? mark[1] : mark ? mark[0] : Infinity) - pos, (changed ? word[1] : word ? word[0] : Infinity) - pos);
+      let part = c ? el('span', `h${c}`, text.slice(i, end)) : document.createTextNode(text.slice(i, end));
       if (inside) {
         const hit = el('mark', mark[2] ? 'hit current' : 'hit');
         hit.append(part);
-        tx.append(hit);
-      } else {
-        tx.append(part);
+        part = hit;
       }
+      if (changed) {
+        const wd = el('span', 'w');
+        wd.append(part);
+        part = wd;
+      }
+      tx.append(part);
       i = end;
     }
     pos += text.length;
   }
   row.append(gut, tx);
   return row;
+}
+
+// pairRows turns hunk lines into rows {l, r} of old and new line; an unchanged line is both. Split
+// pairs the nth removed line of a block with its nth added line; unified gives each its own row.
+export function pairRows(lines, split) {
+  const rows = [];
+  for (let i = 0; i < lines.length;) {
+    if (lines[i].k === ' ') {
+      rows.push({ l: lines[i], r: lines[i++] });
+      continue;
+    }
+    const dels = [], adds = [];
+    for (; i < lines.length && lines[i].k !== ' '; i++) {
+      if (split) (lines[i].k === '-' ? dels : adds).push(lines[i]);
+      else rows.push(lines[i].k === '-' ? { l: lines[i], r: null } : { l: null, r: lines[i] });
+    }
+    for (let j = 0; j < Math.max(dels.length, adds.length); j++) rows.push({ l: dels[j] || null, r: adds[j] || null });
+  }
+  return rows;
+}
+
+// splitRow draws row {l, r} of a split diff: old left, new right, each with its own line number, and
+// fine hatching where a side has no line. cls(l) gives a line's classes.
+export function splitRow(row, key, cls) {
+  const words = row.l && row.r && row.l !== row.r ? (row.words ??= changedWords(row.l.t, row.r.t)) : [];
+  const half = (l, side, w) => (l ? line([side === 'l' ? l.o : l.n], l.x || l.t, cls(l), key, side, w) : el('div', 'fill'));
+  const out = el('div', 'srow');
+  out.append(half(row.l, 'l', words[0]), half(row.r, 'r', words[1]));
+  return out;
+}
+
+const TOKEN = /\w+|\s+|[^\w\s]/g;
+const MAX_TOKENS = 500; // the word diff takes tokens², so a minified line gets no marks
+
+// changedWords gives [old, new], the [from, to] of the words that differ in a pair of lines. None
+// when more than 60% of either line changed: then the marks would only be noise.
+function changedWords(a, b) {
+  const ta = a.match(TOKEN) || [], tb = b.match(TOKEN) || [];
+  if (ta.length > MAX_TOKENS || tb.length > MAX_TOKENS) return [];
+  const w = tb.length + 1;
+  const same = new Uint16Array((ta.length + 1) * w); // tokens in common from i, j on
+  for (let i = ta.length - 1; i >= 0; i--) {
+    for (let j = tb.length - 1; j >= 0; j--) {
+      same[i * w + j] = ta[i] === tb[j] ? same[(i + 1) * w + j + 1] + 1 : Math.max(same[(i + 1) * w + j], same[i * w + j + 1]);
+    }
+  }
+  const ra = [], rb = [];
+  const add = (rs, from, len) => {
+    if (rs.length && rs.at(-1)[1] === from) rs.at(-1)[1] += len;
+    else rs.push([from, from + len]);
+  };
+  let i = 0, j = 0, pa = 0, pb = 0;
+  while (i < ta.length || j < tb.length) {
+    if (i < ta.length && j < tb.length && ta[i] === tb[j]) {
+      pa += ta[i++].length;
+      pb += tb[j++].length;
+    } else if (j === tb.length || (i < ta.length && same[(i + 1) * w + j] >= same[i * w + j + 1])) {
+      add(ra, pa, ta[i].length);
+      pa += ta[i++].length;
+    } else {
+      add(rb, pb, tb[j].length);
+      pb += tb[j++].length;
+    }
+  }
+  const solid = s => s.replace(/\s/g, '').length;
+  const share = (rs, s) => rs.reduce((n, [from, to]) => n + solid(s.slice(from, to)), 0) / Math.max(1, solid(s));
+  return share(ra, a) > 0.6 || share(rb, b) > 0.6 ? [] : [ra, rb];
 }
 
 // viewInfo tells find and go to line what is open: a file, a diff with its rows, or rendered markdown.
@@ -100,7 +175,7 @@ export function viewInfo() {
 }
 
 // setHits shows find matches on the open view: line number (file) or row index (diff) ->
-// [[from, to, isCurrent]]. null clears them.
+// [[from, to, isCurrent, side]], side being 'l' or 'r' in a diff. null clears them.
 export function setHits(map) {
   if (!current) return;
   current.hits = map;
@@ -629,18 +704,19 @@ export async function openDiff(viewer, root, change, mode, context = 3, keep, md
 
   const rows = [];
   const more = () => again(context + 20);
+  const changed = r => r.l !== r.r;
   res.hunks.forEach((h, i) => {
     if (!full && (i > 0 || h.oldStart > 1 || h.newStart > 1)) rows.push({ sep: true });
-    for (const l of h.lines) {
-      if (l.k !== ' ' && (rows.length === 0 || rows.at(-1).sep || rows.at(-1).k === ' ')) d.starts.push(rows.length);
-      rows.push(l);
+    for (const r of pairRows(h.lines, false)) {
+      if (changed(r) && (rows.length === 0 || rows.at(-1).sep || !changed(rows.at(-1)))) d.starts.push(rows.length);
+      rows.push(r);
     }
   });
 
   let maxNo = 0, cols = 0;
-  for (const r of rows) {
-    maxNo = Math.max(maxNo, r.o || 0, r.n || 0);
-    cols = Math.max(cols, r.t?.length ?? 0);
+  for (const l of res.hunks.flatMap(h => h.lines)) {
+    maxNo = Math.max(maxNo, l.o || 0, l.n || 0);
+    cols = Math.max(cols, l.t.length);
   }
   const digits = String(maxNo).length;
   const scroll = el('div', 'scroll');
@@ -652,10 +728,11 @@ export async function openDiff(viewer, root, change, mode, context = 3, keep, md
   d.rows = rows;
   d.lines = maxNo;
   d.gotoLine = n => { // the line number on the new side, else the old side
-    let i = rows.findIndex(r => r.n >= n);
-    if (i < 0) i = rows.findIndex(r => r.o >= n);
+    let i = rows.findIndex(r => r.r?.n >= n);
+    if (i < 0) i = rows.findIndex(r => r.l?.o >= n);
     if (i >= 0) reveal(i, true);
   };
+  const cls = l => (l.k === '+' ? 'add' : l.k === '-' ? 'del' : '');
   d.render = virtual(scroll, rows.length, `calc(${gutter} * 2 + ${cols + 6}ch)`, top, (first, last) => {
     const out = [];
     for (let i = first; i < last; i++) {
@@ -667,7 +744,8 @@ export async function openDiff(viewer, root, change, mode, context = 3, keep, md
         sep.append(btn);
         out.push(sep);
       } else {
-        out.push(line([r.o, r.n], r.x || r.t, r.k === '+' ? 'add' : r.k === '-' ? 'del' : '', i));
+        const l = r.r || r.l;
+        out.push(line([l.o, l.n], l.x || l.t, cls(l), i));
       }
     }
     return out;
