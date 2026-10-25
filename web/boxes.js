@@ -390,7 +390,6 @@ export async function drawBox(v, b) {
     for (const key of r.keys) {
       if (placed.has(key) || !under.has(key)) continue;
       placed.add(key);
-      // In split, what is under a line sits under its half: the new side's right, the old side's left.
       out.push(split ? h('div', { key: `side:${key}`, class: `side ${key[0] === 'n' ? 'r' : 'l'}` }, under.get(key)) : under.get(key));
     }
   }
