@@ -9,14 +9,25 @@ import (
 type Merge struct {
 	OK  bool   `json:"ok"`
 	Why string `json:"why,omitempty"` // when not OK, in the words the box shows
+	// Delete is what the merge may do to the head branch on the forge: "auto" the forge deletes it,
+	// "off" or "on" kijk asks with the box unticked or ticked, "" it stays.
+	Delete string `json:"delete,omitempty"`
 }
 
 // githubMergeJSON is what GitHub says about merging: the repo's part and the pull request's.
 type githubMergeJSON struct {
-	ViewerPermission   string
-	SquashMergeAllowed *bool
-	Mergeable          string
-	MergeStateStatus   string
+	ViewerPermission    string
+	SquashMergeAllowed  *bool
+	DeleteBranchOnMerge bool
+	Mergeable           string
+	MergeStateStatus    string
+	IsCrossRepository   bool
+	HeadRef             *githubHeadRef
+}
+
+type githubHeadRef struct {
+	RefUpdateRule          *struct{ AllowsDeletions bool }
+	AssociatedPullRequests struct{ TotalCount int } // the open ones
 }
 
 // githubMerge: GitHub works out whether a pull request merges only when asked, so a state it does
@@ -36,15 +47,36 @@ func githubMerge(pr *PR, m githubMergeJSON) Merge {
 	case m.MergeStateStatus == "BLOCKED":
 		return Merge{Why: "The rules of " + pr.Base + " block the merge, such as a required review or check."}
 	}
-	return Merge{OK: true}
+	return Merge{OK: true, Delete: githubBranch(m)}
+}
+
+// githubBranch: viewerCanDeleteHeadRef stays false until the merge, so kijk reads the branch's rules.
+// When they miss one, GitHub refuses the delete in its own words.
+func githubBranch(m githubMergeJSON) string {
+	r := m.HeadRef
+	switch {
+	case m.IsCrossRepository || r == nil:
+		return ""
+	case r.RefUpdateRule != nil && !r.RefUpdateRule.AllowsDeletions:
+		return ""
+	case r.AssociatedPullRequests.TotalCount > 1: // the delete would close the others
+		return ""
+	case m.DeleteBranchOnMerge:
+		return "auto"
+	}
+	return "off"
 }
 
 type gitlabMergeJSON struct {
-	UserPermissions     *struct{ CanMerge bool }
+	UserPermissions     *struct{ CanMerge, RemoveSourceBranch bool }
 	SquashReadOnly      bool // the project's squash option is "always" or "never"
 	SquashOnMerge       bool
 	Conflicts           bool
 	DetailedMergeStatus string
+	SourceProjectID     int
+	TargetProjectID     int
+	// Either one makes GitLab delete the branch after the merge, unless the merge says otherwise.
+	ForceRemoveSourceBranch, ShouldRemoveSourceBranch bool
 }
 
 // gitlabHolds says why GitLab holds a merge, by its detailed merge status. A status GitLab is still
@@ -81,12 +113,22 @@ func gitlabMerge(pr *PR, m gitlabMergeJSON) Merge {
 	case m.Conflicts:
 		return Merge{Why: "This merge request has conflicts with " + pr.Base + "."}
 	case slices.Contains(gitlabPending, m.DetailedMergeStatus):
-		return Merge{OK: true}
+		return Merge{OK: true, Delete: gitlabBranch(m)}
 	}
 	if why, ok := gitlabHolds[m.DetailedMergeStatus]; ok {
 		return Merge{Why: why}
 	}
 	return Merge{Why: "GitLab does not allow the merge now."}
+}
+
+func gitlabBranch(m gitlabMergeJSON) string {
+	switch {
+	case m.SourceProjectID != m.TargetProjectID, m.UserPermissions == nil || !m.UserPermissions.RemoveSourceBranch:
+		return ""
+	case m.ForceRemoveSourceBranch || m.ShouldRemoveSourceBranch:
+		return "on"
+	}
+	return "off"
 }
 
 // ErrMergeMoved is ErrHeadMoved for a merge, which would take along commits kijk did not show.

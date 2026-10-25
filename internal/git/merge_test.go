@@ -1,6 +1,7 @@
 package git
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -13,7 +14,9 @@ func TestMergeRules(t *testing.T) {
 	open := &PR{PRRow: PRRow{Base: "main"}, State: "open"}
 	draft := &PR{PRRow: PRRow{Base: "main"}, State: "draft"}
 	yes, no := true, false
-	can := func(on bool) *struct{ CanMerge bool } { return &struct{ CanMerge bool }{on} }
+	can := func(on bool) *struct{ CanMerge, RemoveSourceBranch bool } {
+		return &struct{ CanMerge, RemoveSourceBranch bool }{CanMerge: on}
+	}
 	for _, c := range []struct {
 		name string
 		got  Merge
@@ -47,6 +50,48 @@ func TestMergeRules(t *testing.T) {
 	}
 }
 
+// Delete is what a merge may do to the head branch: the checkbox, the forge's own setting, or nothing.
+func TestBranchDelete(t *testing.T) {
+	open := &PR{PRRow: PRRow{Base: "main"}, State: "open"}
+	ref := func(rule *bool, prs int) *githubHeadRef {
+		r := &githubHeadRef{AssociatedPullRequests: struct{ TotalCount int }{prs}}
+		if rule != nil {
+			r.RefUpdateRule = &struct{ AllowsDeletions bool }{*rule}
+		}
+		return r
+	}
+	yes, no := true, false
+	branch, protected, rule, twice := ref(nil, 1), ref(&no, 1), ref(&yes, 1), ref(nil, 2)
+	may := &struct{ CanMerge, RemoveSourceBranch bool }{true, true}
+	mayNot := &struct{ CanMerge, RemoveSourceBranch bool }{true, false}
+	for _, c := range []struct {
+		name string
+		got  Merge
+		want string
+	}{
+		{"GitHub", githubMerge(open, githubMergeJSON{HeadRef: branch}), "off"},
+		{"GitHub with a rule that allows deletes", githubMerge(open, githubMergeJSON{HeadRef: rule}), "off"},
+		{"GitHub deletes it itself", githubMerge(open, githubMergeJSON{DeleteBranchOnMerge: true, HeadRef: branch}), "auto"},
+		{"GitHub would delete it, but for a rule", githubMerge(open, githubMergeJSON{DeleteBranchOnMerge: true, HeadRef: protected}), ""},
+		{"GitHub fork", githubMerge(open, githubMergeJSON{IsCrossRepository: true, DeleteBranchOnMerge: true, HeadRef: branch}), ""},
+		{"GitHub branch gone", githubMerge(open, githubMergeJSON{}), ""},
+		{"GitHub protected branch", githubMerge(open, githubMergeJSON{HeadRef: protected}), ""},
+		{"GitHub branch of another open pull request", githubMerge(open, githubMergeJSON{HeadRef: twice}), ""},
+		{"GitHub cannot merge", githubMerge(open, githubMergeJSON{Mergeable: "CONFLICTING", HeadRef: branch}), ""},
+
+		{"GitLab", gitlabMerge(open, gitlabMergeJSON{UserPermissions: may, SourceProjectID: 7, TargetProjectID: 7}), "off"},
+		{"GitLab deletes it by default", gitlabMerge(open, gitlabMergeJSON{UserPermissions: may, SourceProjectID: 7, TargetProjectID: 7, ForceRemoveSourceBranch: true}), "on"},
+		{"GitLab asked to delete it", gitlabMerge(open, gitlabMergeJSON{UserPermissions: may, SourceProjectID: 7, TargetProjectID: 7, ShouldRemoveSourceBranch: true}), "on"},
+		{"GitLab fork", gitlabMerge(open, gitlabMergeJSON{UserPermissions: may, SourceProjectID: 8, TargetProjectID: 7, ForceRemoveSourceBranch: true}), ""},
+		{"GitLab may not delete", gitlabMerge(open, gitlabMergeJSON{UserPermissions: mayNot, SourceProjectID: 7, TargetProjectID: 7, ForceRemoveSourceBranch: true}), ""},
+		{"GitLab cannot merge", gitlabMerge(open, gitlabMergeJSON{UserPermissions: may, SourceProjectID: 7, TargetProjectID: 7, Conflicts: true}), ""},
+	} {
+		if c.got.Delete != c.want {
+			t.Errorf("%s: %q, want %q", c.name, c.got.Delete, c.want)
+		}
+	}
+}
+
 // Each forge's merge rule reads the fields its query asks.
 func TestParseMerge(t *testing.T) {
 	var gh, gl PR
@@ -60,6 +105,22 @@ func TestParseMerge(t *testing.T) {
 		t.Fatal(err)
 	}
 	if want := (Merge{Why: "This merge request is a draft."}); gl.Merge != want {
+		t.Errorf("GitLab: %+v", gl.Merge)
+	}
+
+	// Once they may merge, each says what happens to the branch.
+	clean := bytes.Replace(recorded(t, "github-pr.json"), []byte(`"BLOCKED"`), []byte(`"CLEAN"`), 1)
+	if err := parseGithubPRView(clean, &gh); err != nil {
+		t.Fatal(err)
+	}
+	if want := (Merge{OK: true, Delete: "off"}); gh.Merge != want {
+		t.Errorf("GitHub: %+v", gh.Merge)
+	}
+	ready := bytes.Replace(recorded(t, "gitlab-pr.json"), []byte(`"draft":true`), []byte(`"draft":false`), 1)
+	if err := parseGitlabPR(bytes.Replace(ready, []byte(`"DRAFT_STATUS"`), []byte(`"MERGEABLE"`), 1), &gl); err != nil {
+		t.Fatal(err)
+	}
+	if want := (Merge{OK: true, Delete: "on"}); gl.Merge != want {
 		t.Errorf("GitLab: %+v", gl.Merge)
 	}
 }
