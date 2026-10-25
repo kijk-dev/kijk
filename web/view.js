@@ -1,4 +1,5 @@
 import { get, url, el, splitKey, base } from './api.js';
+import { diffLayout, onDiffLayout } from './layout.js';
 
 export const LINE_HEIGHT = 18;
 // The file types of filetypes.go. They come from the local kijk, also for a remote folder.
@@ -10,6 +11,8 @@ let viewChanged = () => {};
 
 // onView runs after a file or diff is drawn, also after a reload, so find can search it again.
 export function onView(fn) { viewChanged = fn; }
+
+onDiffLayout(() => current?.relayout?.());
 
 // typeOf gives the file type of a path, as TypeOf in filetypes.go does; {} shows as source.
 function typeOf(path) {
@@ -27,32 +30,83 @@ export function showMessage(viewer, msg) {
   viewer.replaceChildren(typeof msg === 'string' ? el('p', 'empty', msg) : msg);
 }
 
-// virtual renders only the rows on screen; drawRange(first, last) returns their elements.
-// scroll must be in the page already: the first rows are drawn at once, at scrollTop top,
-// so a view that replaces another never shows an empty frame.
-function virtual(scroll, count, width, top, drawRange) {
+// virtual renders only the rows on screen; drawRange(first, last) returns their elements. With lines,
+// lines() gives n(i), the 18px lines row i takes at the scroll's width now. top is px, or a function of
+// topOf. scroll must be in the page: the first rows draw at once, so a new view never shows empty.
+function virtual(scroll, count, width, top, drawRange, lines) {
   const space = el('div', 'space');
   const rows = el('div', 'rows');
   space.style.height = `${count * LINE_HEIGHT}px`;
   space.style.width = width;
   space.append(rows);
   scroll.append(space);
+  let tops = null; // tops[i] is the top of row i, when rows differ in height
+  let wide = -1; // the scroll width tops is for
+  const real = new Map(); // row -> lines, where a drawn row did not take what lines() said
+  const topOf = i => (tops ? tops[i] : i * LINE_HEIGHT);
+  const indexAt = y => { // the row at y px
+    if (!tops) return Math.floor(y / LINE_HEIGHT);
+    let lo = 0, hi = count - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (tops[mid] <= y) lo = mid;
+      else hi = mid - 1;
+    }
+    return Math.max(0, lo);
+  };
+  const measure = () => {
+    const n = lines();
+    tops = new Float64Array(count + 1);
+    for (let i = 0; i < count; i++) tops[i + 1] = tops[i] + (real.get(i) ?? n(i)) * LINE_HEIGHT;
+    space.style.height = `${tops[count]}px`;
+  };
+  // still runs change, then puts the row at the top back where it was.
+  const still = change => {
+    const i = indexAt(scroll.scrollTop), off = scroll.scrollTop - topOf(i);
+    change();
+    scroll.scrollTop = topOf(i) + off;
+  };
+  let at = -1; // the scrollTop the rows were drawn for
   const draw = () => {
-    const first = Math.max(0, Math.floor(scroll.scrollTop / LINE_HEIGHT) - 20);
-    const last = Math.min(count, first + 400, Math.ceil((scroll.scrollTop + scroll.clientHeight) / LINE_HEIGHT) + 20);
-    rows.style.transform = `translateY(${first * LINE_HEIGHT}px)`;
-    rows.replaceChildren(...drawRange(first, last));
+    if (lines && scroll.clientWidth && scroll.clientWidth !== wide) {
+      still(() => {
+        wide = scroll.clientWidth;
+        real.clear();
+        measure();
+      });
+    }
+    at = scroll.scrollTop;
+    const first = Math.max(0, indexAt(scroll.scrollTop) - 20);
+    const last = Math.min(count, first + 400, indexAt(scroll.scrollTop + scroll.clientHeight) + 21);
+    rows.style.transform = `translateY(${topOf(first)}px)`;
+    const drawn = drawRange(first, last);
+    rows.replaceChildren(...drawn);
+    if (!lines || !scroll.clientWidth) return;
+    let off = false;
+    drawn.forEach((e, k) => {
+      const n = Math.round(e.offsetHeight / LINE_HEIGHT);
+      if (n * LINE_HEIGHT !== topOf(first + k + 1) - topOf(first + k)) {
+        real.set(first + k, n);
+        off = true;
+      }
+    });
+    if (off) still(measure);
   };
   let frame = 0;
   const render = () => {
     cancelAnimationFrame(frame);
     frame = requestAnimationFrame(draw);
   };
-  scroll.addEventListener('scroll', render);
+  // A sideways scroll brings no row into view, so it draws nothing again.
+  scroll.addEventListener('scroll', () => { if (scroll.scrollTop !== at) render(); });
   new ResizeObserver(render).observe(scroll);
-  scroll.scrollTop = top;
+  if (lines && scroll.clientWidth) {
+    wide = scroll.clientWidth;
+    measure();
+  }
+  scroll.scrollTop = typeof top === 'function' ? top(topOf) : top;
   draw();
-  return render;
+  return { render, topOf, indexAt };
 }
 
 // setView makes another kind of view, such as Branch changes, the open view: {kind, scroll, reload(change), jump(dir)}.
@@ -60,8 +114,9 @@ export function setView(v) { current = v; }
 
 export const isCurrent = v => current === v;
 
-// content is plain text, or colored pieces [class, text] from the server. marks are find matches.
-export function line(numbers, content, cls, key) {
+// content is plain text, or colored pieces [class, text] from the server. marks are find matches;
+// side ('l' or 'r') takes only those of one half of a split row. words are [from, to] to underline.
+export function line(numbers, content, cls, key, side, words = []) {
   const row = el('div', cls ? `ln ${cls}` : 'ln');
   const flash = current?.flash;
   if (flash && flash.key === key && Date.now() < flash.until) row.classList.add('flash');
@@ -69,28 +124,120 @@ export function line(numbers, content, cls, key) {
   for (const n of numbers) gut.append(el('span', null, n || ''));
   const tx = el('span', 'tx');
   const pieces = Array.isArray(content) ? content : [['', content]];
-  const marks = current?.hits?.get(key) || [];
-  let pos = 0, m = 0;
+  let marks = current?.hits?.get(key) || [];
+  if (side) marks = marks.filter(m => m[3] === side);
+  let pos = 0, m = 0, w = 0;
   for (const [c, text] of pieces) {
     for (let i = 0; i < text.length;) {
       while (m < marks.length && marks[m][1] <= pos + i) m++;
-      const mark = marks[m];
+      while (w < words.length && words[w][1] <= pos + i) w++;
+      const mark = marks[m], word = words[w];
       const inside = mark && mark[0] <= pos + i;
-      const end = Math.min(text.length, (inside ? mark[1] : mark ? mark[0] : Infinity) - pos);
-      const part = c ? el('span', `h${c}`, text.slice(i, end)) : document.createTextNode(text.slice(i, end));
+      const changed = word && word[0] <= pos + i;
+      const end = Math.min(text.length, (inside ? mark[1] : mark ? mark[0] : Infinity) - pos, (changed ? word[1] : word ? word[0] : Infinity) - pos);
+      let part = c ? el('span', `h${c}`, text.slice(i, end)) : document.createTextNode(text.slice(i, end));
       if (inside) {
         const hit = el('mark', mark[2] ? 'hit current' : 'hit');
         hit.append(part);
-        tx.append(hit);
-      } else {
-        tx.append(part);
+        part = hit;
       }
+      if (changed) {
+        const wd = el('span', 'w');
+        wd.append(part);
+        part = wd;
+      }
+      tx.append(part);
       i = end;
     }
     pos += text.length;
   }
   row.append(gut, tx);
   return row;
+}
+
+// pairRows turns hunk lines into rows {l, r} of old and new line; an unchanged line is both. Split
+// pairs the nth removed line of a block with its nth added line; unified gives each its own row.
+export function pairRows(lines, split) {
+  const rows = [];
+  for (let i = 0; i < lines.length;) {
+    if (lines[i].k === ' ') {
+      rows.push({ l: lines[i], r: lines[i++] });
+      continue;
+    }
+    const dels = [], adds = [];
+    for (; i < lines.length && lines[i].k !== ' '; i++) {
+      if (split) (lines[i].k === '-' ? dels : adds).push(lines[i]);
+      else rows.push(lines[i].k === '-' ? { l: lines[i], r: null } : { l: null, r: lines[i] });
+    }
+    for (let j = 0; j < Math.max(dels.length, adds.length); j++) rows.push({ l: dels[j] || null, r: adds[j] || null });
+  }
+  return rows;
+}
+
+// splitRow draws row {l, r} of a split diff: old left, new right, each with its own line number, and
+// fine hatching where a side has no line. cls(l) gives a line's classes.
+export function splitRow(row, key, cls) {
+  const words = row.l && row.r && row.l !== row.r ? (row.words ??= changedWords(row.l.t, row.r.t)) : [];
+  const half = (l, side, w) => (l ? line([side === 'l' ? l.o : l.n], l.x || l.t, cls(l), key, side, w) : el('div', 'fill'));
+  const out = el('div', 'srow');
+  out.append(half(row.l, 'l', words[0]), half(row.r, 'r', words[1]));
+  return out;
+}
+
+// wrapped is how many lines text takes in fit cells, wrapped as pre-wrap does: at spaces, which hang at
+// the end of a line, and inside a word only when it is longer than a line.
+function wrapped(text, fit) {
+  let lines = 1, col = 0;
+  for (const [, word, space] of text.matchAll(/(\S*)(\s*)/g)) {
+    const w = [...word].length;
+    if (col > 0 && col + w > fit) {
+      lines++;
+      col = 0;
+    }
+    const more = Math.max(0, Math.ceil(w / fit) - 1);
+    lines += more;
+    col += w - more * fit;
+    for (const c of space) col = c === '\t' ? col + 4 - (col % 4) : col + 1;
+  }
+  return lines;
+}
+
+const TOKEN = /\w+|\s+|[^\w\s]/g;
+const MAX_TOKENS = 500; // the word diff takes tokens², so a minified line gets no marks
+
+// changedWords gives [old, new], the [from, to] of the words that differ in a pair of lines. None
+// when more than 60% of either line changed: then the marks would only be noise.
+function changedWords(a, b) {
+  const ta = a.match(TOKEN) || [], tb = b.match(TOKEN) || [];
+  if (ta.length > MAX_TOKENS || tb.length > MAX_TOKENS) return [];
+  const w = tb.length + 1;
+  const same = new Uint16Array((ta.length + 1) * w); // tokens in common from i, j on
+  for (let i = ta.length - 1; i >= 0; i--) {
+    for (let j = tb.length - 1; j >= 0; j--) {
+      same[i * w + j] = ta[i] === tb[j] ? same[(i + 1) * w + j + 1] + 1 : Math.max(same[(i + 1) * w + j], same[i * w + j + 1]);
+    }
+  }
+  const ra = [], rb = [];
+  const add = (rs, from, len) => {
+    if (rs.length && rs.at(-1)[1] === from) rs.at(-1)[1] += len;
+    else rs.push([from, from + len]);
+  };
+  let i = 0, j = 0, pa = 0, pb = 0;
+  while (i < ta.length || j < tb.length) {
+    if (i < ta.length && j < tb.length && ta[i] === tb[j]) {
+      pa += ta[i++].length;
+      pb += tb[j++].length;
+    } else if (j === tb.length || (i < ta.length && same[(i + 1) * w + j] >= same[i * w + j + 1])) {
+      add(ra, pa, ta[i].length);
+      pa += ta[i++].length;
+    } else {
+      add(rb, pb, tb[j].length);
+      pb += tb[j++].length;
+    }
+  }
+  const solid = s => s.replace(/\s/g, '').length;
+  const share = (rs, s) => rs.reduce((n, [from, to]) => n + solid(s.slice(from, to)), 0) / Math.max(1, solid(s));
+  return share(ra, a) > 0.6 || share(rb, b) > 0.6 ? [] : [ra, rb];
 }
 
 // viewInfo tells find and go to line what is open: a file, a diff with its rows, or rendered markdown.
@@ -100,7 +247,7 @@ export function viewInfo() {
 }
 
 // setHits shows find matches on the open view: line number (file) or row index (diff) ->
-// [[from, to, isCurrent]]. null clears them.
+// [[from, to, isCurrent, side]], side being 'l' or 'r' in a diff. null clears them.
 export function setHits(map) {
   if (!current) return;
   current.hits = map;
@@ -112,7 +259,7 @@ export function reveal(key, flashIt) {
   if (!current?.scroll || current.kind === 'rendered') return;
   const { scroll } = current;
   const i = current.kind === 'file' ? key - 1 : key;
-  const top = i * LINE_HEIGHT;
+  const top = current.topOf(i);
   if (top < scroll.scrollTop + LINE_HEIGHT || top > scroll.scrollTop + scroll.clientHeight - 2 * LINE_HEIGHT) {
     scroll.scrollTop = Math.max(0, top - scroll.clientHeight / 3);
   }
@@ -211,14 +358,14 @@ export async function openFile(viewer, root, path, keep, md) {
   file.lines = info.lines;
   file.gotoLine = n => reveal(Math.min(Math.max(1, n), info.lines), true);
   file.starts = info.changes.map(c => (c.kind === 'del' ? c.start : c.start - 1));
-  file.render = virtual(scroll, info.lines, `calc(${gutter} + ${info.maxCols + 4}ch)`, scrollTop, (first, last) => {
+  Object.assign(file, virtual(scroll, info.lines, `calc(${gutter} + ${info.maxCols + 4}ch)`, scrollTop, (first, last) => {
     for (let c = Math.floor(first / CHUNK); c * CHUNK < last; c++) load(file, c);
     const out = [];
     for (let n = first; n < last; n++) {
       out.push(line([n + 1], file.chunks.get(Math.floor(n / CHUNK))?.[n % CHUNK] ?? '', marks[n], n + 1));
     }
     return out;
-  });
+  }));
   viewChanged();
 }
 
@@ -580,8 +727,9 @@ async function load(file, c) {
   }
 }
 
-// openDiff shows one file's change; mode is "staged", "unstaged", "untracked" or "commit".
-// keep is set when the diff reloads: {scrollTop, res, openedAt}. md is {source, toggle}.
+// openDiff shows one file's change; mode is "staged", "unstaged", "untracked" or "commit". keep is
+// set when the diff draws again: {scrollTop, scrollLeft, line, offset, res, openedAt}, line being a
+// new-side line to put offset px below the top. md is {source, toggle}.
 export async function openDiff(viewer, root, change, mode, context = 3, keep, md) {
   const d = { kind: 'diff', starts: [], path: change.path, mode, hash: change.hash || '', openedAt: keep?.openedAt ?? Date.now() };
   const params = { root, path: change.path, orig: change.orig || '', mode, hash: change.hash || '', context };
@@ -589,7 +737,7 @@ export async function openDiff(viewer, root, change, mode, context = 3, keep, md
   d.reload = async () => {
     const res = await get('diff', params).catch(() => null);
     if (current !== d || (res && JSON.stringify(res) === d.json)) return;
-    again(context, { scrollTop: d.scroll?.scrollTop ?? 0, res, openedAt: d.openedAt });
+    again(context, { scrollTop: d.scroll?.scrollTop ?? 0, scrollLeft: d.scroll?.scrollLeft, res, openedAt: d.openedAt });
   };
   current = d;
   let res;
@@ -627,36 +775,54 @@ export async function openDiff(viewer, root, change, mode, context = 3, keep, md
   bar.append(toggle);
   if (modes) bar.append(modes);
 
+  const split = diffLayout() === 'split';
   const rows = [];
   const more = () => again(context + 20);
+  const changed = r => r.l !== r.r;
   res.hunks.forEach((h, i) => {
     if (!full && (i > 0 || h.oldStart > 1 || h.newStart > 1)) rows.push({ sep: true });
-    for (const l of h.lines) {
-      if (l.k !== ' ' && (rows.length === 0 || rows.at(-1).sep || rows.at(-1).k === ' ')) d.starts.push(rows.length);
-      rows.push(l);
+    for (const r of pairRows(h.lines, split)) {
+      if (changed(r) && (rows.length === 0 || rows.at(-1).sep || !changed(rows.at(-1)))) d.starts.push(rows.length);
+      rows.push(r);
     }
   });
 
   let maxNo = 0, cols = 0;
-  for (const r of rows) {
-    maxNo = Math.max(maxNo, r.o || 0, r.n || 0);
-    cols = Math.max(cols, r.t?.length ?? 0);
+  for (const l of res.hunks.flatMap(h => h.lines)) {
+    maxNo = Math.max(maxNo, l.o || 0, l.n || 0);
+    cols = Math.max(cols, l.t.length);
   }
   const digits = String(maxNo).length;
-  const scroll = el('div', 'scroll');
+  const scroll = el('div', split ? 'scroll diff halves' : 'scroll diff');
   const gutter = `${digits + 2}ch`;
   scroll.style.setProperty('--gutter', gutter);
   viewer.replaceChildren(bar, scroll);
   d.scroll = scroll;
-  const top = keep ? keep.scrollTop : Math.max(0, ((d.starts[0] ?? 0) - 5) * LINE_HEIGHT);
+  // A split row takes the lines its longer half needs; virtual corrects a guess that misses.
+  const lines = split && (() => {
+    const probe = scroll.appendChild(el('span', 'probe', 'x'.repeat(100)));
+    const ch = probe.getBoundingClientRect().width / 100;
+    probe.remove();
+    const fit = Math.max(1, Math.floor((scroll.clientWidth / 2 - 1) / ch) - digits - 3); // gutter, padding
+    return i => (rows[i].sep ? 1 : Math.max(wrapped(rows[i].l?.t ?? '', fit), wrapped(rows[i].r?.t ?? '', fit)));
+  });
+  const at = keep?.line ? rows.findIndex(r => r.r?.n === keep.line) : -1;
+  const top = topOf => (at >= 0 ? topOf(at) - keep.offset : keep ? keep.scrollTop : topOf(Math.max(0, (d.starts[0] ?? 0) - 5)));
+  d.relayout = () => { // the new-side line at the top stays where it is
+    const first = d.indexAt(scroll.scrollTop);
+    const i = rows.findIndex((r, j) => j >= first && r.r);
+    again(context, { scrollTop: scroll.scrollTop, line: rows[i]?.r.n, offset: d.topOf(i) - scroll.scrollTop, res, openedAt: d.openedAt });
+  };
   d.rows = rows;
   d.lines = maxNo;
   d.gotoLine = n => { // the line number on the new side, else the old side
-    let i = rows.findIndex(r => r.n >= n);
-    if (i < 0) i = rows.findIndex(r => r.o >= n);
+    let i = rows.findIndex(r => r.r?.n >= n);
+    if (i < 0) i = rows.findIndex(r => r.l?.o >= n);
     if (i >= 0) reveal(i, true);
   };
-  d.render = virtual(scroll, rows.length, `calc(${gutter} * 2 + ${cols + 6}ch)`, top, (first, last) => {
+  const cls = l => (l.k === '+' ? 'add' : l.k === '-' ? 'del' : '');
+  const width = split ? '100%' : `calc(${gutter} * 2 + ${cols + 6}ch)`;
+  Object.assign(d, virtual(scroll, rows.length, width, top, (first, last) => {
     const out = [];
     for (let i = first; i < last; i++) {
       const r = rows[i];
@@ -666,12 +832,16 @@ export async function openDiff(viewer, root, change, mode, context = 3, keep, md
         btn.onclick = more;
         sep.append(btn);
         out.push(sep);
+      } else if (split) {
+        out.push(splitRow(r, i, cls));
       } else {
-        out.push(line([r.o, r.n], r.x || r.t, r.k === '+' ? 'add' : r.k === '-' ? 'del' : '', i));
+        const l = r.r || r.l;
+        out.push(line([l.o, l.n], l.x || l.t, cls(l), i));
       }
     }
     return out;
-  });
+  }, lines));
+  if (keep?.scrollLeft) scroll.scrollLeft = keep.scrollLeft;
   viewChanged();
 }
 
@@ -924,9 +1094,9 @@ export function jumpChange(dir) {
   if (current?.jump) return current.jump(dir);
   if (!current?.scroll || !current.starts) return false;
   const { scroll, starts } = current;
-  const at = Math.floor(scroll.scrollTop / LINE_HEIGHT) + 5;
+  const at = current.indexAt(scroll.scrollTop) + 5;
   const target = dir < 0 ? starts.findLast(s => s < at) : starts.find(s => s > at);
-  if (target != null) scroll.scrollTop = Math.max(0, (target - 5) * LINE_HEIGHT);
+  if (target != null) scroll.scrollTop = current.topOf(Math.max(0, target - 5));
   return true;
 }
 

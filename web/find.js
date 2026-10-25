@@ -34,7 +34,7 @@ bar.append(input, count, prev, next, close);
 
 let mode = null; // 'find' or 'line'
 let query = '';
-let matches = []; // {key, f, t}: key is a line number in a file, a row index in a diff
+let matches = []; // {key, f, t, side}: key is a line number in a file, a row index in a diff
 let at = -1;
 let more = false;
 let call = 0;
@@ -101,8 +101,12 @@ async function search(move) {
     const q = query.toLowerCase();
     v.rows.forEach((r, i) => {
       if (r.sep) return;
-      const t = r.t.toLowerCase();
-      for (let k = t.indexOf(q); k >= 0; k = t.indexOf(q, k + q.length)) list.push({ key: i, f: k, t: k + q.length });
+      // An unchanged line is on both sides of a split row; it counts once, on the new side.
+      for (const [side, l] of [['l', r.l !== r.r && r.l], ['r', r.r]]) {
+        if (!l) continue;
+        const t = l.t.toLowerCase();
+        for (let k = t.indexOf(q); k >= 0; k = t.indexOf(q, k + q.length)) list.push({ key: i, f: k, t: k + q.length, side });
+      }
     });
   } else if (v && query && v.kind === 'file') {
     try {
@@ -127,7 +131,7 @@ function paint(move) {
   const map = new Map();
   matches.forEach((m, i) => {
     if (!map.has(m.key)) map.set(m.key, []);
-    map.get(m.key).push([m.f, m.t, i === at]);
+    map.get(m.key).push([m.f, m.t, i === at, m.side]);
   });
   setHits(map.size ? map : null);
   count.textContent = !query ? '' : matches.length ? `${num(at + 1)} of ${num(matches.length)}${more ? '+' : ''}` : 'No matches';
