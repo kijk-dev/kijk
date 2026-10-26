@@ -21,11 +21,13 @@ const (
 	indexStride = 64    // the index keeps the start of every 64th line
 )
 
-// Roots are the folders the server may read: row folders of running agents and saved folders.
+// Roots are the folders the server may read: row folders of running agents, saved folders, and
+// every folder a window shows, for as long as it shows it.
 type Roots struct {
 	mu      sync.RWMutex
 	m       map[string]bool
 	folders map[string]bool
+	shown   map[string]int // open folder-events streams per root
 }
 
 func (r *Roots) Set(paths []string) {
@@ -51,7 +53,32 @@ func (r *Roots) SetFolders(paths []string) {
 func (r *Roots) Has(root string) bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	return r.m[root] || r.folders[root]
+	return r.hasLocked(root)
+}
+
+func (r *Roots) hasLocked(root string) bool {
+	return r.m[root] || r.folders[root] || r.shown[root] > 0
+}
+
+// hold keeps root readable until release runs, so a folder stays open after its row is gone. It
+// checks and holds under one lock, so it never widens what the server may read.
+func (r *Roots) hold(root string) (release func(), ok bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.hasLocked(root) {
+		return nil, false
+	}
+	if r.shown == nil {
+		r.shown = map[string]int{}
+	}
+	r.shown[root]++
+	return func() {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		if r.shown[root]--; r.shown[root] == 0 {
+			delete(r.shown, root)
+		}
+	}, true
 }
 
 // resolve turns a slash-separated path relative to root into a real path inside root.
