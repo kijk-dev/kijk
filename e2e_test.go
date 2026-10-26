@@ -2090,6 +2090,25 @@ func TestBrowser(t *testing.T) {
 		w.noErrors()
 	})
 
+	// A folder stays open after its agent ends. Once kijk restarts it no longer shows that folder,
+	// and the window closes it and says why.
+	t.Run("folder gone", func(t *testing.T) {
+		repo := namedRepo(t, "gone")
+		write(t, filepath.Join(repo, "a.txt"), "a\n")
+		claude := t.TempDir()
+		claudeAgent(t, claude, repo, "Short task", "idle")
+		g := startKijkIn(t, exe, t.TempDir(), "CLAUDE_CONFIG_DIR="+claude)
+		w := openPage(t, newTab(t, tab), g, "/")
+		w.selectAgent("Short task", "gone")
+		if err := os.Remove(filepath.Join(claude, "sessions", "1.json")); err != nil {
+			t.Fatal(err)
+		}
+		w.waitFor("no row, and the folder still open", `!`+row("Short task")+` && document.querySelector('#folder-name')?.textContent === 'gone' && `+treeItem("a.txt"))
+		g.restart(t, exe)
+		w.waitLong(30*time.Second, "the folder closed, and why", `document.querySelector('#sidebar-head').hidden && document.title === 'kijk' && document.querySelector('#statusbar').textContent.includes('gone is no longer in kijk.')`)
+		w.noErrors()
+	})
+
 	t.Run("remote machine", func(t *testing.T) {
 		m, vm := journeyMachine(t)
 		publish(t, "0.0.1", exe)

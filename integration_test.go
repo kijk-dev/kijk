@@ -181,6 +181,36 @@ func startKijkIn(t *testing.T, exe, home string, env ...string) *kijkProcess {
 	return k
 }
 
+// restart stops kijk and starts exe on the same port with the same token, as kijk's own restart
+// does, so an open window reconnects.
+func (k *kijkProcess) restart(t *testing.T, exe string) {
+	t.Helper()
+	k.cmd.Process.Kill()
+	<-k.exited
+	out, err := os.OpenFile(k.logFile, os.O_WRONLY|os.O_APPEND, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { out.Close() })
+	k.cmd = exec.Command(exe, "-port", fmt.Sprint(k.port), "-no-open")
+	k.cmd.Env = append(os.Environ(), append(k.env, "KIJK_TOKEN="+k.token)...)
+	k.cmd.Stdout, k.cmd.Stderr = out, out
+	if err := k.cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	k.exited = make(chan struct{})
+	go func(cmd *exec.Cmd, exited chan struct{}) { cmd.Wait(); close(exited) }(k.cmd, k.exited)
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
+		if resp, err := k.request("GET", "/api/agenttypes"); err == nil {
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				return
+			}
+		}
+	}
+	t.Fatal("kijk did not start again")
+}
+
 func (k *kijkProcess) request(method, path string) (*http.Response, error) {
 	req, _ := http.NewRequest(method, fmt.Sprintf("http://127.0.0.1:%d%s", k.port, path), nil)
 	req.AddCookie(&http.Cookie{Name: cookieName(k.port), Value: k.token})
