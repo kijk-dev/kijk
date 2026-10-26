@@ -82,7 +82,6 @@ func prCandidates(l prLink, saved, agents []string, cwd, home, cache string) []s
 			}
 		}
 	}
-	add(saved...)
 	if cwd != "" {
 		// kijk may run in a subfolder of the clone, or in the folder that holds it.
 		for d := filepath.Clean(cwd); d != home && d != filepath.Dir(d); d = filepath.Dir(d) {
@@ -90,6 +89,7 @@ func prCandidates(l prLink, saved, agents []string, cwd, home, cache string) []s
 		}
 		add(filepath.Join(cwd, name), filepath.Join(filepath.Dir(cwd), name))
 	}
+	add(saved...)
 	if cache != "" {
 		add(cloneDir(cache, l))
 	}

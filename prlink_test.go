@@ -69,10 +69,10 @@ func TestPRCandidates(t *testing.T) {
 	saved := []string{p("/h/code/shop"), p("/h/code/billing")}
 	agents := []string{p("/h/work/shop-agent"), p("/h/code/shop")}
 	want := []string{
-		// Saved folders.
-		"/h/code/shop", "/h/code/billing",
 		// Where kijk runs, its parents up to home, and the repo's name in it and next to it.
-		"/h/code/shop/web", "/h/code", "/h/code/shop/web/billing", "/h/code/shop/billing",
+		"/h/code/shop/web", "/h/code/shop", "/h/code", "/h/code/shop/web/billing", "/h/code/shop/billing",
+		// Saved folders.
+		"/h/code/billing",
 		// kijk's own clone.
 		"/h/.cache/kijk/clones/github.com/acme/billing",
 		// Agent folders, then folders next to the saved and agent folders.

@@ -158,8 +158,8 @@ icon counts the pull requests that wait for your review.
   On your own branch, **Copy for agent** hands a failure to the agent.
 - Clicking the pull request's title in the Git tab opens it in the PRs tab.
 - `kijk https://github.com/acme/shop/pull/477` opens that pull request in a clone of the repo.
-  kijk looks for the clone in your saved folders, the folder you run the command in and the
-  folders above it, its own clones, the folders of your agents, the folders next to all of these,
+  kijk looks for the clone in the folder you run the command in and the folders above it, your
+  saved folders, its own clones, the folders of your agents, the folders next to all of these,
   and common places such as `~/code/shop` and `~/go/src/github.com/acme/shop`.
 - When kijk finds no clone, it clones the repo with `gh` or `glab`, with your own login. The clone
   is a normal, full clone in kijk's cache folder: `~/Library/Caches/kijk/clones` on macOS,
