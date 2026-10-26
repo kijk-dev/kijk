@@ -145,7 +145,7 @@ func TestActiveOncePerLocalDay(t *testing.T) {
 	}
 }
 
-// With no agents window, kijk active waits one minute after the start or the new day, and leaves
+// With no kijk window, kijk active waits one minute after the start or the new day, and leaves
 // out the agent counts.
 func TestActiveWithoutAgentScan(t *testing.T) {
 	start := time.Date(2026, 10, 12, 23, 59, 30, 0, time.Local)
