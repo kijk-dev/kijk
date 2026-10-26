@@ -5,6 +5,7 @@ import { ago, lineCount } from './git.js';
 import { mac, typing } from './keys.js';
 import { showKijk, showAgentErrors, showUndo, showSaid, restarting } from './status.js';
 import { LISTS, inList, keyed, listRows, cwdIn, target, closeRule, finish } from './rail.js';
+import { plural } from './boxes.js';
 
 // The agent types kijk knows, in its order. They come from the local kijk, also for remote rows.
 const agentTypes = await get('agenttypes');
@@ -411,6 +412,7 @@ function render() {
   for (const [l, m] of Object.entries(els)) {
     for (const key of m.keys()) if (!rows.has(key) || !inList(rows.get(key), l)) m.delete(key);
   }
+  showLists();
   refreshTip();
 }
 
@@ -468,14 +470,52 @@ function setList(l) {
 
 function drawList() {
   try { localStorage.setItem('kijk.list', list); } catch { /* storage blocked */ }
-  const name = list === 'agents' ? 'Agents' : 'Folders';
-  railEl.setAttribute('aria-label', name);
-  railEl.querySelector('header span').textContent = name;
+  railEl.setAttribute('aria-label', NAMES[list]);
+  railEl.querySelector('header span').textContent = NAMES[list];
   document.querySelector('.split[data-var="--rail"]').setAttribute('aria-label', `Resize ${list} pane`);
+  for (const [l, b] of Object.entries(tabs)) {
+    b.setAttribute('aria-selected', l === list);
+    b.tabIndex = l === list ? 0 : -1;
+  }
+  if (listsEl.contains(document.activeElement)) tabs[list].focus();
   collapseRail(document.body.classList.contains('rail-collapsed'));
   showListStatus();
   showStart();
   render();
+}
+
+// The list switcher is one Tab stop: the arrow keys, Home and End show a list and move to its button.
+const NAMES = { agents: 'Agents', folders: 'Folders' };
+const listsEl = document.getElementById('lists');
+const tabs = Object.fromEntries([...listsEl.querySelectorAll('[role=tab]')].map(b => [b.dataset.list, b]));
+listsEl.onclick = e => setList(e.target.closest('[role=tab]')?.dataset.list);
+listsEl.onkeydown = e => {
+  const i = LISTS.indexOf(list), n = LISTS.length;
+  const to = { ArrowDown: LISTS[(i + 1) % n], ArrowUp: LISTS[(i + n - 1) % n], Home: LISTS[0], End: LISTS[n - 1] }[e.key];
+  if (!to) return;
+  e.preventDefault();
+  setList(to);
+};
+tipSide('#lists', 'right');
+
+// showLists says what each list holds in its button's name and tooltip, and puts a dot on Agents
+// while Folders shows: amber when an agent is Busy, blue when one finished.
+function showLists() {
+  const live = listRows(rows, 'agents').filter(r => !r.stale);
+  const busy = live.filter(r => r.busy).length;
+  const done = live.filter(r => finished.has(r.key)).length;
+  const saved = listRows(rows, 'folders');
+  const missing = saved.filter(r => r.saved.missing).length;
+  const holds = {
+    agents: scanned ? [live.length ? plural(live.length, 'agent') : 'No running agents', busy && `${busy} busy`, done && `${done} finished`] : ['Looking for agents…'],
+    folders: [saved.length ? plural(saved.length, 'folder') : 'No folders yet', missing && `${missing} missing`],
+  };
+  for (const [l, b] of Object.entries(tabs)) {
+    const what = holds[l].filter(Boolean).join(', ');
+    b.dataset.tip = [NAMES[l], what, l !== list && `${mac ? '⌃⌥0' : 'Ctrl+Alt+0'} to show`].filter(Boolean).join('\n');
+    b.setAttribute('aria-label', `${NAMES[l]}, ${what}`);
+  }
+  tabs.agents.querySelector('.dot').className = `dot${list === 'agents' ? '' : busy ? ' busy' : done ? ' fin' : ''}`;
 }
 
 // Ctrl+Alt+0 switches lists, and Ctrl+Alt+1…9 open rows 1 to 9 of the list that shows. Not while

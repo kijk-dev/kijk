@@ -2007,18 +2007,86 @@ func TestBrowser(t *testing.T) {
 	t.Run("folders", func(t *testing.T) {
 		notes := filepath.Join(t.TempDir(), "notes")
 		write(t, filepath.Join(notes, "todo.md"), "# Todo\n")
-		if out := runCmd(t, k.env, exe, "-port", fmt.Sprint(k.port), "-no-open", notes); !strings.Contains(out, "Added notes") {
-			p.on(t).fail("kijk <folder> said:\n%s", out)
+		f := openPage(t, newTab(t, tab), k, "/")
+		f.click("the Folders list", listTab("folders"))
+		f.waitFor("no folders yet", listShows("folders")+` && document.querySelector('#status').textContent === 'No folders yet'`)
+		if out := runCmd(t, k.env, exe, "-port", fmt.Sprint(k.port), "-no-open", notes); !strings.Contains(out, "Added notes. It is open in the kijk window.") {
+			f.fail("kijk <folder> said:\n%s", out)
 		}
-		f := openPage(t, newTab(t, tab), k, "/?window=folders")
-		f.click("the notes row", row("notes"))
+		f.waitFor("notes open in the window", row("notes")+`?.classList.contains('selected') && document.querySelector('#folder-name')?.textContent === 'notes'`)
 		f.waitFor("todo.md in the tree", treeItem("todo.md"))
+		f.click("the notes row", row("notes"))
 		f.click("Remove", row("notes")+`?.querySelector('button.rm')`)
 		f.waitFor("no notes row", "!"+row("notes"))
 		f.waitFor("the undo notice", `document.querySelector('#statusbar').textContent.includes('Removed notes')`)
 		f.click("Undo", byText("#statusbar button", "Undo"))
 		f.waitFor("the notes row again", row("notes"))
 		f.noErrors()
+	})
+
+	// The Agents and Folders lists are two views of the same rows, in one window.
+	t.Run("one window", func(t *testing.T) {
+		w := openPage(t, newTab(t, tab), k, "/?window=folders")
+		w.waitFor("the Folders list at the folders window's old address, which then goes", listShows("folders")+` && location.search === ''`)
+		if out := runCmd(t, k.env, exe, "-port", fmt.Sprint(k.port), "-no-open", shop); !strings.Contains(out, "Added shop. It is open in the kijk window.") {
+			w.fail("kijk <folder> said:\n%s", out)
+		}
+		w.waitFor("shop open", row("shop")+`?.classList.contains('selected') && document.querySelector('#folder-name')?.textContent === 'shop' && document.title === 'shop — kijk'`)
+		w.waitFor("the Busy agent's icon on the folder", row("shop")+`.querySelector('.agents .agent.on') && `+row("shop")+`.dataset.tip.includes('Claude Code · Busy · Add the cart')`)
+		toShow := "Ctrl+Alt+0 to show"
+		if w.mac {
+			toShow = "⌃⌥0 to show"
+		}
+		w.waitFor("the dot and the counts on Agents", listTab("agents")+`.querySelector('.dot').matches('.busy') && `+listTab("agents")+`.getAttribute('aria-label') === 'Agents, 2 agents, 1 busy' && `+
+			listTab("agents")+`.dataset.tip === `+jsString("Agents\n2 agents, 1 busy\n"+toShow))
+		w.waitFor("the counts on Folders", listTab("folders")+`.getAttribute('aria-label').startsWith('Folders, 2 folders')`) // notes is missing once the folders journey's temp folder is gone
+		w.hover("the Agents button", listTab("agents"))
+		shots(w, "one-window-folders")
+		w.click("the Files tab", filesTab)
+		w.click("README.md", treeItem("README.md"))
+		w.waitFor("README.md open", activeFile("README.md"))
+
+		// A switch only draws: the folder, its file and the title stay, and the same row is selected.
+		w.click("the Agents list", listTab("agents"))
+		w.waitFor("the Agents list with shop's agent selected", listShows("agents")+` && `+row("Add the cart")+`.classList.contains('selected') && !`+listTab("agents")+`.querySelector('.dot').matches('.busy, .fin')`)
+		w.waitFor("the folder still open", activeFile("README.md")+` && document.querySelector('#folder-name').textContent === 'shop' && document.title === 'shop — kijk'`)
+		w.key("Ctrl+Alt+0", "0", chromedp.ModifierCtrl, chromedp.ModifierAlt)
+		w.waitFor("the Folders list again", listShows("folders")+` && `+row("shop")+`.classList.contains('selected') && `+activeFile("README.md"))
+
+		// The switcher is a tablist with one Tab stop.
+		w.evalJS(listTab("folders") + `.focus()`)
+		w.key("↑", kb.ArrowUp)
+		w.waitFor("Agents, focused", listShows("agents")+` && document.activeElement === `+listTab("agents")+` && `+listTab("agents")+`.tabIndex === 0 && `+listTab("folders")+`.tabIndex === -1`)
+		w.key("End", kb.End)
+		w.waitFor("Folders, focused", listShows("folders")+` && document.activeElement === `+listTab("folders"))
+		w.key("Home", kb.Home)
+		w.waitFor("Agents again", listShows("agents")+` && document.activeElement === `+listTab("agents"))
+
+		// Ctrl+Alt and a digit is AltGr on Windows, so it types in a text field.
+		w.click("the Git tab", gitTab)
+		w.click("the commit message", `document.querySelector('#message')`)
+		w.key("Ctrl+Alt+0", "0", chromedp.ModifierCtrl, chromedp.ModifierAlt)
+		w.key("Ctrl+Alt+2", "2", chromedp.ModifierCtrl, chromedp.ModifierAlt)
+		w.settle()
+		w.waitFor("no switch and no other folder", listShows("agents")+` && document.querySelector('#folder-name').textContent === 'shop'`)
+
+		// Folded, the rail is a strip of badges beside the switcher, which still switches.
+		w.click("Hide agents", `document.querySelector('#rail-toggle')`)
+		w.waitFor("the folded rail", `document.body.classList.contains('rail-collapsed') && document.querySelector('#rail-toggle').getAttribute('aria-label') === 'Show agents'`)
+		w.click("the Folders list", listTab("folders"))
+		w.click("the Folders list again", listTab("folders"))
+		w.waitFor("folder badges in the folded rail", listShows("folders")+` && document.body.classList.contains('rail-collapsed') && document.querySelectorAll('#rows li.folder .badge').length === 2 && document.querySelector('#rail-toggle').getAttribute('aria-label') === 'Show folders'`)
+		shots(w, "one-window-folded")
+		w.click("Show folders", `document.querySelector('#rail-toggle')`)
+		w.waitFor("the rail back", `!document.body.classList.contains('rail-collapsed')`)
+
+		// Removing a folder where an agent works keeps it open, in the Agents list.
+		w.click("the shop row", row("shop"))
+		w.click("Remove shop", row("shop")+`?.querySelector('button.rm')`)
+		w.waitFor("no shop row", "!"+row("shop"))
+		w.click("the Agents list", listTab("agents"))
+		w.waitFor("shop still open", row("Add the cart")+`.classList.contains('selected') && document.querySelector('#folder-name').textContent === 'shop'`)
+		w.noErrors()
 	})
 
 	t.Run("remote machine", func(t *testing.T) {
@@ -2121,7 +2189,8 @@ func TestBrowser(t *testing.T) {
 		if out := runCmd(t, k.env, exe, "-port", fmt.Sprint(k.port), "-no-open", dir); !strings.Contains(out, "Added filetypes") {
 			p.on(t).fail("kijk <folder> said:\n%s", out)
 		}
-		f := openPage(t, newTab(t, tab), k, "/?window=folders")
+		f := openPage(t, newTab(t, tab), k, "/")
+		f.click("the Folders list", listTab("folders"))
 		f.click("the filetypes row", row("filetypes"))
 		for _, s := range samples {
 			name := s.Name()
@@ -2389,4 +2458,15 @@ func changeRow(name string) string {
 func inList(list, name string) string {
 	return fmt.Sprintf(`[...document.querySelectorAll('#changes section')].some(s => s.querySelector('h3')?.textContent.startsWith(%s) && [...s.querySelectorAll('li.item .name')].some(n => n.textContent === %s))`,
 		jsString(list+" "), jsString(name))
+}
+
+// listTab is the switcher's button of a list: "agents" or "folders".
+func listTab(list string) string {
+	return fmt.Sprintf(`document.querySelector('#lists [data-list=%s]')`, list)
+}
+
+// listShows is true when the rail shows list.
+func listShows(list string) string {
+	return listTab(list) + `?.getAttribute('aria-selected') === 'true' && document.querySelector('#rail').getAttribute('aria-label') === ` +
+		jsString(strings.ToUpper(list[:1])+list[1:])
 }
