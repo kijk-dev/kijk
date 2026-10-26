@@ -334,10 +334,11 @@ func (l *folderList) watch(h *hub) {
 	for {
 		opened := h.opened()
 		wait := time.Second
+		since := l.rl.seq()
 		if !h.wanted(time.Now(), time.Minute) {
 			if len(facts) > 0 {
 				clear(facts)
-				l.rl.setFacts(nil)
+				l.rl.setFacts(nil, since)
 			}
 		} else {
 			list, asked := l.snapshot()
@@ -362,7 +363,9 @@ func (l *folderList) watch(h *hub) {
 				}
 			}
 			if changed {
-				l.rl.setFacts(maps.Clone(facts))
+				for _, root := range l.rl.setFacts(maps.Clone(facts), since) {
+					delete(facts, root)
+				}
 			}
 			if len(list) > 0 {
 				wait = min(wait, max(time.Until(due), 0))

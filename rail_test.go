@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/kijk-dev/kijk/internal/viewer"
@@ -104,7 +105,7 @@ func TestMergeRows(t *testing.T) {
 	} {
 		rl, h, _ := testRail()
 		rl.setSaved(saved, nil)
-		rl.setFacts(c.facts)
+		rl.setFacts(c.facts, 0)
 		if c.agents != nil {
 			rl.setAgents(c.agents)
 		}
@@ -169,6 +170,43 @@ func TestRailRequest(t *testing.T) {
 	}
 }
 
+// A count that began before kijk <folder> found the folder cannot mark it missing again.
+func TestRailFactsOlderThanARequest(t *testing.T) {
+	shop, api := abs("/code/shop"), abs("/code/api")
+	rl, h, _ := testRail()
+	rl.setSaved([]savedFolder{{Path: shop}, {Path: api}}, nil)
+	rl.setFacts(map[string]folderFacts{shop: {missing: true}}, rl.seq())
+	saved := func(root string) SavedSource {
+		for _, r := range shown(t, h).Rows {
+			if r.Root == root {
+				return *r.Saved
+			}
+		}
+		t.Fatalf("no row %s", root)
+		return SavedSource{}
+	}
+
+	since := rl.seq() // a count of api begins
+	rl.request(openRequest{Root: shop, List: listFolders})
+	again := rl.setFacts(map[string]folderFacts{shop: {missing: true}, api: {add: 2}}, since)
+	if s := saved(shop); s.Missing || s.Counted {
+		t.Fatalf("an older count undid the request: %+v", s)
+	}
+	if s := saved(api); !s.Counted || s.Add != 2 {
+		t.Fatalf("api %+v", s)
+	}
+	if !slices.Equal(again, []string{shop}) {
+		t.Fatalf("to count again %v", again)
+	}
+
+	if again := rl.setFacts(map[string]folderFacts{shop: {add: 1}, api: {add: 2}}, rl.seq()); again != nil {
+		t.Fatalf("to count again %v", again)
+	}
+	if s := saved(shop); !s.Counted || s.Add != 1 {
+		t.Fatalf("a newer count %+v", s)
+	}
+}
+
 // The message the window and a following kijk read: rows of both lists, flat, with the machines'
 // state apart.
 func TestRailMessage(t *testing.T) {
@@ -178,7 +216,7 @@ func TestRailMessage(t *testing.T) {
 	rl, h, _ := testRail()
 	shop, notes := "/u/code/shop", "/u/code/notes"
 	rl.setSaved([]savedFolder{{Path: shop}, {Path: notes}}, fmt.Errorf("cannot save the folders list"))
-	rl.setFacts(map[string]folderFacts{shop: {branch: "main", add: 40, del: 12}})
+	rl.setFacts(map[string]folderFacts{shop: {branch: "main", add: 40, del: 12}}, 0)
 	rl.setKijk(kijkState{Version: "0.9.0"})
 	rl.request(openRequest{Root: shop, PR: 477})
 	rl.setAgents(&agentPart{
@@ -229,7 +267,7 @@ func BenchmarkMergeRows(b *testing.B) {
 	for _, f := range saved {
 		facts[f.Path] = folderFacts{branch: "main", add: 3}
 	}
-	rl.setFacts(facts)
+	rl.setFacts(facts, 0)
 	b.ReportAllocs()
 	for b.Loop() {
 		rl.setAgents(agents)
