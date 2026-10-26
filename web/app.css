@@ -40,6 +40,8 @@ body {
 @media (prefers-reduced-motion: reduce) { #lists .dot.busy { animation: none; } }
 .split:hover, .split:focus-visible { outline: none; background: linear-gradient(var(--modified), var(--modified)) center / 2px 100% no-repeat; }
 body.rail-collapsed { --rail-w: 32px; }
+/* A badge's number sits half a pixel past the strip, which is not worth a scroll bar. */
+.rail-collapsed #rail { overflow-x: hidden; }
 .rail-collapsed .split[data-var="--rail"], .rail-collapsed #rail header span, .rail-collapsed #rail .status,
 .rail-collapsed .names, .rail-collapsed .when, .rail-collapsed .repo { display: none; }
 .rail-collapsed #rail header { justify-content: center; padding: 0; }
