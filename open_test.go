@@ -53,13 +53,18 @@ func TestDeliver(t *testing.T) {
 	}
 }
 
-// A kijk from before /api/open says what to do.
+// A kijk from before /api/open says what to do, but still shows its window to a plain kijk.
 func TestOpenOnAnOldKijk(t *testing.T) {
 	srv := httptest.NewServer(http.NotFoundHandler())
 	defer srv.Close()
-	_, err := runningOpener(srv.Listener.Addr().(*net.TCPAddr).Port, "t")(openAsk{})
-	if err == nil || err.Error() != "the running kijk is too old for this. Quit it, then try again" {
-		t.Fatalf("error %v", err)
+	open := runningOpener(srv.Listener.Addr().(*net.TCPAddr).Port, "t")
+	var errOut bytes.Buffer
+	if code := deliver(open, openAsk{Folders: []string{"/code/api"}}, func(int) { t.Error("a folder opened a window") }, terminal{io.Discard, &errOut}); code != 1 || errOut.String() != "kijk: the running kijk is too old for this. Quit it, then try again\n" {
+		t.Errorf("a folder: exit %d, err %q", code, errOut.String())
+	}
+	var opened []int
+	if code := deliver(open, openAsk{}, func(seq int) { opened = append(opened, seq) }, terminal{io.Discard, io.Discard}); code != 0 || !slices.Equal(opened, []int{0}) {
+		t.Errorf("plain kijk: exit %d, windows %v", code, opened)
 	}
 }
 

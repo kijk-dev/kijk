@@ -91,7 +91,7 @@ func main() {
 		}
 	}
 	ask := askOf(a, adds)
-	plain := len(ask.Folders) == 0 && ask.PR == nil && ask.List == ""
+	plain := ask.plain()
 	term := terminal{os.Stdout, os.Stderr}
 
 	removeOldExe()
@@ -242,6 +242,8 @@ func parseArgs(args []string) (cliArgs, error) {
 	return a, nil
 }
 
+var errTooOld = errors.New("the running kijk is too old for this. Quit it, then try again")
+
 // callRunning sends a request to the kijk on port, with its token, and reads the JSON reply.
 func callRunning(port int, token, method, path string, body, out any) error {
 	var rd io.Reader
@@ -259,7 +261,7 @@ func callRunning(port int, token, method, path string, body, out any) error {
 	b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	switch {
 	case resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed:
-		return errors.New("the running kijk is too old for this. Quit it, then try again")
+		return errTooOld
 	case resp.StatusCode != http.StatusOK:
 		return errors.New(strings.TrimSpace(string(b)))
 	}
