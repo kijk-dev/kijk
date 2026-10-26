@@ -2015,6 +2015,7 @@ func TestBrowser(t *testing.T) {
 		}
 		f.waitFor("notes open in the window", row("notes")+`?.classList.contains('selected') && document.querySelector('#folder-name')?.textContent === 'notes'`)
 		f.waitFor("todo.md in the tree", treeItem("todo.md"))
+		f.waitFor("the long parent folder cut short inside the rail", `(w => w.scrollWidth > w.clientWidth && w.getBoundingClientRect().right <= document.querySelector('#rail').getBoundingClientRect().right)(`+row("notes")+`.querySelector('.where'))`)
 		f.click("the notes row", row("notes"))
 		f.click("Remove", row("notes")+`?.querySelector('button.rm')`)
 		f.waitFor("no notes row", "!"+row("notes"))
