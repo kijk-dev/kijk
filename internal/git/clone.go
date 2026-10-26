@@ -43,7 +43,7 @@ func Clone(ctx context.Context, kind, host, path, dir string, in io.Reader, out,
 	case err != nil:
 		err = fmt.Errorf("%s repo clone: %w", tool, err)
 	default:
-		if err = os.Rename(part, dir); err != nil && isClone(dir) {
+		if err = rename(part, dir); err != nil && isClone(dir) {
 			err = nil // another run won
 		}
 	}
