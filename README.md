@@ -157,8 +157,15 @@ icon counts the pull requests that wait for your review.
   with lines to the jobs it needs. The first three failed jobs show the last lines of their logs.
   On your own branch, **Copy for agent** hands a failure to the agent.
 - Clicking the pull request's title in the Git tab opens it in the PRs tab.
-- `kijk https://github.com/acme/shop/pull/477` opens that pull request in a clone of the repo
-  that kijk knows: a saved folder or an agent's folder. kijk never clones a repo.
+- `kijk https://github.com/acme/shop/pull/477` opens that pull request in a clone of the repo.
+  kijk looks for the clone in your saved folders, the folder you run the command in and the
+  folders above it, its own clones, the folders of your agents, the folders next to all of these,
+  and common places such as `~/code/shop` and `~/go/src/github.com/acme/shop`.
+- When kijk finds no clone, it clones the repo with `gh` or `glab`, with your own login. The clone
+  is a normal, full clone in kijk's cache folder: `~/Library/Caches/kijk/clones` on macOS,
+  `~/.cache/kijk/clones` on Linux, `%LocalAppData%\kijk\clones` on Windows. The terminal shows
+  the progress. kijk adds the clone to the Folders list and opens the pull request. The next link
+  to the same repo uses this clone. Ctrl+C stops the clone and leaves nothing behind.
 - kijk asks GitHub or GitLab again when you open a pull request, when the window gets focus,
   every 2 minutes while the PRs tab shows, and when you press the refresh key.
 
@@ -261,7 +268,8 @@ The Ctrl+Alt keys of the lists do nothing while you type in a text field. On som
 - A [supported agent](#supported-agents). kijk finds Claude Code agents through the files in `~/.claude`, or in `CLAUDE_CONFIG_DIR` when you set it. It finds Codex agents through the app server socket in `~/.codex`, or in `CODEX_HOME` when you set it.
 - `git`. Without it, kijk shows the files but no Git tab.
 - Optional: a Chromium-based browser (Chrome, Edge, Brave, Chromium or Vivaldi), for the app window.
-- Optional: `gh` or `glab`, for the pull request line and the PRs tab.
+- Optional: `gh` or `glab`, for the pull request line and the PRs tab, and for `kijk <PR link>`
+  to clone a repo.
 
 kijk runs on macOS, Linux and Windows.
 
@@ -385,7 +393,7 @@ If kijk already runs, the command opens the window. When the window is open alre
 | `-no-open` | Does not open a window. |
 | `-no-update-check` | Does not look for a new version. |
 | `kijk <folder>…` | Adds the folders to the Folders list and opens the last one in the kijk window. |
-| `kijk <PR link>` | Opens the pull request in the kijk window, in a clone of its repo that kijk knows: a saved folder, or the folder of an agent. |
+| `kijk <PR link>` | Opens the pull request in the kijk window, in a clone of its repo. With no clone on this machine, clones the repo with `gh` or `glab` first. |
 | `kijk folders` | Shows the Folders list in the kijk window. |
 | `kijk version` | Shows the version. |
 | `kijk update` | Installs the newest version. |
