@@ -15,13 +15,10 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"runtime"
 	"slices"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -85,14 +82,6 @@ func main() {
 		fmt.Println("kijk", kijkVersion)
 		return
 	}
-	if a.pr.Number > 0 {
-		clone := prClone(a.pr, savedFolderPaths(), localAgentFolders)
-		if clone == "" {
-			fmt.Fprintln(os.Stderr, "kijk:", noClone(a.pr))
-			os.Exit(1)
-		}
-		a.folders = []string{clone}
-	}
 	var adds []savedFolder
 	if len(a.folders) > 0 {
 		cwd, _ := os.Getwd()
@@ -101,21 +90,19 @@ func main() {
 			os.Exit(1)
 		}
 	}
+	ask := askOf(a, adds)
+	plain := len(ask.Folders) == 0 && ask.PR == nil && ask.List == ""
+	term := terminal{os.Stdout, os.Stderr}
 
 	removeOldExe()
 	if s, ok := runningInstance(a.port); ok {
-		if a.foldersWindow {
-			os.Exit(toRunning(a.port, s.Token, adds, a.pr.Number, a.noOpen, os.Stdout, os.Stderr))
+		if plain {
+			fmt.Println("kijk is already running at", uiURL(a.port, s.Token))
 		}
-		url := uiURL(a.port, s.Token)
-		fmt.Println("kijk is already running at", url)
-		if !a.noOpen {
-			openUI(url)
-		}
-		return
+		os.Exit(deliver(runningOpener(a.port, s.Token), ask, windows(a, s.Token), term))
 	}
 	fp, fpErr := foldersPath()
-	if fpErr != nil && a.foldersWindow {
+	if fpErr != nil && !plain {
 		fmt.Fprintln(os.Stderr, "kijk: cannot find the folders list:", fpErr)
 		os.Exit(1)
 	}
@@ -171,36 +158,23 @@ func main() {
 	if fl.readErr != nil {
 		fmt.Fprintln(os.Stderr, "kijk:", fl.readErr)
 	}
-	addedNote := ""
-	if len(adds) > 0 {
-		added, err := fl.add(adds)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "kijk:", err)
-			remove()
-			os.Exit(1)
-		}
-		addedNote = addedText(adds, added, false)
-	}
 	go fl.watch(h)
 	go watchSessions(newScanner(agents.Types, agents.NewEnv(kijkVersion)), h, rl, u, tel, mm, fl)
 
 	web, _ := fs.Sub(webFiles, "web")
-	url := uiURL(a.port, token)
+	d := &openDesk{h, rl, fl}
+	srv := newServer(token, a.port, web, h, rts, u, mm, d)
+	// The port listens already, so a window that opens now waits for Serve below.
+	if code := deliver(d.open, ask, windows(a, token), term); code != 0 {
+		remove()
+		os.Exit(code)
+	}
 	if restarted {
-		fmt.Printf("kijk %s restarted at %s\n", kijkVersion, url)
+		fmt.Printf("kijk %s restarted at %s\n", kijkVersion, uiURL(a.port, token))
 	} else {
-		fmt.Printf("kijk %s is running at %s\n", kijkVersion, url)
+		fmt.Printf("kijk %s is running at %s\n", kijkVersion, uiURL(a.port, token))
 	}
-	if addedNote != "" {
-		fmt.Println(addedNote)
-	}
-	if a.foldersWindow {
-		url = foldersURL(a.port, token, adds, a.pr.Number)
-	}
-	if !a.noOpen {
-		openUI(url)
-	}
-	log.Fatal(http.Serve(ln, newServer(token, a.port, web, h, rts, u, mm, &openDesk{h, rl, fl})))
+	log.Fatal(http.Serve(ln, srv))
 }
 
 // cliArgs is what kijk was asked to do, when it is not one of the commands that exit at once.
@@ -208,12 +182,32 @@ type cliArgs struct {
 	port                                  int
 	noOpen, version, noCheck, noTelemetry bool
 	folders                               []string // to add to the folders list
-	foldersWindow                         bool     // kijk <folder>… or kijk folders
+	list                                  string   // "folders" for kijk folders
 	pr                                    prLink   // kijk <PR link>
 	flags                                 []string // as given, for a restart
 }
 
-// parseArgs reads flags, then folders. kijk folders opens the folders window and takes no folder.
+// askOf is what the command asks the kijk that shows it. adds are its folders, checked.
+func askOf(a cliArgs, adds []savedFolder) openAsk {
+	ask := openAsk{List: a.list}
+	if a.pr.Number > 0 {
+		ask.PR = &a.pr
+	}
+	for _, f := range adds {
+		ask.Folders = append(ask.Folders, cmp.Or(f.Open, f.Path))
+	}
+	return ask
+}
+
+// windows opens a new kijk window on request seq, or is nil with -no-open.
+func windows(a cliArgs, token string) func(seq int) {
+	if a.noOpen {
+		return nil
+	}
+	return func(seq int) { openUI(windowURL(a.port, token, seq)) }
+}
+
+// parseArgs reads flags, then folders. kijk folders shows the Folders list and takes no folder.
 func parseArgs(args []string) (cliArgs, error) {
 	var a cliArgs
 	fs := flag.NewFlagSet("kijk", flag.ContinueOnError)
@@ -227,14 +221,14 @@ func parseArgs(args []string) (cliArgs, error) {
 		fs.PrintDefaults()
 	}
 	if len(args) > 0 && args[0] == "folders" {
-		a.foldersWindow = true
+		a.list = listFolders
 		args = args[1:]
 	}
 	if err := fs.Parse(args); err != nil {
 		return a, err
 	}
 	a.flags = slices.Clone(args[:len(args)-fs.NArg()])
-	if a.foldersWindow && fs.NArg() > 0 {
+	if a.list != "" && fs.NArg() > 0 {
 		return a, errors.New("kijk folders takes no folder. To add one, run kijk <folder>")
 	}
 	if l, ok := parsePRLink(fs.Arg(0)); ok {
@@ -242,105 +236,10 @@ func parseArgs(args []string) (cliArgs, error) {
 			return a, errors.New("kijk <PR link> takes one link and no folder")
 		}
 		a.pr = l
-		a.foldersWindow = true
 		return a, nil
 	}
-	if fs.NArg() > 0 {
-		a.folders = fs.Args()
-		a.foldersWindow = true
-	}
+	a.folders = fs.Args()
 	return a, nil
-}
-
-func foldersURL(port int, token string, adds []savedFolder, pr int) string {
-	u := uiURL(port, token) + "&window=folders"
-	if len(adds) > 0 {
-		u += "&open=" + url.QueryEscape(adds[len(adds)-1].Path)
-	}
-	if pr > 0 {
-		u += "&pr=" + strconv.Itoa(pr)
-	}
-	return u
-}
-
-const foldersTitle = `"kijk · Folders"`
-
-// addedText says what kijk <folder>… did. window says a folders window shows it.
-func addedText(adds []savedFolder, added []bool, window bool) string {
-	if len(adds) == 1 {
-		f := adds[0]
-		name := filepath.Base(f.Path)
-		text := "Added " + name
-		if !added[0] {
-			text = name + " is already in the list"
-		}
-		if f.Open != "" {
-			text += ", opened at " + relCwd(f.Path, f.Open) + "/"
-		}
-		if window {
-			return text + ". It is open in the window " + foldersTitle + "."
-		}
-		return text + "."
-	}
-	n := 0
-	for _, a := range added {
-		if a {
-			n++
-		}
-	}
-	where := "the folders window"
-	if window {
-		where = "the window " + foldersTitle
-	}
-	text := fmt.Sprintf("Added %s to %s.", plural(n, "folder"), where)
-	switch old := len(adds) - n; {
-	case n == 0:
-		return fmt.Sprintf("All %d folders are already in the list.", len(adds))
-	case old == 1:
-		text += " 1 was already in the list."
-	case old > 1:
-		text += fmt.Sprintf(" %d were already in the list.", old)
-	}
-	return text
-}
-
-func plural(n int, word string) string {
-	if n == 1 {
-		return "1 " + word
-	}
-	return fmt.Sprintf("%d %ss", n, word)
-}
-
-// toRunning hands kijk <folder>… and kijk folders to the running kijk. It opens a folders window
-// only when none is open: kijk cannot bring an open window to the front.
-func toRunning(port int, token string, adds []savedFolder, pr int, noOpen bool, stdout, stderr io.Writer) int {
-	var res foldersReply
-	var err error
-	if len(adds) == 0 {
-		err = callRunning(port, token, "GET", "/api/folders", nil, &res)
-	} else {
-		paths := make([]string, len(adds))
-		for i, f := range adds {
-			paths[i] = cmp.Or(f.Open, f.Path)
-		}
-		err = callRunning(port, token, "POST", "/api/folders/add", map[string]any{"folders": paths, "pr": pr}, &res)
-	}
-	if err != nil {
-		fmt.Fprintln(stderr, "kijk:", err)
-		return 1
-	}
-	if len(adds) > 0 {
-		fmt.Fprintln(stdout, addedText(adds, res.Added, res.Window))
-	} else if res.Window {
-		fmt.Fprintln(stdout, "The folders window is already open: "+foldersTitle+".")
-	}
-	if res.Error != "" {
-		fmt.Fprintln(stderr, "kijk:", res.Error)
-	}
-	if !res.Window && !noOpen {
-		openUI(foldersURL(port, token, adds, pr))
-	}
-	return 0
 }
 
 // callRunning sends a request to the kijk on port, with its token, and reads the JSON reply.
@@ -360,7 +259,7 @@ func callRunning(port int, token, method, path string, body, out any) error {
 	b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	switch {
 	case resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed:
-		return errors.New("the running kijk is too old for folders. Quit it, then try again")
+		return errors.New("the running kijk is too old for this. Quit it, then try again")
 	case resp.StatusCode != http.StatusOK:
 		return errors.New(strings.TrimSpace(string(b)))
 	}

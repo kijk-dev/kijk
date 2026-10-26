@@ -91,13 +91,3 @@ func TestPRLinkNoClone(t *testing.T) {
 		t.Errorf("message %q", err)
 	}
 }
-
-func TestParseArgsPRLink(t *testing.T) {
-	a, err := parseArgs([]string{"-no-open", "https://github.com/acme/shop/pull/477"})
-	if err != nil || a.pr.Number != 477 || !a.foldersWindow || len(a.folders) != 0 || !a.noOpen {
-		t.Errorf("got %+v %v", a, err)
-	}
-	if _, err := parseArgs([]string{"https://github.com/acme/shop/pull/477", "~/code"}); err == nil {
-		t.Error("a link and a folder should fail")
-	}
-}

@@ -104,8 +104,8 @@ func TestSavedFolders(t *testing.T) {
 	if c, _ := do("GET", file, ""); c != http.StatusForbidden {
 		t.Fatalf("folder not in the list: %d", c)
 	}
-	body, _ := json.Marshal(map[string]any{"folders": []string{dir}})
-	if c, b := do("POST", "/api/folders/add", string(body)); c != http.StatusOK || !strings.Contains(b, `"added":[true],"window":false`) {
+	body, _ := json.Marshal(openAsk{Folders: []string{dir}})
+	if c, b := do("POST", "/api/open", string(body)); c != http.StatusOK || b != `{"said":"Added `+filepath.Base(dir)+`.","window":false,"seq":1}`+"\n" {
 		t.Fatalf("add: %d %s", c, b)
 	}
 	if c, b := do("GET", file, ""); c != http.StatusOK {
@@ -115,8 +115,10 @@ func TestSavedFolders(t *testing.T) {
 	if c, _ := do("GET", escape, ""); c != http.StatusForbidden && c != http.StatusNotFound {
 		t.Fatalf("path escape: %d", c)
 	}
-	if c, b := do("POST", "/api/folders/add", `{"folders":["relative"]}`); c != http.StatusBadRequest {
-		t.Fatalf("relative path: %d %s", c, b)
+	for _, bad := range []string{`{"folders":["relative"]}`, `{"list":"agents"}`, `{"pr":{"host":"github.com","path":"a/b","number":0}}`, `{`} {
+		if c, b := do("POST", "/api/open", bad); c != http.StatusBadRequest {
+			t.Fatalf("%s: %d %s", bad, c, b)
+		}
 	}
 	if c, _ := do("POST", "/api/folders/remove", `{"root":`+strconv.Quote(dir)+`}`); c != http.StatusOK {
 		t.Fatalf("remove: %d", c)
@@ -127,8 +129,16 @@ func TestSavedFolders(t *testing.T) {
 	if c, _ := do("POST", "/api/folders/restore", `{"root":`+strconv.Quote(dir)+`}`); c != http.StatusOK {
 		t.Fatalf("restore: %d", c)
 	}
-	if c, b := do("GET", "/api/folders", ""); c != http.StatusOK || !strings.Contains(b, `"window":false`) {
-		t.Fatalf("list: %d %s", c, b)
+	if c, b := do("POST", "/api/open", `{}`); c != http.StatusOK || b != `{"window":false}`+"\n" {
+		t.Fatalf("plain kijk: %d %s", c, b)
+	}
+	serve := newServer("secret", 7717, nil, newHub(), &viewer.Roots{}, nil, nil, nil)
+	r := httptest.NewRequest("POST", "/api/open", strings.NewReader(`{}`))
+	r.Host = "127.0.0.1:7717"
+	r.AddCookie(&http.Cookie{Name: cookieName(7717), Value: "secret"})
+	w := httptest.NewRecorder()
+	if serve.ServeHTTP(w, r); w.Code != http.StatusNotFound {
+		t.Fatalf("kijk serve has no folders list, but /api/open answers %d", w.Code)
 	}
 }
 

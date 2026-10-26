@@ -260,6 +260,17 @@ func (l *folderList) restore(root string) bool {
 	return true
 }
 
+// paths are the saved folders, in list order.
+func (l *folderList) paths() []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	paths := make([]string, len(l.list))
+	for i, f := range l.list {
+		paths[i] = f.Path
+	}
+	return paths
+}
+
 func (l *folderList) count() int {
 	if l == nil {
 		return 0

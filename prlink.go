@@ -3,7 +3,6 @@ package main
 import (
 	"errors"
 	"net"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -14,8 +13,9 @@ import (
 
 // prLink is a link to a pull request on GitHub or a merge request on GitLab.
 type prLink struct {
-	Host, Path string
-	Number     int
+	Host   string `json:"host"`
+	Path   string `json:"path"`
+	Number int    `json:"number"`
 }
 
 var prLinkRe = regexp.MustCompile(`^https?://([^/?#]+)/([^?#]+?)/(?:pull|-/merge_requests)/([0-9]+)(?:[/?#].*)?$`)
@@ -63,17 +63,4 @@ func noClone(l prLink) error {
 func localAgentFolders() []string {
 	rows, _, _ := newScanner(agents.Types, agents.NewEnv(kijkVersion)).scan()
 	return localRoots(rows)
-}
-
-func savedFolderPaths() []string {
-	p, err := foldersPath()
-	if err != nil {
-		return nil
-	}
-	list, _ := readFolders(p)
-	paths := make([]string, len(list))
-	for i, f := range list {
-		paths[i] = filepath.Clean(f.Path)
-	}
-	return paths
 }

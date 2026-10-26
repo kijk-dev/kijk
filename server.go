@@ -8,7 +8,6 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
-	"path/filepath"
 	"strconv"
 	"sync"
 	"time"
@@ -38,10 +37,7 @@ func newServer(token string, port int, web fs.FS, h *hub, rts *viewer.Roots, u *
 	mux.HandleFunc("GET /api/events", h.serveEvents)
 	mux.HandleFunc("POST /api/count", countUse)
 	if d != nil {
-		mux.HandleFunc("GET /api/folders", func(w http.ResponseWriter, r *http.Request) {
-			reply(w, foldersReply{Window: h.open() > 0})
-		})
-		mux.HandleFunc("POST /api/folders/add", addFolders(d))
+		mux.HandleFunc("POST /api/open", d.serve)
 		mux.HandleFunc("POST /api/folders/remove", changeFolder(d.fl.remove))
 		mux.HandleFunc("POST /api/folders/restore", changeFolder(d.fl.restore))
 		mux.HandleFunc("POST /api/folders/refresh", changeFolder(d.fl.refresh))
@@ -90,49 +86,6 @@ func accepted(w http.ResponseWriter) {
 func reply(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(v)
-}
-
-// foldersReply tells kijk <folder> and kijk folders what happened, and whether a folders window
-// is open.
-type foldersReply struct {
-	Added  []bool `json:"added"`
-	Window bool   `json:"window"`
-	Error  string `json:"error,omitempty"`
-}
-
-// addFolders checks the folders again: the list decides what the server may read.
-func addFolders(d *openDesk) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			Folders []string `json:"folders"`
-			PR      int      `json:"pr"`
-		}
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil || len(req.Folders) == 0 {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		list := make([]savedFolder, 0, len(req.Folders))
-		for _, p := range req.Folders {
-			if !filepath.IsAbs(p) {
-				http.Error(w, p+" is not an absolute path", http.StatusBadRequest)
-				return
-			}
-			f, err := checkFolder(p, "")
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusUnprocessableEntity)
-				return
-			}
-			list = append(list, f)
-		}
-		res := foldersReply{Window: d.h.open() > 0}
-		var err error
-		if res.Added, err = d.fl.add(list); err != nil {
-			res.Error = err.Error()
-		}
-		last := list[len(list)-1]
-		d.rl.request(openRequest{Root: last.Path, PR: max(req.PR, 0), List: listFolders})
-		reply(w, res)
-	}
 }
 
 func changeFolder(change func(root string) bool) http.HandlerFunc {
