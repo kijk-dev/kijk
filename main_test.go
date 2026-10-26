@@ -54,9 +54,9 @@ func TestAskOf(t *testing.T) {
 		{cliArgs{}, nil, `{}`},
 		{cliArgs{folders: []string{"web", "~/code/api"}}, adds, `{"folders":["/code/kijk/web","/code/api"]}`},
 		{cliArgs{list: listFolders}, nil, `{"list":"folders"}`},
-		{cliArgs{pr: prLink{Kind: "github", Host: "github.com", Path: "acme/shop", Number: 477}}, nil, `{"pr":{"kind":"github","host":"github.com","path":"acme/shop","number":477}}`},
+		{cliArgs{pr: prLink{Kind: "github", Host: "github.com", Path: "acme/shop", Number: 477}}, nil, `{"pr":{"kind":"github","host":"github.com","path":"acme/shop","number":477},"cwd":"/code/shop/web"}`},
 	} {
-		if got := jsonOf(askOf(c.a, c.adds)); got != c.want {
+		if got := jsonOf(askOf(c.a, c.adds, "/code/shop/web")); got != c.want {
 			t.Errorf("%+v: got %s, want %s", c.a, got, c.want)
 		}
 	}

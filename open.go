@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strconv"
 )
@@ -14,7 +15,8 @@ import (
 // window is open.
 type openAsk struct {
 	Folders []string `json:"folders,omitempty"` // absolute; the server checks them again
-	PR      *prLink  `json:"pr,omitempty"`      // the server looks for a clone of its repo
+	PR      *prLink  `json:"pr,omitempty"`      // with no folder, the server looks for a clone of its repo
+	Cwd     string   `json:"cwd,omitempty"`     // where the command ran: one place to look for the clone
 	List    string   `json:"list,omitempty"`    // "folders" for kijk folders
 }
 
@@ -23,7 +25,7 @@ type openReply struct {
 	Said    string `json:"said,omitempty"`
 	Window  bool   `json:"window"`            // a window is open now, so the command opens none
 	Seq     int    `json:"seq,omitempty"`     // the request a new window acts on
-	NoClone bool   `json:"noClone,omitempty"` // no clone of the pull request's repo is known
+	NoClone bool   `json:"noClone,omitempty"` // no clone of the pull request's repo was found
 	Error   string `json:"error,omitempty"`   // the list could not be saved; the open still happened
 }
 
@@ -108,6 +110,9 @@ func (a openAsk) check() error {
 			return fmt.Errorf("%s is not an absolute path", p)
 		}
 	}
+	if a.Cwd != "" && !filepath.IsAbs(a.Cwd) {
+		return fmt.Errorf("%s is not an absolute path", a.Cwd)
+	}
 	switch {
 	case a.PR != nil && len(a.Folders) > 0:
 		return errors.New("a pull request link takes no folder")
@@ -123,12 +128,13 @@ func (d *openDesk) open(a openAsk) (openReply, error) {
 	rep := openReply{Window: d.h.open() > 0}
 	switch {
 	case a.PR != nil:
-		root := d.findClone(*a.PR)
+		root, checked := d.findClone(*a.PR, a.Cwd)
 		if root == "" {
 			rep.NoClone = true
+			rep.Said = noCloneText(*a.PR, checked)
 			return rep, nil
 		}
-		return d.openPR(root, a.PR.Number, rep)
+		return d.openPR(root, a.PR.Number, true, rep)
 	case len(a.Folders) > 0:
 		fs := make([]savedFolder, len(a.Folders))
 		for i, p := range a.Folders {
@@ -161,21 +167,28 @@ func (d *openDesk) open(a openAsk) (openReply, error) {
 }
 
 // openPR opens pull request n in root's row, adding root to the folders list when no row has it.
-func (d *openDesk) openPR(root string, n int, rep openReply) (openReply, error) {
+// found says kijk found root itself, so the user learns where.
+func (d *openDesk) openPR(root string, n int, found bool, rep openReply) (openReply, error) {
 	f, err := checkFolder(root, "")
 	if err != nil {
 		return rep, err
 	}
 	name := filepath.Base(f.Path)
 	q := openRequest{Root: f.Path, PR: n}
-	if d.rl.has(f.Path) {
+	has := d.rl.has(f.Path)
+	switch {
+	case has:
 		rep.Said = fmt.Sprintf("Opened #%d in %s.", n, name)
-	} else {
+	case found:
+		rep.Said = fmt.Sprintf("Found %s at %s. Added it and opened #%d.", name, tilde(f.Path), n)
+	default:
+		rep.Said = fmt.Sprintf("Added %s and opened #%d.", name, n)
+	}
+	if !has {
 		if _, err := d.fl.add([]savedFolder{f}); err != nil {
 			rep.Error = err.Error()
 		}
 		q.Added = true
-		rep.Said = fmt.Sprintf("Added %s and opened #%d.", name, n)
 	}
 	rep.Seq = d.rl.request(q)
 	if rep.Window {
@@ -184,15 +197,23 @@ func (d *openDesk) openPR(root string, n int, rep openReply) (openReply, error) 
 	return rep, nil
 }
 
-// findClone gives the main clone of l's repo among the saved folders, then the folders of the local
-// agents, or "". While no window looks for agents, it scans for them once.
-func (d *openDesk) findClone(l prLink) string {
-	return prClone(l, d.fl.paths(), func() []string {
-		if roots, ok := d.rl.agentRoots(); ok {
-			return roots
-		}
-		return localAgentFolders()
-	})
+// findClone looks for a local clone of l's repo and gives its main clone, or "", and how many
+// places it checked. While no window looks for agents, it scans for them once.
+func (d *openDesk) findClone(l prLink, cwd string) (string, int) {
+	agents, ok := d.rl.agentRoots()
+	if !ok {
+		agents = localAgentFolders()
+	}
+	home, _ := os.UserHomeDir()
+	cache, _ := cacheDir()
+	return matchClone(l, prCandidates(l, d.fl.paths(), agents, cwd, home, cache))
+}
+
+func noCloneText(l prLink, checked int) string {
+	if checked == 0 {
+		return fmt.Sprintf("No clone of %s/%s on this machine.", l.Host, l.Path)
+	}
+	return fmt.Sprintf("No clone of %s/%s in %s on this machine.", l.Host, l.Path, plural(checked, "folder"))
 }
 
 // addedText says what kijk <folder>… did; window says the kijk window shows it.

@@ -83,14 +83,14 @@ func main() {
 		return
 	}
 	var adds []savedFolder
+	cwd, _ := os.Getwd()
 	if len(a.folders) > 0 {
-		cwd, _ := os.Getwd()
 		if adds, err = checkFolders(a.folders, cwd); err != nil {
 			fmt.Fprintf(os.Stderr, "kijk: %v.\n", err)
 			os.Exit(1)
 		}
 	}
-	ask := askOf(a, adds)
+	ask := askOf(a, adds, cwd)
 	plain := len(ask.Folders) == 0 && ask.PR == nil && ask.List == ""
 	term := terminal{os.Stdout, os.Stderr}
 
@@ -187,11 +187,12 @@ type cliArgs struct {
 	flags                                 []string // as given, for a restart
 }
 
-// askOf is what the command asks the kijk that shows it. adds are its folders, checked.
-func askOf(a cliArgs, adds []savedFolder) openAsk {
+// askOf is what the command asks the kijk that shows it. adds are its folders, checked; cwd is
+// where it runs, where a clone of a pull request's repo may be.
+func askOf(a cliArgs, adds []savedFolder, cwd string) openAsk {
 	ask := openAsk{List: a.list}
 	if a.pr.Number > 0 {
-		ask.PR = &a.pr
+		ask.PR, ask.Cwd = &a.pr, cwd
 	}
 	for _, f := range adds {
 		ask.Folders = append(ask.Folders, cmp.Or(f.Open, f.Path))

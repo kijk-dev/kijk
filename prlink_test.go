@@ -1,7 +1,9 @@
 package main
 
 import (
+	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -59,45 +61,96 @@ func shopClones(t *testing.T) (main, worktree, other string) {
 	return main, worktree, other
 }
 
-func TestPRClone(t *testing.T) {
+func TestPRCandidates(t *testing.T) {
+	p := filepath.FromSlash
+	billing := prLink{Kind: "github", Host: "github.com", Path: "acme/billing", Number: 12}
+	saved := []string{p("/h/code/shop"), p("/h/code/billing")}
+	agents := []string{p("/h/work/shop-agent"), p("/h/code/shop")}
+	want := []string{
+		// Saved folders.
+		"/h/code/shop", "/h/code/billing",
+		// Where kijk runs, its parents up to home, and the repo's name in it and next to it.
+		"/h/code/shop/web", "/h/code", "/h/code/shop/web/billing", "/h/code/shop/billing",
+		// kijk's own clone.
+		"/h/.cache/kijk/clones/github.com/acme/billing",
+		// Agent folders, then folders next to the saved and agent folders.
+		"/h/work/shop-agent", "/h/work/billing",
+		// Common places.
+		"/h/src/billing", "/h/projects/billing", "/h/repos/billing", "/h/dev/billing", "/h/git/billing",
+		"/h/workspace/billing", "/h/Workspaces/billing", "/h/Developer/billing",
+		"/h/go/src/github.com/acme/billing", "/h/ghq/github.com/acme/billing", "/h/src/github.com/acme/billing", "/h/code/github.com/acme/billing",
+	}
+	check := func(got, want []string) {
+		t.Helper()
+		for i := range want {
+			want[i] = p(want[i])
+		}
+		if !slices.Equal(got, want) {
+			t.Errorf("got\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+		}
+	}
+	check(prCandidates(billing, saved, agents, p("/h/code/shop/web"), p("/h"), p("/h/.cache")), want)
+	// Outside the home folder, the parents go up to the root, which is never a clone.
+	check(prCandidates(billing, nil, nil, p("/srv/x"), "", ""), []string{"/srv/x", "/srv", "/srv/x/billing", "/srv/billing"})
+	api := prLink{Kind: "gitlab", Host: "gitlab.com", Path: "group/sub/api", Number: 3}
+	got := prCandidates(api, nil, nil, "", p("/h"), p("/c"))
+	if got[0] != p("/c/kijk/clones/gitlab.com/group/sub/api") || got[1] != p("/h/code/api") || got[len(got)-1] != p("/h/code/gitlab.com/group/sub/api") {
+		t.Errorf("a GitLab subgroup: %q", got)
+	}
+}
+
+func TestMatchClone(t *testing.T) {
 	main, worktree, other := shopClones(t)
-	link, _ := parsePRLink("https://github.com/acme/shop/pull/477")
-	same := func(a, b string) bool {
-		ra, _ := filepath.EvalSymlinks(a)
-		rb, _ := filepath.EvalSymlinks(b)
-		return ra == rb
+	shop := prLink{Kind: "github", Host: "github.com", Path: "acme/shop", Number: 477}
+	plain := t.TempDir()
+	// The user writes origins as gh:<path>, and git rewrites them.
+	alias := gitRepo(t)
+	run(t, alias, "remote", "add", "origin", "gh:acme/shop")
+	run(t, alias, "config", "--global", "url.https://github.com/.insteadOf", "gh:")
+	// origin names the forge, but git fetches from a mirror, as in the browser tests.
+	mirror := gitRepo(t)
+	run(t, mirror, "remote", "add", "origin", "https://github.com/acme/shop.git")
+	run(t, mirror, "config", "url."+t.TempDir()+".insteadOf", "https://github.com/acme/shop.git")
+	for _, c := range []struct {
+		name    string
+		places  []string
+		root    string
+		checked int
+	}{
+		{"another repo, then the clone", []string{plain, filepath.Join(plain, "gone"), other, main}, main, 2},
+		{"a worktree leads to its main clone", []string{worktree}, main, 1},
+		{"an origin through an insteadOf alias", []string{alias}, alias, 1},
+		{"an origin rewritten to a mirror", []string{mirror}, mirror, 1},
+		{"no clone", []string{plain, other}, "", 1},
+	} {
+		root, checked := matchClone(shop, c.places)
+		if realPath(root) != realPath(c.root) || checked != c.checked {
+			t.Errorf("%s: %q after %d places, want %q after %d", c.name, root, checked, c.root, c.checked)
+		}
 	}
-	scanned := false
-	scan := func() []string { scanned = true; return []string{worktree} }
-	// A saved clone is found without a look at the agents.
-	if got := prClone(link, []string{other, main}, scan); !same(got, main) || scanned {
-		t.Errorf("saved main clone: %q, scanned %v", got, scanned)
+
+	// A miss checks at most 64 places with .git.
+	var many []string
+	for i := range maxChecked {
+		d := filepath.Join(plain, strconv.Itoa(i))
+		os.MkdirAll(filepath.Join(d, ".git"), 0o755)
+		many = append(many, d)
 	}
-	// Only an agent's worktree is known: its main clone opens.
-	if got := prClone(link, []string{other}, scan); !same(got, main) || !scanned {
-		t.Errorf("from the worktree: %q", got)
+	if root, checked := matchClone(shop, append(slices.Clone(many), main)); root != "" || checked != 64 {
+		t.Errorf("past the cap: %q after %d places", root, checked)
 	}
-	if got := prClone(link, []string{other}, func() []string { return nil }); got != "" {
-		t.Errorf("no clone: %q", got)
+	if root, checked := matchClone(shop, append(many[:63], main)); realPath(root) != realPath(main) || checked != 64 {
+		t.Errorf("the 64th place: %q after %d places", root, checked)
 	}
 }
 
 // A forge on its own port: the clone's origin names the port too.
-func TestPRClonePort(t *testing.T) {
+func TestMatchClonePort(t *testing.T) {
 	isolatedGit(t)
 	repo := gitRepo(t)
 	run(t, repo, "remote", "add", "origin", "https://gitlab.example.org:8443/team/api.git")
 	link, _ := parsePRLink("https://gitlab.example.org:8443/team/api/-/merge_requests/3")
-	if got := prClone(link, []string{repo}, func() []string { return nil }); got == "" {
+	if root, _ := matchClone(link, []string{repo}); root == "" {
 		t.Errorf("no clone found for %+v", link)
-	}
-}
-
-func TestPRLinkNoClone(t *testing.T) {
-	_, _, other := shopClones(t)
-	link, _ := parsePRLink("https://github.com/acme/web/pull/12")
-	err := noClone(link)
-	if prClone(link, []string{other}, func() []string { return nil }) != "" || !strings.Contains(err.Error(), "No folder of github.com/acme/web is in kijk. Add a folder of this repo first: kijk <folder>") {
-		t.Errorf("message %q", err)
 	}
 }

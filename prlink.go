@@ -3,7 +3,11 @@ package main
 import (
 	"errors"
 	"net"
+	"os"
+	"path"
+	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -54,23 +58,75 @@ func (l prLink) valid() bool {
 	return ok
 }
 
-// prClone finds the main clone of the pull request's repo among the saved folders, else among the
-// folders scan gives, so an agent's worktree leads to the clone it belongs to.
-func prClone(l prLink, saved []string, scan func() []string) string {
-	if c := cloneIn(l, saved); c != "" {
-		return c
-	}
-	return cloneIn(l, scan())
-}
-
-func cloneIn(l prLink, folders []string) string {
-	for _, f := range folders {
-		host, path, ok := git.Origin(f)
-		if ok && strings.EqualFold(host, l.Host) && strings.EqualFold(path, l.Path) {
-			return git.MainClone(f)
+// prCandidates lists the places that may hold a clone of l's repo, most likely first, with no
+// duplicates. It joins paths only and runs no process.
+func prCandidates(l prLink, saved, agents []string, cwd, home, cache string) []string {
+	name := path.Base(l.Path)
+	var places []string
+	seen := map[string]bool{"": true}
+	add := func(ps ...string) {
+		for _, p := range ps {
+			if !seen[p] {
+				seen[p] = true
+				places = append(places, p)
+			}
 		}
 	}
-	return ""
+	add(saved...)
+	if cwd != "" {
+		// kijk may run in a subfolder of the clone, or in the folder that holds it.
+		for d := filepath.Clean(cwd); d != home && d != filepath.Dir(d); d = filepath.Dir(d) {
+			add(d)
+		}
+		add(filepath.Join(cwd, name), filepath.Join(filepath.Dir(cwd), name))
+	}
+	if cache != "" {
+		add(cloneDir(cache, l))
+	}
+	add(agents...)
+	for _, r := range slices.Concat(saved, agents) {
+		add(filepath.Join(filepath.Dir(r), name))
+	}
+	if home != "" {
+		for _, d := range []string{"code", "src", "projects", "repos", "dev", "git", "work", "workspace", "Workspaces", "Developer"} {
+			add(filepath.Join(home, d, name))
+		}
+		for _, d := range []string{"go/src", "ghq", "src", "code"} {
+			add(filepath.Join(home, filepath.FromSlash(d), l.Host, filepath.FromSlash(l.Path)))
+		}
+	}
+	return places
+}
+
+// maxChecked bounds what a miss costs: each place with .git costs a git process or two.
+const maxChecked = 64
+
+// matchClone returns the main clone of the first place whose origin is l's repo, so an agent's
+// worktree leads to the clone it belongs to, and how many places with .git it checked.
+func matchClone(l prLink, places []string) (root string, checked int) {
+	same := func(host, path string, ok bool) bool {
+		return ok && strings.EqualFold(host, l.Host) && strings.EqualFold(path, l.Path)
+	}
+	for _, p := range places {
+		if checked == maxChecked {
+			break
+		}
+		if _, err := os.Stat(filepath.Join(p, ".git")); err != nil {
+			continue
+		}
+		checked++
+		// After the user's insteadOf rewrites a short alias names the forge; as written, an origin
+		// rewritten to a mirror still does.
+		if same(git.OriginURL(p)) || same(git.Origin(p)) {
+			return git.MainClone(p), checked
+		}
+	}
+	return "", checked
+}
+
+// cloneDir is where kijk clones l's repo when it finds no clone: in the user's cache folder.
+func cloneDir(cache string, l prLink) string {
+	return filepath.Join(cache, "kijk", "clones", l.Host, filepath.FromSlash(l.Path))
 }
 
 func noClone(l prLink) error {
