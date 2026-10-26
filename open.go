@@ -111,7 +111,7 @@ func clone(l prLink, t terminal) (dir string, code int) {
 		dir = cloneDir(cache, l)
 		fmt.Fprintf(t.out, "Cloning it with %s into %s …\n", tool, tilde(dir))
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-		err = git.Clone(ctx, l.Kind, l.Host, l.Path, dir, t.in, t.out, t.err)
+		err = git.Clone(ctx, l.Kind, l.server(), l.Path, dir, t.in, t.out, t.err)
 		stop()
 	}
 	switch {

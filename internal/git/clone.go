@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,7 +14,7 @@ import (
 )
 
 // Clone clones host/path into dir with gh or glab, with the user's own login and a normal
-// checkout; the tool talks to the terminal. It clones into dir.part-<pid> and renames that, so a
+// checkout; the tool talks to the terminal. host may name a port, which only glab takes. It clones into dir.part-<pid> and renames that, so a
 // stopped clone never leaves a half repo at dir. When dir holds a clone already, it does nothing.
 func Clone(ctx context.Context, kind, host, path, dir string, in io.Reader, out, errOut io.Writer) error {
 	if isClone(dir) {
@@ -25,13 +26,17 @@ func Clone(ctx context.Context, kind, host, path, dir string, in io.Reader, out,
 	sweepParts(dir)
 	part := fmt.Sprintf("%s.part-%d", dir, os.Getpid())
 	os.RemoveAll(part) // left by a crashed run with this pid; no live run has it now
-	tool, repo, env := Tool(kind), host+"/"+path, os.Environ()
+	name, _, err := net.SplitHostPort(host)
+	if err != nil {
+		name = host
+	}
+	tool, repo, env := Tool(kind), name+"/"+path, os.Environ()
 	if kind == "gitlab" {
 		repo, env = path, append(env, "GITLAB_HOST="+host)
 	}
 	cmd := exec.CommandContext(ctx, tool, "repo", "clone", repo, part)
 	cmd.Env, cmd.Stdin, cmd.Stdout, cmd.Stderr = env, in, out, errOut
-	err := cmd.Run()
+	err = cmd.Run()
 	switch {
 	case ctx.Err() != nil:
 		err = ctx.Err()

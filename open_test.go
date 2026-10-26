@@ -121,6 +121,20 @@ func TestDeliverClones(t *testing.T) {
 	}
 }
 
+// A forge on its own port: glab reaches that port, and the clone's folder names the host alone.
+func TestCloneOnItsOwnPort(t *testing.T) {
+	useCacheDir(t)
+	cache, _ := cacheDir()
+	l, _ := parsePRLink("https://gitlab.example.org:8443/team/api/-/merge_requests/3")
+	calls := gittest.FakeToolCalls(t, "glab", gittest.Rule{Has: "repo clone", Exit: 1})
+	clone(l, terminal{nil, io.Discard, io.Discard})
+	dir := filepath.Join(cache, "kijk", "clones", "gitlab.example.org", "team", "api")
+	c := calls()
+	if len(c) != 1 || c[0].GitlabHost != "gitlab.example.org:8443" || !strings.HasPrefix(c[0].Args[len(c[0].Args)-1], dir+".part-") {
+		t.Fatalf("calls %+v", c)
+	}
+}
+
 // A kijk from before /api/open says what to do, but still shows its window to a plain kijk.
 func TestOpenOnAnOldKijk(t *testing.T) {
 	srv := httptest.NewServer(http.NotFoundHandler())

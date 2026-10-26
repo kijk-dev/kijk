@@ -18,6 +18,7 @@ import (
 type prLink struct {
 	Kind   string `json:"kind"` // "github" for /pull/, "gitlab" for /-/merge_requests/: the tool that clones it
 	Host   string `json:"host"`
+	Port   string `json:"port,omitempty"` // a forge on its own port; origins and folders use Host alone
 	Path   string `json:"path"`
 	Number int    `json:"number"`
 }
@@ -33,11 +34,10 @@ func parsePRLink(s string) (prLink, bool) {
 	if err != nil {
 		return prLink{}, false
 	}
-	host := m[1]
-	if h, _, err := net.SplitHostPort(host); err == nil {
-		host = h // as a clone's origin is matched, by its host name alone
+	l := prLink{Kind: "github", Host: m[1], Path: m[2], Number: n}
+	if h, p, err := net.SplitHostPort(m[1]); err == nil {
+		l.Host, l.Port = h, p
 	}
-	l := prLink{Kind: "github", Host: host, Path: m[2], Number: n}
 	if m[3] != "pull" {
 		l.Kind = "gitlab"
 	}
@@ -48,13 +48,24 @@ func parsePRLink(s string) (prLink, bool) {
 // gh and glab, so none may climb out of a folder or read as a flag.
 var namePart = regexp.MustCompile(`^[A-Za-z0-9_.][A-Za-z0-9_.-]*$`)
 
+var portRe = regexp.MustCompile(`^[0-9]{1,5}$`)
+
 func (l prLink) valid() bool {
 	parts := strings.Split(l.Path, "/")
-	ok := (l.Kind == "github" || l.Kind == "gitlab") && l.Number > 0 && len(parts) > 1
+	ok := (l.Kind == "github" || l.Kind == "gitlab") && l.Number > 0 && len(parts) > 1 &&
+		(l.Port == "" || portRe.MatchString(l.Port))
 	for _, p := range append(parts, l.Host) {
 		ok = ok && namePart.MatchString(p) && p != "." && p != ".."
 	}
 	return ok
+}
+
+// server is the forge's host with its port, as gh and glab reach it.
+func (l prLink) server() string {
+	if l.Port == "" {
+		return l.Host
+	}
+	return net.JoinHostPort(l.Host, l.Port)
 }
 
 // prCandidates lists the places that may hold a clone of l's repo, most likely first, with no

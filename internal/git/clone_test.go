@@ -71,6 +71,21 @@ func TestCloneGitLab(t *testing.T) {
 	}
 }
 
+// glab takes a forge's port in GITLAB_HOST; gh takes none in a repo name.
+func TestCloneOnItsOwnPort(t *testing.T) {
+	glab := gittest.FakeToolCalls(t, "glab", gittest.Rule{Has: "repo clone", Exit: 1})
+	gh := gittest.FakeToolCalls(t, "gh", gittest.Rule{Has: "repo clone", Exit: 1})
+	dir := filepath.Join(t.TempDir(), "api")
+	Clone(context.Background(), "gitlab", "gitlab.example.org:8443", "team/api", dir, nil, io.Discard, io.Discard)
+	Clone(context.Background(), "github", "github.example.org:8443", "acme/api", dir, nil, io.Discard, io.Discard)
+	if c := glab(); len(c) != 1 || c[0].GitlabHost != "gitlab.example.org:8443" || !c[0].Has("team/api") {
+		t.Errorf("glab calls %+v", c)
+	}
+	if c := gh(); len(c) != 1 || !c[0].Has("github.example.org/acme/api") {
+		t.Errorf("gh calls %+v", c)
+	}
+}
+
 func TestCloneFails(t *testing.T) {
 	gittest.FakeTool(t, "gh", gittest.Rule{Has: "repo clone", Err: "GraphQL: Could not resolve to a Repository\n", Exit: 1})
 	dir := filepath.Join(t.TempDir(), "billing")
