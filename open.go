@@ -178,6 +178,7 @@ func (d *openDesk) openPR(root string, n int, rep openReply) (openReply, error) 
 	name := filepath.Base(f.Path)
 	q := openRequest{Root: f.Path, PR: n}
 	if d.rl.has(f.Path) {
+		d.fl.refresh(f.Path)
 		rep.Said = fmt.Sprintf("Opened #%d in %s.", n, name)
 	} else {
 		if _, err := d.fl.add([]savedFolder{f}); err != nil {

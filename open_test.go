@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
+	"time"
 )
 
 func TestDeliver(t *testing.T) {
@@ -135,6 +136,48 @@ func TestDeskFolders(t *testing.T) {
 	if _, err := d.open(openAsk{Folders: []string{filepath.Join(notes, "nope")}}); err == nil {
 		t.Fatal("a folder that is gone was added")
 	}
+}
+
+// A saved folder that was gone and is back opens at once, though its last count found it missing.
+func TestDeskOpensAFolderThatIsBack(t *testing.T) {
+	isolatedGit(t)
+	useConfigDir(t)
+	dir := filepath.Join(realPath(t.TempDir()), "notes")
+	os.Mkdir(dir, 0o755)
+	d, h := testDesk(t)
+	openWindow(t, h)
+	go d.fl.watch(h)
+	saved := func() SavedSource {
+		for _, r := range shown(t, h).Rows {
+			if r.Root == dir {
+				return *r.Saved
+			}
+		}
+		t.Fatal("no row")
+		return SavedSource{}
+	}
+	await := func(what string, ok func(SavedSource) bool) {
+		t.Helper()
+		for end := time.Now().Add(3 * time.Second); !ok(saved()); time.Sleep(10 * time.Millisecond) {
+			if time.Now().After(end) {
+				t.Fatalf("%s: row %+v", what, saved())
+			}
+		}
+	}
+	d.fl.add([]savedFolder{{Path: dir}})
+	await("counted", func(s SavedSource) bool { return s.Counted })
+	os.Remove(dir)
+	d.fl.refresh(dir)
+	await("missing", func(s SavedSource) bool { return s.Missing })
+
+	os.Mkdir(dir, 0o755)
+	if _, err := d.open(openAsk{Folders: []string{dir}}); err != nil {
+		t.Fatal(err)
+	}
+	if s := saved(); s.Missing {
+		t.Fatalf("the window gets the request with the row missing: %+v", s)
+	}
+	await("counted again", func(s SavedSource) bool { return s.Counted && !s.Missing })
 }
 
 func TestDeskListAndPlain(t *testing.T) {
