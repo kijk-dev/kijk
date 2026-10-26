@@ -10,17 +10,6 @@ import (
 	"github.com/kijk-dev/kijk/internal/viewer"
 )
 
-type Row struct {
-	Root         string     `json:"root"`
-	Repo         string     `json:"repo"`
-	Branch       string     `json:"branch"`
-	Cwd          string     `json:"cwd"` // newest session's working folder, relative to Root with slashes
-	Names        []string   `json:"names"`
-	Agents       []RowAgent `json:"agents"`       // one per name, in the same order
-	Busy         bool       `json:"busy"`         // any agent is Busy
-	LastActivity int64      `json:"lastActivity"` // unix ms
-}
-
 // RowAgent is the agent type of one name in a row, such as "claude", and whether it is Busy.
 type RowAgent struct {
 	Type string `json:"type"`
@@ -105,7 +94,8 @@ func groupRows(sessions []session) []Row {
 		if !ok {
 			i = len(rows)
 			index[s.Root] = i
-			rows = append(rows, Row{Root: s.Root, Repo: filepath.Base(s.Root), Branch: s.Branch, Cwd: relCwd(s.Root, s.Cwd), LastActivity: s.Last.UnixMilli()})
+			rows = append(rows, Row{Root: s.Root, Repo: filepath.Base(s.Root), Branch: s.Branch,
+				AgentSource: &AgentSource{Cwd: relCwd(s.Root, s.Cwd), LastActivity: s.Last.UnixMilli()}})
 		}
 		rows[i].Names = append(rows[i].Names, s.Name)
 		rows[i].Agents = append(rows[i].Agents, RowAgent{s.Agent, s.Busy})

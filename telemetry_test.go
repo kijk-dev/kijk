@@ -223,8 +223,8 @@ func TestAgentCopies(t *testing.T) {
 
 func TestAgentCountCountsSessions(t *testing.T) {
 	rows := []Row{
-		{Names: []string{"a", "b", "c"}, Agents: []RowAgent{{Type: "claude"}, {Type: "codex"}, {Type: "claude"}}},
-		{Names: []string{"d"}, Agents: []RowAgent{{Type: "codex", Busy: true}}},
+		{AgentSource: &AgentSource{Names: []string{"a", "b", "c"}, Agents: []RowAgent{{Type: "claude"}, {Type: "codex"}, {Type: "claude"}}}},
+		{AgentSource: &AgentSource{Names: []string{"d"}, Agents: []RowAgent{{Type: "codex", Busy: true}}}},
 	}
 	if n := agentCount(rows); n != 4 {
 		t.Fatalf("agentCount = %d, want 4", n)

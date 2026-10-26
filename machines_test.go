@@ -118,8 +118,8 @@ func TestRemoteErrors(t *testing.T) {
 func TestMachineViewsAndCounts(t *testing.T) {
 	mm := newMachineManager("0.9.0")
 	mm.list = []*remoteMachine{
-		{name: "azvm", state: stateConnected, rows: []Row{{Names: []string{"a", "b"}}}},
-		{name: "old", state: stateUnreachable, rows: []Row{{Names: []string{"c"}}}},
+		{name: "azvm", state: stateConnected, rows: []Row{{AgentSource: &AgentSource{Names: []string{"a", "b"}}}}},
+		{name: "old", state: stateUnreachable, rows: []Row{{AgentSource: &AgentSource{Names: []string{"c"}}}}},
 		{name: "off", state: stateDisabled},
 	}
 	v := mm.views()
