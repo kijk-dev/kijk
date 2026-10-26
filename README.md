@@ -167,6 +167,10 @@ icon counts the pull requests that wait for your review.
   `~/.cache/kijk/clones` on Linux, `%LocalAppData%\kijk\clones` on Windows. The terminal shows
   the progress. kijk adds the clone to the Folders list and opens the pull request. The next link
   to the same repo uses this clone. Ctrl+C stops the clone and leaves nothing behind.
+- kijk clones only from github.com, gitlab.com, or a host that `gh` or `glab` is logged in to. A
+  link can name any host, and the tool sends your login to the host it clones from. For another
+  host, log in first, for example with `gh auth login --hostname code.acme.dev`, or clone the
+  repo yourself.
 - kijk asks GitHub or GitLab again when you open a pull request, when the window gets focus,
   every 2 minutes while the PRs tab shows, and when you press the refresh key.
 
@@ -394,7 +398,7 @@ If kijk already runs, the command opens the window. When the window is open alre
 | `-no-open` | Does not open a window. |
 | `-no-update-check` | Does not look for a new version. |
 | `kijk <folder>…` | Adds the folders to the Folders list and opens the last one in the kijk window. |
-| `kijk <PR link>` | Opens the pull request in the kijk window, in a clone of its repo. With no clone on this machine, clones the repo with `gh` or `glab` first. |
+| `kijk <PR link>` | Opens the pull request in the kijk window, in a clone of its repo. With no clone on this machine, clones the repo with `gh` or `glab` first, from github.com, gitlab.com or a host the tool is logged in to. |
 | `kijk folders` | Shows the Folders list in the kijk window. |
 | `kijk version` | Shows the version. |
 | `kijk update` | Installs the newest version. |

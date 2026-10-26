@@ -2,9 +2,11 @@
 package gittest
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -49,4 +51,22 @@ func Write(t *testing.T, path, content string) {
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// Logins has gh and glab logged in to these hosts only.
+func Logins(t *testing.T, gh, glab []string) {
+	t.Helper()
+	ghDir, glabDir := t.TempDir(), t.TempDir()
+	t.Setenv("GH_CONFIG_DIR", ghDir)
+	t.Setenv("GLAB_CONFIG_DIR", glabDir)
+	var ghHosts, glabHosts strings.Builder
+	for _, h := range gh {
+		fmt.Fprintf(&ghHosts, "%s:\n    user: sanne\n", h)
+	}
+	glabHosts.WriteString("hosts:\n")
+	for _, h := range glab {
+		fmt.Fprintf(&glabHosts, "    %s:\n        token: x\n", h)
+	}
+	Write(t, filepath.Join(ghDir, "hosts.yml"), ghHosts.String())
+	Write(t, filepath.Join(glabDir, "config.yml"), glabHosts.String())
 }

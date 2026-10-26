@@ -2,6 +2,7 @@ package git
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -13,11 +14,34 @@ import (
 	"time"
 )
 
+// ErrUnknownHost refuses a clone from a host that CanClone does not allow.
+var ErrUnknownHost = errors.New("kijk clones only from github.com, gitlab.com or a host gh or glab is logged in to")
+
+// CanClone says whether kijk may clone from host with the tool of kind: from github.com, gitlab.com,
+// or a host the tool is logged in to. A link can name any host, and gh and glab send the user's
+// token to the host they clone from. host may name a port, which only glab reaches.
+func CanClone(kind, host string) bool {
+	switch kind {
+	case "github":
+		name, _, err := net.SplitHostPort(host)
+		if err != nil {
+			name = host
+		}
+		return name == "github.com" || loggedInTo(name, ghHostFiles())
+	case "gitlab":
+		return host == "gitlab.com" || loggedInTo(host, glabHostFiles())
+	}
+	return false
+}
+
 // Clone clones host/path into dir with gh or glab, with the user's own login and a normal
 // checkout; the tool talks to the terminal. host may name a port, which only glab takes. It clones
 // into a part folder and renames that, so a stopped clone never leaves a half repo at dir. When dir
 // holds a clone already, it does nothing.
 func Clone(ctx context.Context, kind, host, path, dir string, in io.Reader, out, errOut io.Writer) error {
+	if !CanClone(kind, host) {
+		return ErrUnknownHost
+	}
 	if isClone(dir) {
 		return nil
 	}

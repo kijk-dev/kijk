@@ -66,7 +66,7 @@ func TestDeliverClones(t *testing.T) {
 	run(t, src, "commit", "-qm", "Start")
 	billing := &prLink{Kind: "github", Host: "github.com", Path: "acme/billing", Number: 12}
 	ledger := &prLink{Kind: "github", Host: "github.com", Path: "acme/ledger", Number: 7}
-	api := &prLink{Kind: "gitlab", Host: "gitlab.example.org", Path: "team/api", Number: 3}
+	api := &prLink{Kind: "gitlab", Host: "gitlab.com", Path: "team/api", Number: 3}
 	dir := cloneDir(cache, *billing)
 	searched := func(l *prLink) string {
 		return "No clone of " + l.Host + "/" + l.Path + " in 3 folders on this machine.\n"
@@ -85,7 +85,7 @@ func TestDeliverClones(t *testing.T) {
 		{"the clone fails", ledger, []gittest.Rule{{Has: "repo clone", Err: "GraphQL: Could not resolve to a Repository\n", Exit: 1}},
 			1, searched(ledger) + cloning(ledger), "GraphQL: Could not resolve to a Repository\nkijk: cannot clone github.com/acme/ledger: gh repo clone: exit status 1. Clone it, then run kijk <folder>.\n", nil},
 		{"no glab", api, nil,
-			1, searched(api), "kijk: glab is not installed, so kijk cannot clone gitlab.example.org/team/api. Clone it, then run this command again.\n", nil},
+			1, searched(api), "kijk: glab is not installed, so kijk cannot clone gitlab.com/team/api. Clone it, then run this command again.\n", nil},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			if c.gh != nil {
@@ -121,9 +121,33 @@ func TestDeliverClones(t *testing.T) {
 	}
 }
 
+// A link can name any host, and gh and glab send the user's token to it, so kijk does not start them
+// for a host they are not logged in to.
+func TestCloneRefusesAnUnknownHost(t *testing.T) {
+	useCacheDir(t)
+	gittest.Logins(t, []string{"github.example.org"}, []string{"gitlab.example.org"})
+	gh := gittest.FakeToolCalls(t, "gh", gittest.Rule{Has: "repo clone", Exit: 1})
+	glab := gittest.FakeToolCalls(t, "glab", gittest.Rule{Has: "repo clone", Exit: 1})
+	for link, said := range map[string]string{
+		"https://evil.example/acme/billing/pull/12":                   "kijk: kijk clones only from github.com or a host gh is logged in to. Log in with gh auth login --hostname evil.example, or clone it yourself and run kijk <folder>.\n",
+		"https://evil.example:8443/acme/billing/pull/12":              "kijk: kijk clones only from github.com or a host gh is logged in to. Log in with gh auth login --hostname evil.example, or clone it yourself and run kijk <folder>.\n",
+		"https://gitlab.example.org:8443/team/api/-/merge_requests/3": "kijk: kijk clones only from gitlab.com or a host glab is logged in to. Log in with glab auth login --hostname gitlab.example.org:8443, or clone it yourself and run kijk <folder>.\n",
+	} {
+		l, _ := parsePRLink(link)
+		var errOut bytes.Buffer
+		if dir, code := clone(l, terminal{nil, io.Discard, &errOut}); dir != "" || code != 1 || errOut.String() != said {
+			t.Errorf("%s: %q, exit %d, said %q", link, dir, code, errOut.String())
+		}
+	}
+	if c := append(gh(), glab()...); len(c) > 0 {
+		t.Errorf("started the tool: %+v", c)
+	}
+}
+
 // A forge on its own port: glab reaches that port, and the clone's folder names the host alone.
 func TestCloneOnItsOwnPort(t *testing.T) {
 	useCacheDir(t)
+	gittest.Logins(t, nil, []string{"gitlab.example.org:8443"})
 	cache, _ := cacheDir()
 	l, _ := parsePRLink("https://gitlab.example.org:8443/team/api/-/merge_requests/3")
 	calls := gittest.FakeToolCalls(t, "glab", gittest.Rule{Has: "repo clone", Exit: 1})

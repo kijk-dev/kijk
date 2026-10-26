@@ -35,6 +35,7 @@ func parts(dir string) []string {
 
 func TestClone(t *testing.T) {
 	src, head := cloneSource(t)
+	gittest.Logins(t, nil, nil)
 	calls := gittest.FakeToolCalls(t, "gh", gittest.Rule{Has: "repo clone", Clone: src})
 	dir := filepath.Join(t.TempDir(), "github.com", "acme", "billing")
 	if err := Clone(context.Background(), "github", "github.com", "acme/billing", dir, nil, io.Discard, io.Discard); err != nil {
@@ -57,6 +58,7 @@ func TestClone(t *testing.T) {
 
 func TestCloneGitLab(t *testing.T) {
 	src, head := cloneSource(t)
+	gittest.Logins(t, nil, []string{"gitlab.example.org"})
 	calls := gittest.FakeToolCalls(t, "glab", gittest.Rule{Has: "repo clone", Clone: src})
 	dir := filepath.Join(t.TempDir(), "api")
 	if err := Clone(context.Background(), "gitlab", "gitlab.example.org", "team/api", dir, nil, io.Discard, io.Discard); err != nil {
@@ -73,6 +75,7 @@ func TestCloneGitLab(t *testing.T) {
 
 // glab takes a forge's port in GITLAB_HOST; gh takes none in a repo name.
 func TestCloneOnItsOwnPort(t *testing.T) {
+	gittest.Logins(t, []string{"github.example.org"}, []string{"gitlab.example.org:8443"})
 	glab := gittest.FakeToolCalls(t, "glab", gittest.Rule{Has: "repo clone", Exit: 1})
 	gh := gittest.FakeToolCalls(t, "gh", gittest.Rule{Has: "repo clone", Exit: 1})
 	dir := filepath.Join(t.TempDir(), "api")
@@ -125,6 +128,7 @@ func TestCloneStopped(t *testing.T) {
 // clones keeps its part folder, and so does another repo, such as acme/billing.part-5.
 func TestCloneSweepsOldParts(t *testing.T) {
 	src, _ := cloneSource(t)
+	gittest.Logins(t, nil, nil)
 	gittest.FakeTool(t, "gh", gittest.Rule{Has: "repo clone", Clone: src})
 	exited := func() int {
 		cmd := exec.Command(os.Args[0], "-test.run=^$")
@@ -154,6 +158,39 @@ func TestCloneSweepsOldParts(t *testing.T) {
 	}
 	if _, err := os.Stat(crashed); err == nil {
 		t.Error("kept the crashed run's part folder")
+	}
+}
+
+// A link can name any host, and gh and glab send the user's token to it. kijk clones only from
+// github.com, gitlab.com, or a host the tool is logged in to, with its port for glab.
+func TestCloneOnlyFromAKnownHost(t *testing.T) {
+	gittest.Isolate(t)
+	gittest.Logins(t, []string{"github.example.org"}, []string{"gitlab.example.org:8443", "code.example.org"})
+	gh := gittest.FakeToolCalls(t, "gh", gittest.Rule{Has: "repo clone", Exit: 1})
+	glab := gittest.FakeToolCalls(t, "glab", gittest.Rule{Has: "repo clone", Exit: 1})
+	for _, c := range []struct {
+		kind, host string
+		ok         bool
+	}{
+		{"github", "github.com", true},
+		{"github", "github.example.org", true},
+		{"github", "github.example.org:8443", true},
+		{"github", "evil.example", false},
+		{"github", "github.com.evil.example", false},
+		{"github", "gitlab.com", false},
+		{"gitlab", "gitlab.com", true},
+		{"gitlab", "gitlab.example.org:8443", true},
+		{"gitlab", "gitlab.example.org", false},
+		{"gitlab", "code.example.org:8443", false},
+		{"gitlab", "gitlab.com.evil.example", false},
+		{"gitlab", "github.com", false},
+	} {
+		before := len(gh()) + len(glab())
+		err := Clone(context.Background(), c.kind, c.host, "acme/api", filepath.Join(t.TempDir(), "api"), nil, io.Discard, io.Discard)
+		ran := len(gh())+len(glab()) > before
+		if c.ok != CanClone(c.kind, c.host) || c.ok != ran || !c.ok && !errors.Is(err, ErrUnknownHost) {
+			t.Errorf("%s from %s: CanClone %v, ran %v, error %v; want %v", c.kind, c.host, CanClone(c.kind, c.host), ran, err, c.ok)
+		}
 	}
 }
 

@@ -105,6 +105,14 @@ func deliver(open opener, ask openAsk, window func(seq int), t terminal) int {
 // is not 0, clone said why, or the user pressed Ctrl+C, or kijk was stopped.
 func clone(l prLink, t terminal) (dir string, code int) {
 	repo, tool := l.Host+"/"+l.Path, git.Tool(l.Kind)
+	if !git.CanClone(l.Kind, l.server()) {
+		forge, host := "github.com", l.Host
+		if l.Kind == "gitlab" {
+			forge, host = "gitlab.com", l.server()
+		}
+		fmt.Fprintf(t.err, "kijk: kijk clones only from %s or a host %s is logged in to. Log in with %s auth login --hostname %s, or clone it yourself and run kijk <folder>.\n", forge, tool, tool, host)
+		return "", 1
+	}
 	if _, err := exec.LookPath(tool); err != nil {
 		fmt.Fprintf(t.err, "kijk: %s is not installed, so kijk cannot clone %s. Clone it, then run this command again.\n", tool, repo)
 		return "", 1

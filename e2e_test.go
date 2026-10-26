@@ -1532,6 +1532,17 @@ func TestBrowser(t *testing.T) {
 		if n := strings.Count(strings.Join(forge.calls(), "\n"), " repo clone "); n != 1 {
 			w.fail("%d clones, want 1", n)
 		}
+
+		// gh would send the user's login to a host it is not logged in to, so kijk does not run it.
+		cmd := exec.Command(exe, "-port", fmt.Sprint(k.port), "-no-open", "https://code.example.org/acme/billing/pull/12")
+		cmd.Dir, cmd.Env = code, append(os.Environ(), k.env...)
+		out, _ := cmd.CombinedOutput()
+		if cmd.ProcessState.ExitCode() != 1 || !strings.HasSuffix(string(out), "kijk: kijk clones only from github.com or a host gh is logged in to. Log in with gh auth login --hostname code.example.org, or clone it yourself and run kijk <folder>.\n") {
+			w.fail("a link to another host: %s", out)
+		}
+		if n := strings.Count(strings.Join(forge.calls(), "\n"), " repo clone "); n != 1 {
+			w.fail("%d clones after a link to another host, want 1", n)
+		}
 		w.noErrors()
 	})
 
