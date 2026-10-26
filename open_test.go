@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/kijk-dev/kijk/internal/gittest"
 )
@@ -120,13 +121,18 @@ func TestDeliverClones(t *testing.T) {
 	}
 }
 
-// A kijk from before /api/open says what to do.
+// A kijk from before /api/open says what to do, but still shows its window to a plain kijk.
 func TestOpenOnAnOldKijk(t *testing.T) {
 	srv := httptest.NewServer(http.NotFoundHandler())
 	defer srv.Close()
-	_, err := runningOpener(srv.Listener.Addr().(*net.TCPAddr).Port, "t")(openAsk{})
-	if err == nil || err.Error() != "the running kijk is too old for this. Quit it, then try again" {
-		t.Fatalf("error %v", err)
+	open := runningOpener(srv.Listener.Addr().(*net.TCPAddr).Port, "t")
+	var errOut bytes.Buffer
+	if code := deliver(open, openAsk{Folders: []string{"/code/api"}}, func(int) { t.Error("a folder opened a window") }, terminal{nil, io.Discard, &errOut}); code != 1 || errOut.String() != "kijk: the running kijk is too old for this. Quit it, then try again\n" {
+		t.Errorf("a folder: exit %d, err %q", code, errOut.String())
+	}
+	var opened []int
+	if code := deliver(open, openAsk{}, func(seq int) { opened = append(opened, seq) }, terminal{nil, io.Discard, io.Discard}); code != 0 || !slices.Equal(opened, []int{0}) {
+		t.Errorf("plain kijk: exit %d, windows %v", code, opened)
 	}
 }
 
@@ -197,6 +203,48 @@ func TestDeskFolders(t *testing.T) {
 	if _, err := d.open(openAsk{Folders: []string{filepath.Join(notes, "nope")}}); err == nil {
 		t.Fatal("a folder that is gone was added")
 	}
+}
+
+// A saved folder that was gone and is back opens at once, though its last count found it missing.
+func TestDeskOpensAFolderThatIsBack(t *testing.T) {
+	isolatedGit(t)
+	useConfigDir(t)
+	dir := filepath.Join(realPath(t.TempDir()), "notes")
+	os.Mkdir(dir, 0o755)
+	d, h := testDesk(t)
+	openWindow(t, h)
+	go d.fl.watch(h)
+	saved := func() SavedSource {
+		for _, r := range shown(t, h).Rows {
+			if r.Root == dir {
+				return *r.Saved
+			}
+		}
+		t.Fatal("no row")
+		return SavedSource{}
+	}
+	await := func(what string, ok func(SavedSource) bool) {
+		t.Helper()
+		for end := time.Now().Add(3 * time.Second); !ok(saved()); time.Sleep(10 * time.Millisecond) {
+			if time.Now().After(end) {
+				t.Fatalf("%s: row %+v", what, saved())
+			}
+		}
+	}
+	d.fl.add([]savedFolder{{Path: dir}})
+	await("counted", func(s SavedSource) bool { return s.Counted })
+	os.Remove(dir)
+	d.fl.refresh(dir)
+	await("missing", func(s SavedSource) bool { return s.Missing })
+
+	os.Mkdir(dir, 0o755)
+	if _, err := d.open(openAsk{Folders: []string{dir}}); err != nil {
+		t.Fatal(err)
+	}
+	if s := saved(); s.Missing {
+		t.Fatalf("the window gets the request with the row missing: %+v", s)
+	}
+	await("counted again", func(s SavedSource) bool { return s.Counted && !s.Missing })
 }
 
 func TestDeskListAndPlain(t *testing.T) {

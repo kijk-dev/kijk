@@ -26,6 +26,11 @@ type openAsk struct {
 	List    string   `json:"list,omitempty"`    // "folders" for kijk folders
 }
 
+// plain asks for nothing but the window.
+func (a openAsk) plain() bool {
+	return len(a.Folders) == 0 && a.PR == nil && a.List == ""
+}
+
 // openReply says what happened, in the sentence the terminal prints.
 type openReply struct {
 	Said    string `json:"said,omitempty"`
@@ -42,6 +47,10 @@ type opener func(openAsk) (openReply, error)
 func runningOpener(port int, token string) opener {
 	return func(a openAsk) (rep openReply, err error) {
 		err = callRunning(port, token, "POST", "/api/open", a, &rep)
+		if errors.Is(err, errTooOld) && a.plain() {
+			// Right after kijk update the old kijk still runs, and a plain kijk only needs its window.
+			return openReply{}, nil
+		}
 		return rep, err
 	}
 }
@@ -219,6 +228,7 @@ func (d *openDesk) openPR(root string, n int, found bool, rep openReply) (openRe
 	has := d.rl.has(f.Path)
 	switch {
 	case has:
+		d.fl.refresh(f.Path)
 		rep.Said = fmt.Sprintf("Opened #%d in %s.", n, name)
 	case found:
 		rep.Said = fmt.Sprintf("Found %s at %s. Added it and opened #%d.", name, tilde(f.Path), n)

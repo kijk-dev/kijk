@@ -221,6 +221,8 @@ func (l *folderList) wakeLocked() {
 	}
 }
 
+// add adds fs, which the caller just checked, so they are counted again at once: an old count may
+// have found one missing.
 func (l *folderList) add(fs []savedFolder) (added []bool, err error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -228,6 +230,7 @@ func (l *folderList) add(fs []savedFolder) (added []bool, err error) {
 		var a bool
 		l.list, a = addFolder(l.list, f)
 		added = append(added, a)
+		l.askLocked(f.Path)
 	}
 	l.changedLocked()
 	return added, l.saveErr
@@ -287,12 +290,17 @@ func (l *folderList) refresh(root string) bool {
 	if indexOf(l.list, root) < 0 {
 		return false
 	}
+	l.askLocked(root)
+	l.wakeLocked()
+	return true
+}
+
+// askLocked has watch count root now. l.mu is held.
+func (l *folderList) askLocked(root string) {
 	if l.asked == nil {
 		l.asked = map[string]bool{}
 	}
 	l.asked[root] = true
-	l.wakeLocked()
-	return true
 }
 
 // snapshot gives the list, and takes the folders asked for since the last call.

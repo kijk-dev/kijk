@@ -151,6 +151,10 @@ func (r *rail) setKijk(k kijkState) {
 func (r *rail) request(q openRequest) int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.facts[q.Root].missing {
+		// The command just found Root, and the window does not open a missing row.
+		delete(r.facts, q.Root)
+	}
 	q.Seq = r.open.Seq + 1
 	r.open = q
 	r.changedLocked()
