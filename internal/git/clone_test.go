@@ -1,0 +1,171 @@
+package git
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"slices"
+	"testing"
+	"time"
+
+	"github.com/kijk-dev/kijk/internal/gittest"
+)
+
+// cloneSource is a repo with one commit, for the fake gh and glab to clone.
+func cloneSource(t *testing.T) (repo, head string) {
+	t.Helper()
+	gittest.Isolate(t)
+	repo = gittest.Repo(t)
+	gittest.Write(t, filepath.Join(repo, "README.md"), "# Billing\n")
+	gittest.Run(t, repo, "add", ".")
+	gittest.Run(t, repo, "commit", "-qm", "Start")
+	return repo, rev(t, repo, "HEAD")
+}
+
+// parts are the part folders next to dir.
+func parts(dir string) []string {
+	found, _ := filepath.Glob(dir + ".part-*")
+	return found
+}
+
+func TestClone(t *testing.T) {
+	src, head := cloneSource(t)
+	calls := gittest.FakeToolCalls(t, "gh", gittest.Rule{Has: "repo clone", Clone: src})
+	dir := filepath.Join(t.TempDir(), "github.com", "acme", "billing")
+	if err := Clone(context.Background(), "github", "github.com", "acme/billing", dir, nil, io.Discard, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"repo", "clone", "github.com/acme/billing", fmt.Sprintf("%s.part-%d", dir, os.Getpid())}
+	if c := calls(); len(c) != 1 || !slices.Equal(c[0].Args, want) {
+		t.Fatalf("calls %+v, want one with %q", c, want)
+	}
+	if got := rev(t, dir, "HEAD"); got != head || len(parts(dir)) > 0 {
+		t.Fatalf("clone at %s, parts %v", got, parts(dir))
+	}
+	if _, err := os.Stat(filepath.Join(dir, "README.md")); err != nil {
+		t.Fatal("no checkout:", err)
+	}
+	if err := Clone(context.Background(), "github", "github.com", "acme/billing", dir, nil, io.Discard, io.Discard); err != nil || len(calls()) != 1 {
+		t.Fatalf("a second clone: %v, %d calls", err, len(calls()))
+	}
+}
+
+func TestCloneGitLab(t *testing.T) {
+	src, head := cloneSource(t)
+	calls := gittest.FakeToolCalls(t, "glab", gittest.Rule{Has: "repo clone", Clone: src})
+	dir := filepath.Join(t.TempDir(), "api")
+	if err := Clone(context.Background(), "gitlab", "gitlab.example.org", "team/api", dir, nil, io.Discard, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	c := calls()
+	if len(c) != 1 || !c[0].Has("repo", "clone", "team/api") || c[0].GitlabHost != "gitlab.example.org" {
+		t.Fatalf("calls %+v", c)
+	}
+	if rev(t, dir, "HEAD") != head {
+		t.Fatal("no clone")
+	}
+}
+
+func TestCloneFails(t *testing.T) {
+	gittest.FakeTool(t, "gh", gittest.Rule{Has: "repo clone", Err: "GraphQL: Could not resolve to a Repository\n", Exit: 1})
+	dir := filepath.Join(t.TempDir(), "billing")
+	var errOut bytes.Buffer
+	err := Clone(context.Background(), "github", "github.com", "acme/billing", dir, nil, io.Discard, &errOut)
+	if err == nil || err.Error() != "gh repo clone: exit status 1" || errOut.String() != "GraphQL: Could not resolve to a Repository\n" {
+		t.Fatalf("error %v, tool said %q", err, errOut.String())
+	}
+	if _, err := os.Stat(dir); err == nil || len(parts(dir)) > 0 {
+		t.Fatalf("left %s or %v", dir, parts(dir))
+	}
+}
+
+// Ctrl+C stops the tool and removes what it cloned so far.
+func TestCloneStopped(t *testing.T) {
+	src, _ := cloneSource(t)
+	gittest.FakeTool(t, "gh", gittest.Rule{Has: "repo clone", Clone: src, Wait: time.Minute})
+	dir := filepath.Join(t.TempDir(), "billing")
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		for len(parts(dir)) == 0 || !isClone(parts(dir)[0]) {
+			time.Sleep(20 * time.Millisecond)
+		}
+		cancel()
+	}()
+	start := time.Now()
+	err := Clone(ctx, "github", "github.com", "acme/billing", dir, nil, io.Discard, io.Discard)
+	if !errors.Is(err, context.Canceled) || time.Since(start) > 30*time.Second {
+		t.Fatalf("error %v after %s", err, time.Since(start))
+	}
+	if _, err := os.Stat(dir); err == nil || len(parts(dir)) > 0 {
+		t.Fatalf("left %s or %v", dir, parts(dir))
+	}
+}
+
+// A part folder older than an hour is a crashed run's; a newer one may still be cloning.
+func TestCloneSweepsOldParts(t *testing.T) {
+	src, _ := cloneSource(t)
+	gittest.FakeTool(t, "gh", gittest.Rule{Has: "repo clone", Clone: src})
+	dir := filepath.Join(t.TempDir(), "billing")
+	old, live, other := dir+".part-111", dir+".part-222", dir+".part-old"
+	for _, p := range []string{old, live, other} {
+		gittest.Write(t, filepath.Join(p, ".git", "HEAD"), "ref: refs/heads/main\n")
+	}
+	hourAgo := time.Now().Add(-61 * time.Minute)
+	os.Chtimes(old, hourAgo, hourAgo)
+	os.Chtimes(other, hourAgo, hourAgo)
+	if err := Clone(context.Background(), "github", "github.com", "acme/billing", dir, nil, io.Discard, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if got := parts(dir); !slices.Equal(got, []string{live, other}) {
+		t.Fatalf("parts left %v, want %v", got, []string{live, other})
+	}
+}
+
+// Two kijk commands for the same link, at once: both clone, one rename wins, and both use its clone.
+func TestCloneTwoRunsAtOnce(t *testing.T) {
+	src, head := cloneSource(t)
+	calls := gittest.FakeToolCalls(t, "gh", gittest.Rule{Has: "repo clone", Clone: src, Wait: time.Second})
+	dir := filepath.Join(t.TempDir(), "github.com", "acme", "billing")
+	var runs []*exec.Cmd
+	var outs []*bytes.Buffer
+	for range 2 {
+		cmd := exec.Command(os.Args[0], "-test.run=^TestCloneRun$")
+		cmd.Env = append(os.Environ(), "KIJK_TEST_CLONE_DIR="+dir)
+		out := &bytes.Buffer{}
+		cmd.Stdout, cmd.Stderr = out, out
+		if err := cmd.Start(); err != nil {
+			t.Fatal(err)
+		}
+		runs, outs = append(runs, cmd), append(outs, out)
+	}
+	for i, cmd := range runs {
+		if err := cmd.Wait(); err != nil {
+			t.Fatalf("run %d: %v\n%s", i, err, outs[i])
+		}
+	}
+	if n := len(calls()); n != 2 {
+		t.Fatalf("%d clones, want both runs to clone", n)
+	}
+	if rev(t, dir, "HEAD") != head || len(parts(dir)) > 0 {
+		t.Fatalf("no clone at %s, or parts left: %v", dir, parts(dir))
+	}
+}
+
+// TestCloneRun is one kijk command's clone, in a process of its own, for TestCloneTwoRunsAtOnce.
+func TestCloneRun(t *testing.T) {
+	dir := os.Getenv("KIJK_TEST_CLONE_DIR")
+	if dir == "" {
+		t.Skip("runs as a process of TestCloneTwoRunsAtOnce")
+	}
+	if err := Clone(context.Background(), "github", "github.com", "acme/billing", dir, nil, io.Discard, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if !isClone(dir) {
+		t.Fatal("no clone at", dir)
+	}
+}
