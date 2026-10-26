@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/kijk-dev/kijk/internal/git"
 )
@@ -99,7 +100,7 @@ func deliver(open opener, ask openAsk, window func(seq int), t terminal) int {
 }
 
 // clone clones l's repo into kijk's cache folder with gh or glab, and gives the exit code: when it
-// is not 0, clone said why, or the user pressed Ctrl+C.
+// is not 0, clone said why, or the user pressed Ctrl+C, or kijk was stopped.
 func clone(l prLink, t terminal) (dir string, code int) {
 	repo, tool := l.Host+"/"+l.Path, git.Tool(l.Kind)
 	if _, err := exec.LookPath(tool); err != nil {
@@ -110,7 +111,7 @@ func clone(l prLink, t terminal) (dir string, code int) {
 	if err == nil {
 		dir = cloneDir(cache, l)
 		fmt.Fprintf(t.out, "Cloning it with %s into %s …\n", tool, tilde(dir))
-		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		err = git.Clone(ctx, l.Kind, l.server(), l.Path, dir, t.in, t.out, t.err)
 		stop()
 	}

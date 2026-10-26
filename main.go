@@ -159,13 +159,15 @@ func main() {
 	srv := newServer(token, a.port, web, h, rts, u, mm, d)
 	served := make(chan error, 1)
 	go func() { served <- http.Serve(ln, srv) }()
-	// A clone in deliver takes Ctrl+C for itself, to clean up before kijk exits.
+	// A SIGTERM waits in stop until deliver returns, as a clone in deliver cleans up first. Ctrl+C
+	// is the clone's alone.
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, syscall.SIGTERM)
 	if code := deliver(d.open, ask, windows(a, token), term); code != 0 {
 		remove()
 		os.Exit(code)
 	}
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+	signal.Notify(stop, os.Interrupt)
 	go func() {
 		<-stop
 		remove()
