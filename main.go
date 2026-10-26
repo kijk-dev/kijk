@@ -162,20 +162,18 @@ func main() {
 	}
 	h := newHub()
 	rts := &viewer.Roots{}
+	rl := newRail(h, rts)
 	var mm *machineManager
 	if runtime.GOOS != "windows" {
 		mm = newMachineManager(kijkVersion)
 	}
-	fl := newFolderList(fp, rts)
-	if fpErr != nil {
-		fl.readErr = fmt.Errorf("cannot find the folders list: %w", fpErr)
-	}
+	fl := newFolderList(fp, fpErr, rl)
 	if fl.readErr != nil {
 		fmt.Fprintln(os.Stderr, "kijk:", fl.readErr)
 	}
 	addedNote := ""
 	if len(adds) > 0 {
-		added, err := fl.add(adds, a.pr.Number)
+		added, err := fl.add(adds)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "kijk:", err)
 			remove()
@@ -183,8 +181,8 @@ func main() {
 		}
 		addedNote = addedText(adds, added, false)
 	}
-	go fl.watch(h, u)
-	go watchSessions(newScanner(agents.Types, agents.NewEnv(kijkVersion)), h, rts, u, tel, mm, fl)
+	go fl.watch(h)
+	go watchSessions(newScanner(agents.Types, agents.NewEnv(kijkVersion)), h, rl, u, tel, mm, fl)
 
 	web, _ := fs.Sub(webFiles, "web")
 	url := uiURL(a.port, token)
@@ -202,7 +200,7 @@ func main() {
 	if !a.noOpen {
 		openUI(url)
 	}
-	log.Fatal(http.Serve(ln, newServer(token, a.port, web, h, rts, u, mm, fl)))
+	log.Fatal(http.Serve(ln, newServer(token, a.port, web, h, rts, u, mm, &openDesk{h, rl, fl})))
 }
 
 // cliArgs is what kijk was asked to do, when it is not one of the commands that exit at once.
@@ -379,27 +377,13 @@ func takeRestartEnv() (token string, restarted bool) {
 	return token, restarted
 }
 
-// sessionMessage is one message on /api/events. noneInstalled says that the tool of no agent type
-// is on this machine. Empty fields are left out.
-func sessionMessage(rows []Row, errs []typeError, noneInstalled bool, k kijkState, machines []machineView) []byte {
-	b, _ := json.Marshal(struct {
-		Rows          []Row         `json:"rows"`
-		Errors        []typeError   `json:"errors,omitempty"`
-		NoneInstalled bool          `json:"noneInstalled,omitempty"`
-		Kijk          kijkState     `json:"kijk"`
-		Machines      []machineView `json:"machines,omitempty"`
-	}{rows, errs, noneInstalled, k, machines})
-	return b
-}
-
-// watchSessions looks for agents only while an agents window is open, and for a minute after the
-// last one closes. An update or machine state change publishes at once, with the last poll's rows.
-func watchSessions(s *scanner, h *hub, rts *viewer.Roots, u *updater, tel *telemetry, mm *machineManager, fl *folderList) {
+// watchSessions looks for agents while a kijk window is open, and for a minute after the last one
+// closes. An update or machine state change reaches the rail at once, with the last scan's rows.
+func watchSessions(s *scanner, h *hub, rl *rail, u *updater, tel *telemetry, mm *machineManager, fl *folderList) {
 	var rows []Row
 	var errs []typeError
 	installed := true
 	var updated, machinesChanged <-chan struct{}
-	k := kijkState{Version: kijkVersion}
 	if u != nil {
 		updated = u.changed
 	}
@@ -410,8 +394,9 @@ func watchSessions(s *scanner, h *hub, rts *viewer.Roots, u *updater, tel *telem
 	stopMachines := func() {}
 	var since, next time.Time
 	for {
+		opened := h.opened()
 		now := time.Now()
-		if want := h.wanted(windowAgents, now, time.Minute); want != looking {
+		if want := h.wanted(now, time.Minute); want != looking {
 			looking = want
 			if looking {
 				if mm != nil {
@@ -421,14 +406,12 @@ func watchSessions(s *scanner, h *hub, rts *viewer.Roots, u *updater, tel *telem
 			} else {
 				stopMachines()
 				rows, errs, installed = nil, nil, true
-				rts.Set(nil)
-				h.forget(windowAgents)
+				rl.setAgents(nil)
 			}
 		}
 		var counts *agentCounts
 		if looking && !now.Before(next) {
 			rows, errs, installed = s.scan()
-			rts.Set(rowRoots(rows))
 			// Wait for remote machines to connect, so the first event counts their agents too.
 			if mm.settled() || time.Since(since) > 30*time.Second {
 				machines, remote := mm.counts()
@@ -438,10 +421,10 @@ func watchSessions(s *scanner, h *hub, rts *viewer.Roots, u *updater, tel *telem
 		}
 		tel.active(now, fl.count(), looking, counts)
 		if u != nil {
-			k = u.state()
+			rl.setKijk(u.state())
 		}
 		if looking {
-			h.publish(windowAgents, sessionMessage(rows, errs, !installed, k, mm.views()))
+			rl.setAgents(&agentPart{rows, errs, !installed, mm.views()})
 		}
 		wait := time.Second
 		if looking {
@@ -451,7 +434,7 @@ func watchSessions(s *scanner, h *hub, rts *viewer.Roots, u *updater, tel *telem
 		case <-time.After(wait):
 		case <-updated:
 		case <-machinesChanged:
-		case <-h.wake(windowAgents):
+		case <-opened:
 		}
 	}
 }

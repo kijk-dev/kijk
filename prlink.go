@@ -62,7 +62,7 @@ func noClone(l prLink) error {
 // localAgentFolders are the folders of the agents that run on this machine now.
 func localAgentFolders() []string {
 	rows, _, _ := newScanner(agents.Types, agents.NewEnv(kijkVersion)).scan()
-	return rowRoots(rows)
+	return localRoots(rows)
 }
 
 func savedFolderPaths() []string {
@@ -71,9 +71,9 @@ func savedFolderPaths() []string {
 		return nil
 	}
 	list, _ := readFolders(p)
-	paths := folderPaths(list)
-	for i := range paths {
-		paths[i] = filepath.Clean(paths[i])
+	paths := make([]string, len(list))
+	for i, f := range list {
+		paths[i] = filepath.Clean(f.Path)
 	}
 	return paths
 }

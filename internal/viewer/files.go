@@ -21,32 +21,22 @@ const (
 	indexStride = 64    // the index keeps the start of every 64th line
 )
 
-// Roots are the folders the server may read: row folders of running agents, saved folders, and
-// every folder a window shows, for as long as it shows it.
+// Roots are the folders the server may read: the rows the program lists, and every folder a window
+// shows, for as long as it shows it.
 type Roots struct {
-	mu      sync.RWMutex
-	m       map[string]bool
-	folders map[string]bool
-	shown   map[string]int // open folder-events streams per root
+	mu    sync.RWMutex
+	rows  map[string]bool
+	shown map[string]int // open folder-events streams per root
 }
 
+// Set replaces the listed rows. Only the program's rail calls it.
 func (r *Roots) Set(paths []string) {
-	m := map[string]bool{}
+	rows := map[string]bool{}
 	for _, p := range paths {
-		m[p] = true
+		rows[p] = true
 	}
 	r.mu.Lock()
-	r.m = m
-	r.mu.Unlock()
-}
-
-func (r *Roots) SetFolders(paths []string) {
-	m := map[string]bool{}
-	for _, p := range paths {
-		m[p] = true
-	}
-	r.mu.Lock()
-	r.folders = m
+	r.rows = rows
 	r.mu.Unlock()
 }
 
@@ -57,7 +47,7 @@ func (r *Roots) Has(root string) bool {
 }
 
 func (r *Roots) hasLocked(root string) bool {
-	return r.m[root] || r.folders[root] || r.shown[root] > 0
+	return r.rows[root] || r.shown[root] > 0
 }
 
 // hold keeps root readable until release runs, so a folder stays open after its row is gone. It

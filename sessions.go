@@ -114,11 +114,3 @@ func relCwd(root, cwd string) string {
 	}
 	return filepath.ToSlash(r)
 }
-
-func rowRoots(rows []Row) []string {
-	paths := make([]string, len(rows))
-	for i, r := range rows {
-		paths[i] = r.Root
-	}
-	return paths
-}

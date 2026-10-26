@@ -65,7 +65,7 @@ func TestLFSSize(t *testing.T) {
 // imageServer answers GET requests for root as the window would send them.
 func imageServer(t *testing.T, root string) func(route string, q url.Values, header ...string) *httptest.ResponseRecorder {
 	rts := &Roots{}
-	rts.SetFolders([]string{root})
+	rts.Set([]string{root})
 	srv := http.NewServeMux()
 	Register(srv, rts, Options{})
 	return func(route string, q url.Values, header ...string) *httptest.ResponseRecorder {

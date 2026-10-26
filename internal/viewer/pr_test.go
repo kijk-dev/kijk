@@ -72,7 +72,7 @@ const listAnswer = `{"data":{"viewer":{"login":"you"},"repository":{"pullRequest
 
 func prServer(t *testing.T, root string) func(route string, q url.Values) *httptest.ResponseRecorder {
 	rts := &Roots{}
-	rts.SetFolders([]string{root})
+	rts.Set([]string{root})
 	srv := http.NewServeMux()
 	cache := t.TempDir()
 	Register(srv, rts, Options{CacheDir: func() (string, error) { return cache, nil }})
@@ -260,7 +260,7 @@ func TestPRFileKeptHead(t *testing.T) {
 	wt := filepath.Join(t.TempDir(), "wt")
 	gittest.Run(t, clone, "worktree", "add", "-q", "--detach", wt)
 	rts := &Roots{}
-	rts.SetFolders([]string{clone, wt})
+	rts.Set([]string{clone, wt})
 	srv := http.NewServeMux()
 	cache := t.TempDir()
 	Register(srv, rts, Options{CacheDir: func() (string, error) { return cache, nil }})
