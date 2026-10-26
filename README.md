@@ -43,22 +43,25 @@ from it. It never starts Codex or the app server, and never answers an approval.
 - Agents that work in the same folder share one row, also a Claude Code and a Codex agent. Only the icon of the agent type that works pulses. An agent in a git worktree gets the row of that worktree.
 - The newest activity is on top. Rows appear, change and go away as agents start, work and stop.
 - When kijk cannot read the agents of an agent type, for example after an update of that tool, the status bar says so. The agents of the other types still show.
+- kijk looks for agents and connects to your remote machines while the kijk window is open, and for one minute after you close it.
 
-### Folders without agents
+### Folders
 
-You can also use kijk as a light viewer for folders you pick, without agents.
+You can also use kijk as a light viewer for folders you pick, with or without agents.
 
 ```sh
 kijk ~/code/api ~/notes
 ```
 
-- This opens a second window, "kijk · Folders". It lists only your folders, with the same files, code and Git views.
-- When the folders window is open, `kijk <folder>` adds the folder to it and opens it there. `kijk folders` opens the window with the saved list.
+- The rail has two lists: **Agents** and **Folders**. To switch, click their icons on the left edge of the window, or press Ctrl+Alt+0 (⌃⌥0 on macOS).
+- `kijk <folder>` adds the folder to the Folders list and opens it in the kijk window. `kijk folders` shows the Folders list.
+- The open folder stays open when you switch lists.
+- A repository can be in both lists. It is one row: open it from either list and it is the same folder.
+- In the Folders list, a folder where an agent works shows the agent's icon. While the Folders list shows, a dot on the Agents icon tells you that an agent is busy or finished.
 - kijk keeps the list across restarts and updates. To remove a folder, click the ✕ on its row or press Delete. Undo puts it back.
 - A folder inside a git repository shows as the whole repository, opened at that folder.
 - A folder that is no longer on disk stays in the list, marked missing.
 - kijk refuses your home folder, `/`, and a folder in a git repository that starts at one of them. Folders are on the local machine only.
-- While no agents window is open, kijk does not look for agents or connect to remote machines.
 
 ### Files
 
@@ -214,6 +217,7 @@ kijk watches the open folder. The tree, the Git tab and the open file update wit
 ### The window
 
 - `kijk` opens in an app window, without an address bar or browser tabs. This works with Chrome, Edge, Brave, Chromium and Vivaldi. With other browsers, kijk opens a normal tab.
+- kijk has one window for your agents and your folders. The title of the window names the open folder.
 - kijk follows the light or dark mode of your system.
 - kijk remembers, per folder, the open tabs, the expanded folders and the sidebar tab. This lasts across reloads and restarts.
 - The status bar shows the version, and offers an update when a new version is out.
@@ -224,7 +228,8 @@ kijk uses the IntelliJ default keys.
 
 | Action | macOS | Windows and Linux |
 |---|---|---|
-| Open row 1 to 9 in the list | ⌃⌥1 … ⌃⌥9 | Ctrl+Alt+1 … Ctrl+Alt+9 |
+| Switch between the Agents and Folders lists | ⌃⌥0 | Ctrl+Alt+0 |
+| Open row 1 to 9 of the list that shows | ⌃⌥1 … ⌃⌥9 | Ctrl+Alt+1 … Ctrl+Alt+9 |
 | Go to file | ⇧⌘O | Ctrl+Shift+N |
 | Recent files | ⌘E | Ctrl+E |
 | Find in file | ⌘F | Ctrl+F |
@@ -244,10 +249,12 @@ kijk uses the IntelliJ default keys.
 | Commit | ⌘K | Ctrl+K |
 | Push, or Force push after a rebase (asks first) | ⇧⌘K | Ctrl+Shift+K |
 | Close tab | ⌘W | Ctrl+F4 |
-| Remove the focused folder (folders window) | Delete or Backspace | Delete or Backspace |
+| Remove the focused folder (Folders list) | Delete or Backspace | Delete or Backspace |
 | Undo the removal | ⌘Z | Ctrl+Z |
 
 A normal browser tab keeps some of these keys for itself. For those actions, kijk also has a second key. The tooltip of the action shows the key that works in your window.
+
+The Ctrl+Alt keys of the lists do nothing while you type in a text field. On some keyboards, AltGr sends Ctrl+Alt, so AltGr and a digit still type there.
 
 ## Requirements
 
@@ -370,16 +377,16 @@ kijk
 ```
 
 kijk starts a server on `127.0.0.1:7717` and opens its window.
-If kijk already runs, the command only opens a new window.
+If kijk already runs, the command opens the window. When the window is open already, the command says so and opens no second one.
 
 | Command or option | What it does |
 |---|---|
 | `-port 7800` | Uses another port. |
 | `-no-open` | Does not open a window. |
 | `-no-update-check` | Does not look for a new version. |
-| `kijk <folder>…` | Adds the folders to the folders window and opens it. |
-| `kijk <PR link>` | Opens the pull request in the folders window, in a clone of its repo that kijk knows. |
-| `kijk folders` | Opens the folders window. |
+| `kijk <folder>…` | Adds the folders to the Folders list and opens the last one in the kijk window. |
+| `kijk <PR link>` | Opens the pull request in the kijk window, in a clone of its repo that kijk knows: a saved folder, or the folder of an agent. |
+| `kijk folders` | Shows the Folders list in the kijk window. |
 | `kijk version` | Shows the version. |
 | `kijk update` | Installs the newest version. |
 
@@ -420,7 +427,7 @@ You can also start kijk with `-no-update-check`. `kijk update` and the **Update*
 
 kijk sends anonymous usage data, so we know how many people use it and on which systems.
 It never sends your code, your folder or file names, or anything about you.
-It sends the number of folders in the folders window. On a day when kijk looked for agents, it
+It sends the number of folders in the Folders list. On a day when kijk looked for agents, it
 also sends the number of agents on your machine, in total and per agent type, and how many remote
 machines you saved and how many agents run on them. The count per agent type is
 `<type>_agents` for each type kijk shows, such as `claude_agents` for Claude Code and
