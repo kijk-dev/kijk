@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"path/filepath"
+	"slices"
 	"strconv"
 )
 
@@ -132,12 +133,12 @@ func (d *openDesk) open(a openAsk) (openReply, error) {
 	rep := openReply{Window: d.h.open() > 0}
 	switch {
 	case a.PR != nil:
-		root := d.findClone(*a.PR)
+		root, agent := d.findClone(*a.PR)
 		if root == "" {
 			rep.NoClone = true
 			return rep, nil
 		}
-		return d.openPR(root, a.PR.Number, rep)
+		return d.openPR(root, a.PR.Number, agent, rep)
 	case len(a.Folders) > 0:
 		fs := make([]savedFolder, len(a.Folders))
 		for i, p := range a.Folders {
@@ -170,14 +171,15 @@ func (d *openDesk) open(a openAsk) (openReply, error) {
 }
 
 // openPR opens pull request n in root's row, adding root to the folders list when no row has it.
-func (d *openDesk) openPR(root string, n int, rep openReply) (openReply, error) {
+// agent says an agent works in root, so it has a row once kijk looks for agents.
+func (d *openDesk) openPR(root string, n int, agent bool, rep openReply) (openReply, error) {
 	f, err := checkFolder(root, "")
 	if err != nil {
 		return rep, err
 	}
 	name := filepath.Base(f.Path)
 	q := openRequest{Root: f.Path, PR: n}
-	if d.rl.has(f.Path) {
+	if agent || d.rl.has(f.Path) {
 		d.fl.refresh(f.Path)
 		rep.Said = fmt.Sprintf("Opened #%d in %s.", n, name)
 	} else {
@@ -195,14 +197,19 @@ func (d *openDesk) openPR(root string, n int, rep openReply) (openReply, error) 
 }
 
 // findClone gives the main clone of l's repo among the saved folders, then the folders of the local
-// agents, or "". While no window looks for agents, it scans for them once.
-func (d *openDesk) findClone(l prLink) string {
-	return prClone(l, d.fl.paths(), func() []string {
-		if roots, ok := d.rl.agentRoots(); ok {
-			return roots
+// agents, or "", and whether an agent works in it. While no window looks for agents, it scans for
+// them once.
+func (d *openDesk) findClone(l prLink) (root string, agent bool) {
+	var agents []string
+	root = prClone(l, d.fl.paths(), func() []string {
+		roots, ok := d.rl.agentRoots()
+		if !ok {
+			roots = localAgentFolders()
 		}
-		return localAgentFolders()
+		agents = roots
+		return roots
 	})
+	return root, slices.Contains(agents, root)
 }
 
 // addedText says what kijk <folder>… did; window says the kijk window shows it.

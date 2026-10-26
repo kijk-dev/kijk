@@ -620,10 +620,12 @@ events.onmessage = e => {
 // takeRequest acts once on each open request that kijk <folder>, kijk folders and kijk <PR link> send.
 function takeRequest(req) {
   const fresh = openSeq === null ? wantSeq > 0 && req.seq >= wantSeq : req.seq > openSeq;
+  const t = target(req, rows, list);
+  // An agent's row comes with the first agent scan, so the request waits for it.
+  if (fresh && req.root && !t.row && !scanned) return;
   openSeq = req.seq;
   wantSeq = 0;
   if (!fresh) return;
-  const t = target(req, rows, list);
   setList(t.list);
   if (!t.row) return;
   open(t.row, true, req.cwd || cwdIn(t.row, list));
