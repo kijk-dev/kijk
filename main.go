@@ -92,7 +92,7 @@ func main() {
 	}
 	ask := askOf(a, adds, cwd)
 	plain := len(ask.Folders) == 0 && ask.PR == nil && ask.List == ""
-	term := terminal{os.Stdout, os.Stderr}
+	term := terminal{os.Stdin, os.Stdout, os.Stderr}
 
 	removeOldExe()
 	if s, ok := runningInstance(a.port); ok {
@@ -117,13 +117,6 @@ func main() {
 	if err != nil {
 		log.Printf("cannot write the state file, so a second start will not find this one: %v", err)
 	}
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
-	go func() {
-		<-stop
-		remove()
-		os.Exit(0)
-	}()
 
 	exe, _ := selfPath()
 	u := newUpdater(kijkVersion, exe, os.Stdout)
@@ -164,17 +157,26 @@ func main() {
 	web, _ := fs.Sub(webFiles, "web")
 	d := &openDesk{h, rl, fl}
 	srv := newServer(token, a.port, web, h, rts, u, mm, d)
-	// The port listens already, so a window that opens now waits for Serve below.
+	served := make(chan error, 1)
+	go func() { served <- http.Serve(ln, srv) }()
+	// A clone in deliver takes Ctrl+C for itself, to clean up before kijk exits.
 	if code := deliver(d.open, ask, windows(a, token), term); code != 0 {
 		remove()
 		os.Exit(code)
 	}
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-stop
+		remove()
+		os.Exit(0)
+	}()
 	if restarted {
 		fmt.Printf("kijk %s restarted at %s\n", kijkVersion, uiURL(a.port, token))
 	} else {
 		fmt.Printf("kijk %s is running at %s\n", kijkVersion, uiURL(a.port, token))
 	}
-	log.Fatal(http.Serve(ln, srv))
+	log.Fatal(<-served)
 }
 
 // cliArgs is what kijk was asked to do, when it is not one of the commands that exit at once.

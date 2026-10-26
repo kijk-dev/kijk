@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"net"
 	"os"
 	"path"
@@ -127,10 +126,6 @@ func matchClone(l prLink, places []string) (root string, checked int) {
 // cloneDir is where kijk clones l's repo when it finds no clone: in the user's cache folder.
 func cloneDir(cache string, l prLink) string {
 	return filepath.Join(cache, "kijk", "clones", l.Host, filepath.FromSlash(l.Path))
-}
-
-func noClone(l prLink) error {
-	return errors.New("No folder of " + l.Host + "/" + l.Path + " is in kijk. Add a folder of this repo first: kijk <folder>")
 }
 
 // localAgentFolders are the folders of the agents that run on this machine now.

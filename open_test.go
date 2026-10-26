@@ -11,12 +11,14 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
+
+	"github.com/kijk-dev/kijk/internal/gittest"
 )
 
 func TestDeliver(t *testing.T) {
 	api := openAsk{Folders: []string{"/code/api"}}
-	billing := openAsk{PR: &prLink{Kind: "github", Host: "github.com", Path: "acme/billing", Number: 12}}
 	for _, c := range []struct {
 		name        string
 		ask         openAsk
@@ -34,8 +36,6 @@ func TestDeliver(t *testing.T) {
 			0, "", "", []int{0}},
 		{"the list was not saved, but the folder opens", api, openReply{Said: "Added api.", Seq: 5, Error: "cannot save the folders list: disk full"}, nil,
 			0, "Added api.\n", "kijk: cannot save the folders list: disk full\n", []int{5}},
-		{"no clone of the pull request's repo", billing, openReply{NoClone: true}, nil,
-			1, "", "kijk: No folder of github.com/acme/billing is in kijk. Add a folder of this repo first: kijk <folder>\n", nil},
 		{"the running kijk refuses", api, openReply{}, errors.New("the running kijk is too old for this. Quit it, then try again"),
 			1, "", "kijk: the running kijk is too old for this. Quit it, then try again\n", nil},
 	} {
@@ -43,13 +43,80 @@ func TestDeliver(t *testing.T) {
 		var sent openAsk
 		var opened []int
 		code := deliver(func(a openAsk) (openReply, error) { sent = a; return c.rep, c.err }, c.ask,
-			func(seq int) { opened = append(opened, seq) }, terminal{&out, &errOut})
+			func(seq int) { opened = append(opened, seq) }, terminal{nil, &out, &errOut})
 		if code != c.code || out.String() != c.out || errOut.String() != c.errOut || !slices.Equal(opened, c.opened) || jsonOf(sent) != jsonOf(c.ask) {
 			t.Errorf("%s: exit %d, out %q, err %q, windows %v, sent %s", c.name, code, out.String(), errOut.String(), opened, jsonOf(sent))
 		}
 	}
-	if code := deliver(func(openAsk) (openReply, error) { return openReply{Seq: 1}, nil }, openAsk{}, nil, terminal{io.Discard, io.Discard}); code != 0 {
+	if code := deliver(func(openAsk) (openReply, error) { return openReply{Seq: 1}, nil }, openAsk{}, nil, terminal{nil, io.Discard, io.Discard}); code != 0 {
 		t.Errorf("-no-open: exit %d", code)
+	}
+}
+
+// When the kijk that shows it finds no clone, the command clones the repo with gh or glab, where
+// the terminal is, and asks again with the clone.
+func TestDeliverClones(t *testing.T) {
+	isolatedGit(t)
+	useCacheDir(t)
+	cache, _ := cacheDir()
+	src := gitRepo(t)
+	write(t, filepath.Join(src, "README.md"), "# Billing\n")
+	run(t, src, "add", ".")
+	run(t, src, "commit", "-qm", "Start")
+	billing := &prLink{Kind: "github", Host: "github.com", Path: "acme/billing", Number: 12}
+	ledger := &prLink{Kind: "github", Host: "github.com", Path: "acme/ledger", Number: 7}
+	api := &prLink{Kind: "gitlab", Host: "gitlab.example.org", Path: "team/api", Number: 3}
+	dir := cloneDir(cache, *billing)
+	searched := func(l *prLink) string {
+		return "No clone of " + l.Host + "/" + l.Path + " in 3 folders on this machine.\n"
+	}
+	cloning := func(l *prLink) string { return "Cloning it with gh into " + tilde(cloneDir(cache, *l)) + " …\n" }
+	for _, c := range []struct {
+		name        string
+		pr          *prLink
+		gh          []gittest.Rule // nil: neither gh nor glab is installed
+		code        int
+		out, errOut string
+		opened      []int
+	}{
+		{"cloned, then opened", billing, []gittest.Rule{{Has: "repo clone", Clone: src}},
+			0, searched(billing) + cloning(billing) + "Added billing and opened #12.\n", "", []int{2}},
+		{"the clone fails", ledger, []gittest.Rule{{Has: "repo clone", Err: "GraphQL: Could not resolve to a Repository\n", Exit: 1}},
+			1, searched(ledger) + cloning(ledger), "GraphQL: Could not resolve to a Repository\nkijk: cannot clone github.com/acme/ledger: gh repo clone: exit status 1. Clone it, then run kijk <folder>.\n", nil},
+		{"no glab", api, nil,
+			1, searched(api), "kijk: glab is not installed, so kijk cannot clone gitlab.example.org/team/api. Clone it, then run this command again.\n", nil},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if c.gh != nil {
+				gittest.FakeTool(t, "gh", c.gh...)
+			} else {
+				t.Setenv("PATH", t.TempDir())
+			}
+			var asks []openAsk
+			replies := []openReply{{NoClone: true, Said: strings.TrimSpace(searched(c.pr))}, {Said: "Added billing and opened #12.", Seq: 2}}
+			open := func(a openAsk) (openReply, error) {
+				asks = append(asks, a)
+				return replies[len(asks)-1], nil
+			}
+			var out, errOut bytes.Buffer
+			var opened []int
+			code := deliver(open, openAsk{PR: c.pr, Cwd: "/code"}, func(seq int) { opened = append(opened, seq) }, terminal{nil, &out, &errOut})
+			if code != c.code || out.String() != c.out || errOut.String() != c.errOut || !slices.Equal(opened, c.opened) {
+				t.Fatalf("exit %d, windows %v\nout %q\nwant %q\nerr %q\nwant %q", code, opened, out.String(), c.out, errOut.String(), c.errOut)
+			}
+			if c.code != 0 {
+				if len(asks) != 1 {
+					t.Errorf("asked again after a failed clone: %+v", asks)
+				}
+				return
+			}
+			if again := jsonOf(asks[1]); again != jsonOf(openAsk{Folders: []string{dir}, PR: billing}) {
+				t.Errorf("asked again with %s", again)
+			}
+			if _, err := os.Stat(filepath.Join(dir, "README.md")); err != nil {
+				t.Error("no clone:", err)
+			}
+		})
 	}
 }
 
@@ -195,6 +262,8 @@ func TestDeskPullRequest(t *testing.T) {
 			openReply{Said: "Found " + name + " at " + main + ". Added it and opened #477.", Seq: 1}, openRequest{Seq: 1, Root: main, PR: 477, Added: true}, []string{main}},
 		{"a common place", openAsk{PR: shop}, nil, nil,
 			openReply{Said: "Found shop at " + filepath.FromSlash("~/code/shop") + ". Added it and opened #477.", Seq: 1}, openRequest{Seq: 1, Root: common, PR: 477, Added: true}, []string{common}},
+		{"the command cloned it", openAsk{PR: shop, Folders: []string{common}}, nil, nil,
+			openReply{Said: "Added shop and opened #477.", Seq: 1}, openRequest{Seq: 1, Root: common, PR: 477, Added: true}, []string{common}},
 		{"no clone", openAsk{PR: web}, []savedFolder{{Path: other}}, nil,
 			openReply{NoClone: true, Said: "No clone of github.com/acme/web in 1 folder on this machine."}, openRequest{}, []string{other}},
 	} {

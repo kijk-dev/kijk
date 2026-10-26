@@ -1,14 +1,20 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
+
+	"github.com/kijk-dev/kijk/internal/git"
 )
 
 // openAsk is what a kijk command asks the kijk that shows it. An empty ask only asks whether a
@@ -50,16 +56,22 @@ func windowURL(port int, token string, seq int) string {
 }
 
 type terminal struct {
+	in       io.Reader
 	out, err io.Writer
 }
 
-// deliver hands the ask to the kijk that shows it and prints what happened. It opens a window
-// only when none is open: kijk cannot bring an open window to the front. window is nil with
-// -no-open.
+// deliver hands the ask to the kijk that shows it and prints what happened. A repo with no clone
+// is cloned here, where the terminal is. It opens a window only when none is open: kijk cannot
+// bring an open window to the front. window is nil with -no-open.
 func deliver(open opener, ask openAsk, window func(seq int), t terminal) int {
 	rep, err := open(ask)
 	if err == nil && rep.NoClone {
-		err = noClone(*ask.PR)
+		fmt.Fprintln(t.out, rep.Said)
+		dir, code := clone(*ask.PR, t)
+		if code != 0 {
+			return code
+		}
+		rep, err = open(openAsk{Folders: []string{dir}, PR: ask.PR})
 	}
 	if err != nil {
 		fmt.Fprintln(t.err, "kijk:", err)
@@ -75,6 +87,33 @@ func deliver(open opener, ask openAsk, window func(seq int), t terminal) int {
 		window(rep.Seq)
 	}
 	return 0
+}
+
+// clone clones l's repo into kijk's cache folder with gh or glab, and gives the exit code: when it
+// is not 0, clone said why, or the user pressed Ctrl+C.
+func clone(l prLink, t terminal) (dir string, code int) {
+	repo, tool := l.Host+"/"+l.Path, git.Tool(l.Kind)
+	if _, err := exec.LookPath(tool); err != nil {
+		fmt.Fprintf(t.err, "kijk: %s is not installed, so kijk cannot clone %s. Clone it, then run this command again.\n", tool, repo)
+		return "", 1
+	}
+	cache, err := cacheDir()
+	if err == nil {
+		dir = cloneDir(cache, l)
+		fmt.Fprintf(t.out, "Cloning it with %s into %s …\n", tool, tilde(dir))
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+		err = git.Clone(ctx, l.Kind, l.Host, l.Path, dir, t.in, t.out, t.err)
+		stop()
+	}
+	switch {
+	case errors.Is(err, context.Canceled):
+		return "", 130
+	case err != nil:
+		first, _, _ := strings.Cut(err.Error(), "\n")
+		fmt.Fprintf(t.err, "kijk: cannot clone %s: %s. Clone it, then run kijk <folder>.\n", repo, first)
+		return "", 1
+	}
+	return dir, 0
 }
 
 // openDesk is the server side of every hand-off from the command line. The route and the first
@@ -114,8 +153,8 @@ func (a openAsk) check() error {
 		return fmt.Errorf("%s is not an absolute path", a.Cwd)
 	}
 	switch {
-	case a.PR != nil && len(a.Folders) > 0:
-		return errors.New("a pull request link takes no folder")
+	case a.PR != nil && len(a.Folders) > 1:
+		return errors.New("a pull request opens in one folder")
 	case a.PR != nil && !a.PR.valid():
 		return errors.New("not a pull request link")
 	case a.List != "" && a.List != listFolders:
@@ -127,6 +166,8 @@ func (a openAsk) check() error {
 func (d *openDesk) open(a openAsk) (openReply, error) {
 	rep := openReply{Window: d.h.open() > 0}
 	switch {
+	case a.PR != nil && len(a.Folders) == 1: // the command cloned the repo there
+		return d.openPR(a.Folders[0], a.PR.Number, false, rep)
 	case a.PR != nil:
 		root, checked := d.findClone(*a.PR, a.Cwd)
 		if root == "" {

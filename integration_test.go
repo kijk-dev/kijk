@@ -149,6 +149,7 @@ func startKijkIn(t *testing.T, exe, home string, env ...string) *kijkProcess {
 	ln.Close()
 	k := &kijkProcess{port: port, logFile: filepath.Join(home, "kijk.log"), exited: make(chan struct{}), env: append(append(homeFolders(),
 		"HOME="+home, "XDG_CONFIG_HOME="+filepath.Join(home, ".config"), "APPDATA="+home,
+		"XDG_CACHE_HOME="+filepath.Join(home, ".cache"), "LOCALAPPDATA="+home,
 		"CLAUDE_CONFIG_DIR="+t.TempDir(), "CODEX_HOME="+filepath.Join(home, "codex"), "KIJK_NO_UPDATE_CHECK=1", "KIJK_NO_TELEMETRY=1",
 	), env...)}
 	out, err := os.Create(k.logFile)
