@@ -10,7 +10,7 @@ import (
 )
 
 func TestParseArgs(t *testing.T) {
-	shop := prLink{Host: "github.com", Path: "acme/shop", Number: 477}
+	shop := prLink{Kind: "github", Host: "github.com", Path: "acme/shop", Number: 477}
 	for _, c := range []struct {
 		args    []string
 		port    int
@@ -54,7 +54,7 @@ func TestAskOf(t *testing.T) {
 		{cliArgs{}, nil, `{}`},
 		{cliArgs{folders: []string{"web", "~/code/api"}}, adds, `{"folders":["/code/kijk/web","/code/api"]}`},
 		{cliArgs{list: listFolders}, nil, `{"list":"folders"}`},
-		{cliArgs{pr: prLink{Host: "github.com", Path: "acme/shop", Number: 477}}, nil, `{"pr":{"host":"github.com","path":"acme/shop","number":477}}`},
+		{cliArgs{pr: prLink{Kind: "github", Host: "github.com", Path: "acme/shop", Number: 477}}, nil, `{"pr":{"kind":"github","host":"github.com","path":"acme/shop","number":477}}`},
 	} {
 		if got := jsonOf(askOf(c.a, c.adds)); got != c.want {
 			t.Errorf("%+v: got %s, want %s", c.a, got, c.want)

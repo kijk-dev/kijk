@@ -16,7 +16,7 @@ import (
 
 func TestDeliver(t *testing.T) {
 	api := openAsk{Folders: []string{"/code/api"}}
-	billing := openAsk{PR: &prLink{Host: "github.com", Path: "acme/billing", Number: 12}}
+	billing := openAsk{PR: &prLink{Kind: "github", Host: "github.com", Path: "acme/billing", Number: 12}}
 	for _, c := range []struct {
 		name        string
 		ask         openAsk
@@ -162,7 +162,7 @@ func TestDeskPullRequest(t *testing.T) {
 	main, worktree, other := shopClones(t)
 	main, worktree, other = realPath(main), realPath(worktree), realPath(other)
 	useConfigDir(t)
-	shop := &prLink{Host: "github.com", Path: "acme/shop", Number: 477}
+	shop := &prLink{Kind: "github", Host: "github.com", Path: "acme/shop", Number: 477}
 	name := filepath.Base(main)
 	agentRow := func(root string) Row {
 		return Row{Root: root, Repo: filepath.Base(root), AgentSource: &AgentSource{Names: []string{"a"}, Agents: []RowAgent{{"claude", false}}}}

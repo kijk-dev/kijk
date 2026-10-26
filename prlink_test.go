@@ -9,11 +9,12 @@ import (
 
 func TestParsePRLink(t *testing.T) {
 	for raw, want := range map[string]string{
-		"https://github.com/acme/shop/pull/477":                        "github.com acme/shop 477",
-		"https://github.com/acme/shop/pull/477/files?diff=unified#top": "github.com acme/shop 477",
-		"https://gitlab.com/group/sub/api/-/merge_requests/12":         "gitlab.com group/sub/api 12",
-		"https://gitlab.example.org/team/api/-/merge_requests/3/diffs": "gitlab.example.org team/api 3",
-		"https://gitlab.example.org:8443/team/api/-/merge_requests/3":  "gitlab.example.org team/api 3",
+		"https://github.com/acme/shop/pull/477":                        "github github.com acme/shop 477",
+		"https://github.com/acme/shop/pull/477/files?diff=unified#top": "github github.com acme/shop 477",
+		"https://github.com/acme/.github/pull/2":                       "github github.com acme/.github 2",
+		"https://gitlab.com/group/sub/api/-/merge_requests/12":         "gitlab gitlab.com group/sub/api 12",
+		"https://gitlab.example.org/team/api/-/merge_requests/3/diffs": "gitlab gitlab.example.org team/api 3",
+		"https://gitlab.example.org:8443/team/api/-/merge_requests/3":  "gitlab gitlab.example.org team/api 3",
 		"https://github.com/acme/shop/issues/477":                      "",
 		"https://github.com/acme/shop":                                 "",
 		"https://github.com/acme/shop/pull/x":                          "",
@@ -21,11 +22,20 @@ func TestParsePRLink(t *testing.T) {
 		"github.com/acme/shop/pull/477":                                "",
 		"https://github.com/pull/477":                                  "",
 		"https://github.com/acme/shop/pull/0":                          "",
-		"https://github.com/acme/shop/pull/477?x=/-/merge_requests/1":  "github.com acme/shop 477",
+		"https://github.com/acme/shop/pull/99999999999999999999":       "",
+		"https://github.com/acme/shop/pull/477?x=/-/merge_requests/1":  "github github.com acme/shop 477",
+		// A link names folders and tool arguments, so it may not climb out or pass a flag.
+		"https://github.com/acme/../../etc/pull/1":                  "",
+		"https://github.com/acme/./shop/pull/1":                     "",
+		"https://github.com/acme//shop/pull/1":                      "",
+		"https://../acme/shop/pull/1":                               "",
+		`https://github.com/acme\..\shop/x/pull/1`:                  "",
+		"https://gitlab.com/--upload-pack=x/api/-/merge_requests/1": "",
+		"https://github.com/acme/sh%2Fop/pull/1":                    "",
 	} {
 		got := ""
 		if l, ok := parsePRLink(raw); ok {
-			got = l.Host + " " + l.Path + " " + strconv.Itoa(l.Number)
+			got = l.Kind + " " + l.Host + " " + l.Path + " " + strconv.Itoa(l.Number)
 		}
 		if got != want {
 			t.Errorf("parsePRLink(%q) = %q, want %q", raw, got, want)

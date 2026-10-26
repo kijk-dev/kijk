@@ -111,8 +111,8 @@ func (a openAsk) check() error {
 	switch {
 	case a.PR != nil && len(a.Folders) > 0:
 		return errors.New("a pull request link takes no folder")
-	case a.PR != nil && a.PR.Number <= 0:
-		return errors.New("no pull request number")
+	case a.PR != nil && !a.PR.valid():
+		return errors.New("not a pull request link")
 	case a.List != "" && a.List != listFolders:
 		return fmt.Errorf("no list %q", a.List)
 	}
