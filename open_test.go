@@ -261,6 +261,36 @@ func TestDeskOpensAFolderThatIsBack(t *testing.T) {
 	await("counted again", func(s SavedSource) bool { return s.Counted && !s.Missing })
 }
 
+// With no window, kijk <PR link> scans for agents. A clone an agent works in opens in its agent row
+// once the window looks for agents, as with a window open, and is not saved.
+func TestDeskPullRequestInAnAgentsCloneWithNoWindow(t *testing.T) {
+	main, _, _ := shopClones(t)
+	main = realPath(main)
+	useConfigDir(t)
+	home := t.TempDir()
+	for _, v := range agentVars() {
+		t.Setenv(v, "")
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	claude := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", claude)
+	claudeAgent(t, claude, main, "Fix the cart", "idle")
+
+	d, h := testDesk(t)
+	rep, err := d.open(openAsk{PR: &prLink{Host: "github.com", Path: "acme/shop", Number: 5}})
+	want := openReply{Said: "Opened #5 in " + filepath.Base(main) + ".", Seq: 1}
+	if err != nil || rep != want {
+		t.Fatalf("got %+v %v, want %+v", rep, err, want)
+	}
+	if o := shown(t, h).Open; o != (openRequest{Seq: 1, Root: main, PR: 5}) {
+		t.Errorf("request %+v", o)
+	}
+	if l := d.fl.paths(); len(l) != 0 {
+		t.Errorf("folders list %v, want it empty", l)
+	}
+}
+
 func TestDeskListAndPlain(t *testing.T) {
 	useConfigDir(t)
 	d, h := testDesk(t)

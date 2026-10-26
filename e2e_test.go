@@ -2150,6 +2150,27 @@ func TestBrowser(t *testing.T) {
 		w.noErrors()
 	})
 
+	// With no window open, kijk <PR link> finds the clone an agent works in, and does not save it.
+	// The new window opens it in the agent's row once kijk has looked for agents.
+	t.Run("pull request link with no window", func(t *testing.T) {
+		repo := namedRepo(t, "cart")
+		write(t, filepath.Join(repo, "a.txt"), "a\n")
+		run(t, repo, "add", ".")
+		run(t, repo, "commit", "-qm", "a")
+		run(t, repo, "remote", "add", "origin", "https://github.com/acme/cart.git")
+		claude := t.TempDir()
+		claudeAgent(t, claude, repo, "Fix the cart", "idle")
+		g := startKijkIn(t, exe, t.TempDir(), "CLAUDE_CONFIG_DIR="+claude, newFakeForge(t).env())
+		out := runCmd(t, g.env, exe, "-port", fmt.Sprint(g.port), "-no-open", "https://github.com/acme/cart/pull/5")
+		if strings.TrimSpace(out) != "Opened #5 in cart." {
+			t.Fatalf("kijk <PR link> said:\n%s", out)
+		}
+		w := openPage(t, newTab(t, tab), g, "/?open=1")
+		w.waitFor("cart open in the agent's row", listShows("agents")+` && `+row("Fix the cart")+`?.classList.contains('selected') && document.querySelector('#folder-name')?.textContent === 'cart'`)
+		w.waitFor("no saved folder", listTab("folders")+`.getAttribute('aria-label') === 'Folders, No folders yet'`)
+		w.noErrors()
+	})
+
 	t.Run("remote machine", func(t *testing.T) {
 		m, vm := journeyMachine(t)
 		publish(t, "0.0.1", exe)

@@ -90,14 +90,15 @@ type rail struct {
 	h   *hub
 	rts *viewer.Roots
 
-	mu      sync.Mutex
-	agents  *agentPart // nil while kijk does not look for agents
-	saved   []Row      // the saved folders, with only the saved source set
-	facts   map[string]folderFacts
-	listErr error
-	open    openRequest
-	kijk    kijkState
-	rows    []Row // the last merge
+	mu        sync.Mutex
+	agents    *agentPart // nil while kijk does not look for agents
+	saved     []Row      // the saved folders, with only the saved source set
+	facts     map[string]folderFacts
+	requested map[string]int // the seq of the last request for each root
+	listErr   error
+	open      openRequest
+	kijk      kijkState
+	rows      []Row // the last merge
 }
 
 func newRail(h *hub, rts *viewer.Roots) *rail {
@@ -129,12 +130,33 @@ func (r *rail) setSaved(list []savedFolder, err error) {
 	r.changedLocked()
 }
 
-// setFacts takes the facts of the saved folders, by path.
-func (r *rail) setFacts(facts map[string]folderFacts) {
+// setFacts takes the saved folders' facts from counts that began after request since. A root
+// requested later keeps its facts, as an older count may find it missing; again lists such roots.
+func (r *rail) setFacts(facts map[string]folderFacts, since int) (again []string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	for root, seq := range r.requested {
+		if seq <= since {
+			delete(r.requested, root)
+			continue
+		}
+		if f, ok := r.facts[root]; ok && facts != nil {
+			facts[root] = f
+		} else {
+			delete(facts, root)
+		}
+		again = append(again, root)
+	}
 	r.facts = facts
 	r.changedLocked()
+	return again
+}
+
+// seq is the last request's.
+func (r *rail) seq() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.open.Seq
 }
 
 func (r *rail) setKijk(k kijkState) {
@@ -151,11 +173,17 @@ func (r *rail) setKijk(k kijkState) {
 func (r *rail) request(q openRequest) int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.facts[q.Root].missing {
-		// The command just found Root, and the window does not open a missing row.
-		delete(r.facts, q.Root)
-	}
 	q.Seq = r.open.Seq + 1
+	if q.Root != "" {
+		if r.facts[q.Root].missing {
+			// The command just found Root, and the window does not open a missing row.
+			delete(r.facts, q.Root)
+		}
+		if r.requested == nil {
+			r.requested = map[string]int{}
+		}
+		r.requested[q.Root] = q.Seq
+	}
 	r.open = q
 	r.changedLocked()
 	return q.Seq

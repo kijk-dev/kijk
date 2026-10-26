@@ -11,8 +11,10 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 
 	"github.com/kijk-dev/kijk/internal/git"
@@ -177,15 +179,15 @@ func (d *openDesk) open(a openAsk) (openReply, error) {
 	rep := openReply{Window: d.h.open() > 0}
 	switch {
 	case a.PR != nil && len(a.Folders) == 1: // the command cloned the repo there
-		return d.openPR(a.Folders[0], a.PR.Number, false, rep)
+		return d.openPR(a.Folders[0], a.PR.Number, false, false, rep)
 	case a.PR != nil:
-		root, checked := d.findClone(*a.PR, a.Cwd)
+		root, checked, agent := d.findClone(*a.PR, a.Cwd)
 		if root == "" {
 			rep.NoClone = true
 			rep.Said = noCloneText(*a.PR, checked)
 			return rep, nil
 		}
-		return d.openPR(root, a.PR.Number, true, rep)
+		return d.openPR(root, a.PR.Number, true, agent, rep)
 	case len(a.Folders) > 0:
 		fs := make([]savedFolder, len(a.Folders))
 		for i, p := range a.Folders {
@@ -218,15 +220,16 @@ func (d *openDesk) open(a openAsk) (openReply, error) {
 }
 
 // openPR opens pull request n in root's row, adding root to the folders list when no row has it.
-// found says kijk found root itself, so the user learns where.
-func (d *openDesk) openPR(root string, n int, found bool, rep openReply) (openReply, error) {
+// found says kijk found root itself, so the user learns where. agent says an agent works in root,
+// so it has a row once kijk looks for agents.
+func (d *openDesk) openPR(root string, n int, found, agent bool, rep openReply) (openReply, error) {
 	f, err := checkFolder(root, "")
 	if err != nil {
 		return rep, err
 	}
 	name := filepath.Base(f.Path)
 	q := openRequest{Root: f.Path, PR: n}
-	has := d.rl.has(f.Path)
+	has := agent || d.rl.has(f.Path)
 	switch {
 	case has:
 		d.fl.refresh(f.Path)
@@ -249,18 +252,23 @@ func (d *openDesk) openPR(root string, n int, found bool, rep openReply) (openRe
 	return rep, nil
 }
 
-// findClone looks for a local clone of l's repo and gives its main clone, or "", and how many
-// places it checked. While no window looks for agents, it scans for them once, when it gets to them.
-func (d *openDesk) findClone(l prLink, cwd string) (string, int) {
-	agents := func() []string {
+// findClone looks for a local clone of l's repo and gives its main clone, or "", how many places
+// it checked, and whether an agent works in it. While no window looks for agents, it scans for them
+// once, when it needs them.
+func (d *openDesk) findClone(l prLink, cwd string) (root string, checked int, agent bool) {
+	agents := sync.OnceValue(func() []string {
 		if roots, ok := d.rl.agentRoots(); ok {
 			return roots
 		}
 		return localAgentFolders()
-	}
+	})
 	home, _ := os.UserHomeDir()
 	cache, _ := cacheDir()
-	return matchClone(l, prCandidates(l, d.fl.paths(), agents, cwd, home, cache))
+	root, checked = matchClone(l, prCandidates(l, d.fl.paths(), agents, cwd, home, cache))
+	if root != "" && !d.rl.has(root) {
+		agent = slices.Contains(agents(), root)
+	}
+	return root, checked, agent
 }
 
 func noCloneText(l prLink, checked int) string {
