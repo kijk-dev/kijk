@@ -87,7 +87,7 @@ func TestAddedText(t *testing.T) {
 
 // The folder view must work on a page without the rail, so viewer files never import app files.
 func TestViewerImportsNoAppFile(t *testing.T) {
-	app := []string{"app.js", "status.js"}
+	app := []string{"app.js", "status.js", "rail.js"}
 	imports := regexp.MustCompile(`\b(?:from|import)\s*\(?\s*['"]\./([^'"]+)['"]`)
 	files, _ := fs.Glob(webFiles, "web/*.js")
 	for _, f := range files {
@@ -106,6 +106,18 @@ func TestViewerImportsNoAppFile(t *testing.T) {
 	}
 	if len(files) < 10 {
 		t.Fatalf("found only %d JavaScript files", len(files))
+	}
+}
+
+// TestPageKnowsEveryList checks that the page can show every list an open request names.
+func TestPageKnowsEveryList(t *testing.T) {
+	b, err := fs.ReadFile(webFiles, "web/rail.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lists := regexp.MustCompile(`LISTS = \[([^\]]*)\]`).FindSubmatch(b)
+	if lists == nil || !strings.Contains(string(lists[1]), "'"+listFolders+"'") {
+		t.Errorf("rail.js LISTS does not have %q", listFolders)
 	}
 }
 

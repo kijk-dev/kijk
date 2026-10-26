@@ -161,8 +161,7 @@ body { --mh: color-mix(in srgb, var(--border) 65%, var(--panel)); }
 .rail-collapsed .mdiv .micon svg { width: 14px; height: 14px; }
 
 @media (prefers-reduced-motion: reduce) { .mdot.connecting, .mact i.busy { animation: none; } }
-/* Folders window: a folder icon where an agent row has its agent icons, and line 2 under the name. */
-#rows li.folder .repo { padding-left: 20px; }
+/* Folders list: a folder icon where no agent works, in the place of the agent icons. */
 .ficon { display: flex; flex: none; color: var(--muted); }
 .ficon svg { width: 14px; height: 14px; }
 /* The remove button takes the place of the line counts while the row is hovered or focused. */

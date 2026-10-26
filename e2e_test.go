@@ -898,13 +898,12 @@ func TestBrowser(t *testing.T) {
 		b.waitFor("the PRs tab on #482", prsTab+`.classList.contains('active') && !document.querySelector('#prs-branch').hidden && document.querySelector('#prs-branch .pr-num')?.textContent === '#482'`)
 		b.noErrors()
 
-		// kijk <PR link> opens the pull request in the folders window, in the clone kijk knows.
-		f := openPage(t, newTab(t, tab), k, "/?window=folders")
-		f.waitFor("the folders window", `document.title === 'kijk · Folders'`)
-		if out := runCmd(t, k.env, exe, "-port", fmt.Sprint(k.port), "-no-open", "https://github.com/acme/review/pull/477"); !strings.Contains(out, "Added review") {
+		// kijk <PR link> opens the pull request in the kijk window, in the clone of the agent that works there.
+		if out := runCmd(t, k.env, exe, "-port", fmt.Sprint(k.port), "-no-open", "https://github.com/acme/review/pull/477"); !strings.Contains(out, "Opened #477 in review. It is open in the kijk window.") {
 			t.Fatalf("kijk <PR link> said:\n%s", out)
 		}
-		f.waitFor("#477 in the folders window", `!document.querySelector('#prs-pr').hidden && document.querySelector('#prs-pr .pr-num')?.textContent === '#477' && (t => t?.firstChild.textContent === 'Changes' && t.querySelector('.muted')?.textContent === '#477')(document.querySelector('#filetabs .filetab.active'))`)
+		b.waitFor("#477 in the window", `!document.querySelector('#prs-pr').hidden && document.querySelector('#prs-pr .pr-num')?.textContent === '#477' && (t => t?.firstChild.textContent === 'Changes' && t.querySelector('.muted')?.textContent === '#477')(document.querySelector('#filetabs .filetab.active'))`)
+		b.waitFor("the Agents list, where the agent's row is", `document.querySelector('#rail').getAttribute('aria-label') === 'Agents' && `+row("Fix the login")+`.classList.contains('selected')`)
 		// Not logged in to gh: the tab opens on This branch and says why there is no list.
 		forge.set(t, "gh-error.txt", "To get started with GitHub CLI, please run:  gh auth login")
 		b.act("reload", chromedp.Reload())
@@ -924,7 +923,7 @@ func TestBrowser(t *testing.T) {
 		if cmd.ProcessState.ExitCode() != 1 || !strings.Contains(string(out), "No folder of github.com/acme/billing is in kijk. Add a folder of this repo first: kijk <folder>") {
 			t.Fatalf("a link to a repo kijk has no clone of: %v\n%s", err, out)
 		}
-		f.noErrors()
+		b.noErrors()
 	})
 
 	t.Run("reviews", func(t *testing.T) {

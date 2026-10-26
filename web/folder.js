@@ -56,8 +56,8 @@ let page = null;
 
 // setupFolder tells the view about the page around it: lastKey, the localStorage key that keeps the
 // open folder; start, shown when no folder is open; announce(text); say(text), a short note in the
-// status bar; agentIcon(row), the icon of the row's agent type; and onFolderEvent, run on each live
-// update of the folder.
+// status bar; agentIcon(row), the icon of the row's agent type; onFolderEvent, run on each live
+// update of the folder; and onGone, run when kijk no longer shows the open folder.
 export function setupFolder(p) {
   page = p;
   const openBranch = () => openTab({ kind: 'branch', path: '' }, true);
@@ -165,6 +165,15 @@ function followFolder() {
     refreshGit();
     refreshTree(change);
     refreshView(change);
+  };
+  // A stream the server refused stays closed. Only a 403 means the folder is no longer in kijk; a
+  // machine that is away answers otherwise, and its folder waits for it.
+  const stream = folderEvents;
+  stream.onerror = async () => {
+    if (stream.readyState !== EventSource.CLOSED) return;
+    const r = await fetch(stream.url).catch(() => null);
+    r?.body?.cancel();
+    if (r?.status === 403 && stream === folderEvents) page.onGone();
   };
 }
 
