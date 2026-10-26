@@ -14,8 +14,9 @@ import (
 )
 
 // Clone clones host/path into dir with gh or glab, with the user's own login and a normal
-// checkout; the tool talks to the terminal. host may name a port, which only glab takes. It clones into dir.part-<pid> and renames that, so a
-// stopped clone never leaves a half repo at dir. When dir holds a clone already, it does nothing.
+// checkout; the tool talks to the terminal. host may name a port, which only glab takes. It clones
+// into a part folder and renames that, so a stopped clone never leaves a half repo at dir. When dir
+// holds a clone already, it does nothing.
 func Clone(ctx context.Context, kind, host, path, dir string, in io.Reader, out, errOut io.Writer) error {
 	if isClone(dir) {
 		return nil
@@ -24,7 +25,7 @@ func Clone(ctx context.Context, kind, host, path, dir string, in io.Reader, out,
 		return err
 	}
 	sweepParts(dir)
-	part := fmt.Sprintf("%s.part-%d", dir, os.Getpid())
+	part := partOf(dir, os.Getpid())
 	os.RemoveAll(part) // left by a crashed run with this pid; no live run has it now
 	name, _, err := net.SplitHostPort(host)
 	if err != nil {
@@ -56,14 +57,20 @@ func isClone(dir string) bool {
 	return err == nil
 }
 
-// sweepParts removes the part folders of dir that a crashed run left. Age tells them apart: a run
-// that still clones made its part folder within the hour.
+// partOf is the part folder of the run with pid. Its "+" is in no repo name, so it is never a clone.
+func partOf(dir string, pid int) string {
+	return fmt.Sprintf("%s+part-%d", dir, pid)
+}
+
+// sweepParts removes the part folders of dir that a crashed run left: its process is gone, and the
+// folder is over an hour old, in case another machine shares the folder.
 func sweepParts(dir string) {
-	parent, prefix := filepath.Dir(dir), filepath.Base(dir)+".part-"
+	parent, prefix := filepath.Dir(dir), filepath.Base(dir)+"+part-"
 	entries, _ := os.ReadDir(parent)
 	for _, e := range entries {
-		pid, ok := strings.CutPrefix(e.Name(), prefix)
-		if _, err := strconv.Atoi(pid); !ok || err != nil {
+		rest, ok := strings.CutPrefix(e.Name(), prefix)
+		pid, err := strconv.Atoi(rest)
+		if !ok || err != nil || alive(pid) {
 			continue
 		}
 		if info, err := e.Info(); err == nil && time.Since(info.ModTime()) > time.Hour {

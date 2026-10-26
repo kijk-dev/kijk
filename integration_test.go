@@ -302,7 +302,7 @@ func TestStopDuringAClone(t *testing.T) {
 	// found gives the state file and part folders left in home.
 	found := func() (left []string) {
 		filepath.WalkDir(home, func(p string, d fs.DirEntry, err error) error {
-			if err == nil && (d.Name() == fmt.Sprintf("running-%d.json", k.port) || strings.HasPrefix(d.Name(), "billing.part-")) {
+			if err == nil && (d.Name() == fmt.Sprintf("running-%d.json", k.port) || strings.HasPrefix(d.Name(), "billing+part-")) {
 				left = append(left, p)
 			}
 			return nil

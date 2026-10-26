@@ -29,7 +29,7 @@ func cloneSource(t *testing.T) (repo, head string) {
 
 // parts are the part folders next to dir.
 func parts(dir string) []string {
-	found, _ := filepath.Glob(dir + ".part-*")
+	found, _ := filepath.Glob(dir + "+part-*")
 	return found
 }
 
@@ -40,7 +40,7 @@ func TestClone(t *testing.T) {
 	if err := Clone(context.Background(), "github", "github.com", "acme/billing", dir, nil, io.Discard, io.Discard); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"repo", "clone", "github.com/acme/billing", fmt.Sprintf("%s.part-%d", dir, os.Getpid())}
+	want := []string{"repo", "clone", "github.com/acme/billing", fmt.Sprintf("%s+part-%d", dir, os.Getpid())}
 	if c := calls(); len(c) != 1 || !slices.Equal(c[0].Args, want) {
 		t.Fatalf("calls %+v, want one with %q", c, want)
 	}
@@ -121,23 +121,39 @@ func TestCloneStopped(t *testing.T) {
 	}
 }
 
-// A part folder older than an hour is a crashed run's; a newer one may still be cloning.
+// A part folder of a run that is gone and over an hour old is a crashed run's. A run that still
+// clones keeps its part folder, and so does another repo, such as acme/billing.part-5.
 func TestCloneSweepsOldParts(t *testing.T) {
 	src, _ := cloneSource(t)
 	gittest.FakeTool(t, "gh", gittest.Rule{Has: "repo clone", Clone: src})
-	dir := filepath.Join(t.TempDir(), "billing")
-	old, live, other := dir+".part-111", dir+".part-222", dir+".part-old"
-	for _, p := range []string{old, live, other} {
-		gittest.Write(t, filepath.Join(p, ".git", "HEAD"), "ref: refs/heads/main\n")
+	exited := func() int {
+		cmd := exec.Command(os.Args[0], "-test.run=^$")
+		if err := cmd.Run(); err != nil {
+			t.Fatal(err)
+		}
+		return cmd.Process.Pid
 	}
-	hourAgo := time.Now().Add(-61 * time.Minute)
-	os.Chtimes(old, hourAgo, hourAgo)
-	os.Chtimes(other, hourAgo, hourAgo)
+	gone := exited()
+	dir := filepath.Join(t.TempDir(), "billing")
+	crashed, slow, young := partOf(dir, gone), partOf(dir, os.Getppid()), partOf(dir, exited())
+	repo, other := fmt.Sprintf("%s.part-%d", dir, gone), dir+"+part-old"
+	for _, p := range []string{crashed, slow, young, repo, other} {
+		gittest.Write(t, filepath.Join(p, ".git", "HEAD"), "ref: refs/heads/main\n")
+		if p != young {
+			hourAgo := time.Now().Add(-61 * time.Minute)
+			os.Chtimes(p, hourAgo, hourAgo)
+		}
+	}
 	if err := Clone(context.Background(), "github", "github.com", "acme/billing", dir, nil, io.Discard, io.Discard); err != nil {
 		t.Fatal(err)
 	}
-	if got := parts(dir); !slices.Equal(got, []string{live, other}) {
-		t.Fatalf("parts left %v, want %v", got, []string{live, other})
+	for _, p := range []string{slow, young, repo, other} {
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("swept %s", filepath.Base(p))
+		}
+	}
+	if _, err := os.Stat(crashed); err == nil {
+		t.Error("kept the crashed run's part folder")
 	}
 }
 

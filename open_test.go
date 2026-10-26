@@ -130,7 +130,7 @@ func TestCloneOnItsOwnPort(t *testing.T) {
 	clone(l, terminal{nil, io.Discard, io.Discard})
 	dir := filepath.Join(cache, "kijk", "clones", "gitlab.example.org", "team", "api")
 	c := calls()
-	if len(c) != 1 || c[0].GitlabHost != "gitlab.example.org:8443" || !strings.HasPrefix(c[0].Args[len(c[0].Args)-1], dir+".part-") {
+	if len(c) != 1 || c[0].GitlabHost != "gitlab.example.org:8443" || !strings.HasPrefix(c[0].Args[len(c[0].Args)-1], dir+"+part-") {
 		t.Fatalf("calls %+v", c)
 	}
 }

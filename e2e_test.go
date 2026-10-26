@@ -1517,7 +1517,7 @@ func TestBrowser(t *testing.T) {
 		dir := filepath.Join(cache, "kijk", "clones", "github.com", "acme", "billing")
 		said := "No clone of github.com/acme/billing on this machine.\n" +
 			"Cloning it with gh into " + strings.Replace(dir, home, "~", 1) + " …\n" +
-			"Cloning into '" + dir + ".part-"
+			"Cloning into '" + dir + "+part-"
 		if out, err := kijkPR(); err != nil || !strings.HasPrefix(out, said) || !strings.HasSuffix(out, "\nAdded billing and opened #12. It is open in the kijk window.\n") {
 			w.fail("kijk <PR link>: %v\n%s", err, out)
 		}
