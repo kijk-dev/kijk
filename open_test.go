@@ -294,9 +294,18 @@ func TestDeskPullRequest(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	useCacheDir(t)
+	// common is looked at before the agents' folders, so only some cases have it.
 	common := filepath.Join(home, "code", "shop")
-	run(t, home, "clone", "-q", main, common)
-	run(t, common, "remote", "set-url", "origin", "https://github.com/acme/shop.git")
+	setCommon := func(want bool) {
+		_, err := os.Stat(common)
+		switch {
+		case !want:
+			os.RemoveAll(common)
+		case err != nil:
+			run(t, home, "clone", "-q", main, common)
+			run(t, common, "remote", "set-url", "origin", "https://github.com/acme/shop.git")
+		}
+	}
 	os.Mkdir(filepath.Join(main, "web"), 0o755)
 	useConfigDir(t)
 	shop := &prLink{Kind: "github", Host: "github.com", Path: "acme/shop", Number: 477}
@@ -313,24 +322,26 @@ func TestDeskPullRequest(t *testing.T) {
 		want   openReply
 		open   openRequest
 		list   []string // the folders list after
+		common bool     // a clone sits in ~/code/shop
 	}{
 		{"saved", openAsk{PR: shop}, []savedFolder{{Path: other}, {Path: main}}, nil,
-			openReply{Said: "Opened #477 in " + name + ".", Seq: 1}, openRequest{Seq: 1, Root: main, PR: 477}, []string{other, main}},
+			openReply{Said: "Opened #477 in " + name + ".", Seq: 1}, openRequest{Seq: 1, Root: main, PR: 477}, []string{other, main}, false},
 		{"an agent works in the clone", openAsk{PR: shop}, nil, []Row{agentRow(main)},
-			openReply{Said: "Opened #477 in " + name + ".", Seq: 1}, openRequest{Seq: 1, Root: main, PR: 477}, []string{}},
+			openReply{Said: "Opened #477 in " + name + ".", Seq: 1}, openRequest{Seq: 1, Root: main, PR: 477}, []string{}, false},
 		{"an agent works in a worktree of it", openAsk{PR: shop}, nil, []Row{agentRow(worktree)},
-			openReply{Said: "Found " + name + " at " + main + ". Added it and opened #477.", Seq: 1}, openRequest{Seq: 1, Root: main, PR: 477, Added: true}, []string{main}},
+			openReply{Said: "Found " + name + " at " + main + ". Added it and opened #477.", Seq: 1}, openRequest{Seq: 1, Root: main, PR: 477, Added: true}, []string{main}, false},
 		{"kijk runs in a folder of the clone", openAsk{PR: shop, Cwd: filepath.Join(main, "web")}, nil, nil,
-			openReply{Said: "Found " + name + " at " + main + ". Added it and opened #477.", Seq: 1}, openRequest{Seq: 1, Root: main, PR: 477, Added: true}, []string{main}},
+			openReply{Said: "Found " + name + " at " + main + ". Added it and opened #477.", Seq: 1}, openRequest{Seq: 1, Root: main, PR: 477, Added: true}, []string{main}, false},
 		{"a common place", openAsk{PR: shop}, nil, nil,
-			openReply{Said: "Found shop at " + filepath.FromSlash("~/code/shop") + ". Added it and opened #477.", Seq: 1}, openRequest{Seq: 1, Root: common, PR: 477, Added: true}, []string{common}},
+			openReply{Said: "Found shop at " + filepath.FromSlash("~/code/shop") + ". Added it and opened #477.", Seq: 1}, openRequest{Seq: 1, Root: common, PR: 477, Added: true}, []string{common}, true},
 		{"the command cloned it", openAsk{PR: shop, Folders: []string{common}}, nil, nil,
-			openReply{Said: "Added shop and opened #477.", Seq: 1}, openRequest{Seq: 1, Root: common, PR: 477, Added: true}, []string{common}},
+			openReply{Said: "Added shop and opened #477.", Seq: 1}, openRequest{Seq: 1, Root: common, PR: 477, Added: true}, []string{common}, true},
 		{"no clone", openAsk{PR: web}, []savedFolder{{Path: other}}, nil,
-			openReply{NoClone: true, Said: "No clone of github.com/acme/web in 1 folder on this machine."}, openRequest{}, []string{other}},
+			openReply{NoClone: true, Said: "No clone of github.com/acme/web in 1 folder on this machine."}, openRequest{}, []string{other}, false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			useConfigDir(t)
+			setCommon(c.common)
 			d, h := testDesk(t)
 			d.fl.add(c.saved)
 			d.rl.setAgents(&agentPart{rows: c.agents})

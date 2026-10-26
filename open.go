@@ -250,11 +250,13 @@ func (d *openDesk) openPR(root string, n int, found bool, rep openReply) (openRe
 }
 
 // findClone looks for a local clone of l's repo and gives its main clone, or "", and how many
-// places it checked. While no window looks for agents, it scans for them once.
+// places it checked. While no window looks for agents, it scans for them once, when it gets to them.
 func (d *openDesk) findClone(l prLink, cwd string) (string, int) {
-	agents, ok := d.rl.agentRoots()
-	if !ok {
-		agents = localAgentFolders()
+	agents := func() []string {
+		if roots, ok := d.rl.agentRoots(); ok {
+			return roots
+		}
+		return localAgentFolders()
 	}
 	home, _ := os.UserHomeDir()
 	cache, _ := cacheDir()

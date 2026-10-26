@@ -67,20 +67,25 @@ func TestPRCandidates(t *testing.T) {
 	p := filepath.FromSlash
 	billing := prLink{Kind: "github", Host: "github.com", Path: "acme/billing", Number: 12}
 	saved := []string{p("/h/code/shop"), p("/h/code/billing")}
-	agents := []string{p("/h/work/shop-agent"), p("/h/code/shop")}
+	scans := 0
+	agents := func() []string {
+		scans++
+		return []string{p("/h/work/shop-agent"), p("/h/code/shop"), p("/h/play/api")}
+	}
+	none := func() []string { return nil }
 	want := []string{
 		// Where kijk runs, its parents up to home, and the repo's name in it and next to it.
 		"/h/code/shop/web", "/h/code/shop", "/h/code", "/h/code/shop/web/billing", "/h/code/shop/billing",
 		// Saved folders.
 		"/h/code/billing",
-		// kijk's own clone.
+		// kijk's own clone. Folders next to the saved folders are there already.
 		"/h/.cache/kijk/clones/github.com/acme/billing",
-		// Agent folders, then folders next to the saved and agent folders.
-		"/h/work/shop-agent", "/h/work/billing",
 		// Common places.
 		"/h/src/billing", "/h/projects/billing", "/h/repos/billing", "/h/dev/billing", "/h/git/billing",
-		"/h/workspace/billing", "/h/Workspaces/billing", "/h/Developer/billing",
+		"/h/work/billing", "/h/workspace/billing", "/h/Workspaces/billing", "/h/Developer/billing",
 		"/h/go/src/github.com/acme/billing", "/h/ghq/github.com/acme/billing", "/h/src/github.com/acme/billing", "/h/code/github.com/acme/billing",
+		// Agent folders, then folders next to them: these need an agent scan.
+		"/h/work/shop-agent", "/h/play/api", "/h/play/billing",
 	}
 	check := func(got, want []string) {
 		t.Helper()
@@ -91,11 +96,18 @@ func TestPRCandidates(t *testing.T) {
 			t.Errorf("got\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 		}
 	}
-	check(prCandidates(billing, saved, agents, p("/h/code/shop/web"), p("/h"), p("/h/.cache")), want)
+	places := prCandidates(billing, saved, agents, p("/h/code/shop/web"), p("/h"), p("/h/.cache"))
+	for range places {
+		break // a match before the agent folders
+	}
+	if scans != 0 {
+		t.Error("scanned for agents before their folders were reached")
+	}
+	check(slices.Collect(places), want)
 	// Outside the home folder, the parents go up to the root, which is never a clone.
-	check(prCandidates(billing, nil, nil, p("/srv/x"), "", ""), []string{"/srv/x", "/srv", "/srv/x/billing", "/srv/billing"})
+	check(slices.Collect(prCandidates(billing, nil, none, p("/srv/x"), "", "")), []string{"/srv/x", "/srv", "/srv/x/billing", "/srv/billing"})
 	api := prLink{Kind: "gitlab", Host: "gitlab.com", Path: "group/sub/api", Number: 3}
-	got := prCandidates(api, nil, nil, "", p("/h"), p("/c"))
+	got := slices.Collect(prCandidates(api, nil, none, "", p("/h"), p("/c")))
 	if got[0] != p("/c/kijk/clones/gitlab.com/group/sub/api") || got[1] != p("/h/code/api") || got[len(got)-1] != p("/h/code/gitlab.com/group/sub/api") {
 		t.Errorf("a GitLab subgroup: %q", got)
 	}
@@ -125,7 +137,7 @@ func TestMatchClone(t *testing.T) {
 		{"an origin rewritten to a mirror", []string{mirror}, mirror, 1},
 		{"no clone", []string{plain, other}, "", 1},
 	} {
-		root, checked := matchClone(shop, c.places)
+		root, checked := matchClone(shop, slices.Values(c.places))
 		if realPath(root) != realPath(c.root) || checked != c.checked {
 			t.Errorf("%s: %q after %d places, want %q after %d", c.name, root, checked, c.root, c.checked)
 		}
@@ -138,11 +150,20 @@ func TestMatchClone(t *testing.T) {
 		os.MkdirAll(filepath.Join(d, ".git"), 0o755)
 		many = append(many, d)
 	}
-	if root, checked := matchClone(shop, append(slices.Clone(many), main)); root != "" || checked != 64 {
+	if root, checked := matchClone(shop, slices.Values(append(slices.Clone(many), main))); root != "" || checked != 64 {
 		t.Errorf("past the cap: %q after %d places", root, checked)
 	}
-	if root, checked := matchClone(shop, append(many[:63], main)); realPath(root) != realPath(main) || checked != 64 {
+	if root, checked := matchClone(shop, slices.Values(append(slices.Clone(many[:63]), main))); realPath(root) != realPath(main) || checked != 64 {
 		t.Errorf("the 64th place: %q after %d places", root, checked)
+	}
+	// The cap counts the agents' folders too, and a miss at the cap scans for no agents.
+	scans := 0
+	agents := func() []string { scans++; return []string{main} }
+	if root, checked := matchClone(shop, prCandidates(shop, many[:63], agents, "", "", "")); realPath(root) != realPath(main) || checked != 64 {
+		t.Errorf("an agent's folder as the 64th place: %q after %d places", root, checked)
+	}
+	if root, checked := matchClone(shop, prCandidates(shop, many, agents, "", "", "")); root != "" || checked != 64 || scans != 1 {
+		t.Errorf("past the cap before the agents: %q after %d places, %d scans", root, checked, scans)
 	}
 }
 
@@ -152,7 +173,7 @@ func TestMatchClonePort(t *testing.T) {
 	repo := gitRepo(t)
 	run(t, repo, "remote", "add", "origin", "https://gitlab.example.org:8443/team/api.git")
 	link, _ := parsePRLink("https://gitlab.example.org:8443/team/api/-/merge_requests/3")
-	if root, _ := matchClone(link, []string{repo}); root == "" {
+	if root, _ := matchClone(link, slices.Values([]string{repo})); root == "" {
 		t.Errorf("no clone found for %+v", link)
 	}
 }

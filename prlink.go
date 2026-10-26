@@ -1,12 +1,12 @@
 package main
 
 import (
+	"iter"
 	"net"
 	"os"
 	"path"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"strconv"
 	"strings"
 
@@ -69,43 +69,58 @@ func (l prLink) server() string {
 }
 
 // prCandidates lists the places that may hold a clone of l's repo, most likely first, with no
-// duplicates. It joins paths only and runs no process.
-func prCandidates(l prLink, saved, agents []string, cwd, home, cache string) []string {
+// duplicates. It joins paths only and runs no process; it calls agents only when the places before
+// the agents' folders are used up.
+func prCandidates(l prLink, saved []string, agents func() []string, cwd, home, cache string) iter.Seq[string] {
 	name := path.Base(l.Path)
-	var places []string
-	seen := map[string]bool{"": true}
-	add := func(ps ...string) {
-		for _, p := range ps {
-			if !seen[p] {
-				seen[p] = true
-				places = append(places, p)
-			}
+	next := func(rs []string) []string {
+		var ps []string
+		for _, r := range rs {
+			ps = append(ps, filepath.Join(filepath.Dir(r), name))
 		}
+		return ps
 	}
+	var first []string
 	if cwd != "" {
 		// kijk may run in a subfolder of the clone, or in the folder that holds it.
 		for d := filepath.Clean(cwd); d != home && d != filepath.Dir(d); d = filepath.Dir(d) {
-			add(d)
+			first = append(first, d)
 		}
-		add(filepath.Join(cwd, name), filepath.Join(filepath.Dir(cwd), name))
+		first = append(first, filepath.Join(cwd, name), filepath.Join(filepath.Dir(cwd), name))
 	}
-	add(saved...)
+	first = append(first, saved...)
 	if cache != "" {
-		add(cloneDir(cache, l))
+		first = append(first, cloneDir(cache, l))
 	}
-	add(agents...)
-	for _, r := range slices.Concat(saved, agents) {
-		add(filepath.Join(filepath.Dir(r), name))
-	}
+	first = append(first, next(saved)...)
 	if home != "" {
 		for _, d := range []string{"code", "src", "projects", "repos", "dev", "git", "work", "workspace", "Workspaces", "Developer"} {
-			add(filepath.Join(home, d, name))
+			first = append(first, filepath.Join(home, d, name))
 		}
 		for _, d := range []string{"go/src", "ghq", "src", "code"} {
-			add(filepath.Join(home, filepath.FromSlash(d), l.Host, filepath.FromSlash(l.Path)))
+			first = append(first, filepath.Join(home, filepath.FromSlash(d), l.Host, filepath.FromSlash(l.Path)))
 		}
 	}
-	return places
+	return func(yield func(string) bool) {
+		seen := map[string]bool{"": true}
+		each := func(ps []string) bool {
+			for _, p := range ps {
+				if !seen[p] {
+					seen[p] = true
+					if !yield(p) {
+						return false
+					}
+				}
+			}
+			return true
+		}
+		if each(first) {
+			as := agents()
+			if each(as) {
+				each(next(as))
+			}
+		}
+	}
 }
 
 // maxChecked bounds what a miss costs: each place with .git costs a git process or two.
@@ -113,14 +128,11 @@ const maxChecked = 64
 
 // matchClone returns the main clone of the first place whose origin is l's repo, so an agent's
 // worktree leads to the clone it belongs to, and how many places with .git it checked.
-func matchClone(l prLink, places []string) (root string, checked int) {
+func matchClone(l prLink, places iter.Seq[string]) (root string, checked int) {
 	same := func(host, path string, ok bool) bool {
 		return ok && strings.EqualFold(host, l.Host) && strings.EqualFold(path, l.Path)
 	}
-	for _, p := range places {
-		if checked == maxChecked {
-			break
-		}
+	for p := range places {
 		if _, err := os.Stat(filepath.Join(p, ".git")); err != nil {
 			continue
 		}
@@ -129,6 +141,9 @@ func matchClone(l prLink, places []string) (root string, checked int) {
 		// rewritten to a mirror still does.
 		if same(git.OriginURL(p)) || same(git.Origin(p)) {
 			return git.MainClone(p), checked
+		}
+		if checked == maxChecked {
+			break // before the next place, which may need an agent scan
 		}
 	}
 	return "", checked
