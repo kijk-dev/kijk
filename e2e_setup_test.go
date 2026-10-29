@@ -347,7 +347,7 @@ func (p page) emulate(scheme string, width int64) {
 	p.act("resize", chromedp.EmulateViewport(width, 900))
 	// The rail folds or unfolds a moment later, and moves what the next click aims at.
 	p.waitFor("the layout for the new width", fmt.Sprintf(
-		`innerWidth === %d && document.body.classList.contains('rail-collapsed') === matchMedia('(max-width: 900px)').matches`, width))
+		`innerWidth === %d && document.body.classList.contains('rail-collapsed') === (matchMedia('(max-width: 900px)').matches || localStorage.getItem('kijk.railCollapsed') === '1')`, width))
 }
 
 func (p page) screenshot(dir, name string) {

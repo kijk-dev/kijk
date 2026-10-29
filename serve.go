@@ -76,7 +76,7 @@ func runServe(name string) error {
 	token := newToken()
 	h := newHub()
 	rts := &viewer.Roots{}
-	go watchSessions(newScanner(agents.Types, agents.NewEnv(kijkVersion)), h, rts, nil, nil, nil, nil)
+	go watchSessions(newScanner(agents.Types, agents.NewEnv(kijkVersion)), h, newRail(h, rts), nil, nil, nil, nil)
 	srv := &http.Server{Handler: newServer(token, port, nil, h, rts, nil, nil, nil)}
 
 	state := filepath.Join(dir, "serve-"+name+".json")

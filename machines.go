@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -18,7 +19,7 @@ import (
 	"github.com/kijk-dev/kijk/internal/viewer"
 )
 
-// machineView is one remote machine on /api/events.
+// machineView is one remote machine on /api/events. Its rows go out merged into the rail's rows.
 type machineView struct {
 	Name    string      `json:"name"`
 	State   string      `json:"state"`
@@ -26,7 +27,7 @@ type machineView struct {
 	Message string      `json:"message,omitempty"`
 	Errors  []typeError `json:"errors,omitempty"` // the agent types kijk on the machine cannot read
 	Stale   bool        `json:"stale"`
-	Rows    []Row       `json:"rows"`
+	Rows    []Row       `json:"-"`
 }
 
 // machineManager keeps one goroutine per enabled saved machine and follows machines.json.
@@ -194,12 +195,8 @@ type remoteMachine struct {
 func (r *remoteMachine) view() machineView {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	rows := r.rows
-	if rows == nil {
-		rows = []Row{}
-	}
 	v := machineView{Name: r.name, State: r.state, System: r.system, Message: r.message,
-		Stale: r.state != stateConnected && len(r.rows) > 0, Rows: rows}
+		Stale: r.state != stateConnected && len(r.rows) > 0, Rows: r.rows}
 	if r.state == stateConnected {
 		v.Errors = r.errors
 	}
@@ -422,13 +419,15 @@ func (r *remoteMachine) follow(ctx context.Context) error {
 			continue
 		}
 		var msg struct {
-			Rows   []Row       `json:"rows"`
-			Errors []typeError `json:"errors"`
+			Rows    []Row       `json:"rows"`
+			Errors  []typeError `json:"errors"`
+			Scanned *bool       `json:"scanned"` // missing from a remote kijk of an older build
 		}
-		if json.Unmarshal([]byte(data), &msg) != nil {
+		if json.Unmarshal([]byte(data), &msg) != nil || msg.Scanned != nil && !*msg.Scanned {
 			continue
 		}
-		r.set(ctx, func() { r.rows, r.errors = msg.Rows, msg.Errors })
+		rows := slices.DeleteFunc(msg.Rows, func(row Row) bool { return row.AgentSource == nil })
+		r.set(ctx, func() { r.rows, r.errors = rows, msg.Errors })
 	}
 }
 

@@ -12,8 +12,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/kijk-dev/kijk/internal/viewer"
 )
 
 // abs makes a slash path absolute on this system: Windows needs a drive letter.
@@ -64,15 +62,16 @@ func TestFolderListKeepsBrokenFileErrorAfterSave(t *testing.T) {
 	p, _ := foldersPath()
 	os.MkdirAll(filepath.Dir(p), 0o700)
 	os.WriteFile(p, []byte(`{"folders": [`), 0o600)
-	l := newFolderList(p, &viewer.Roots{})
-	if _, err := l.add([]savedFolder{{Path: abs("/api")}}, 0); err != nil {
+	rl, h, _ := testRail()
+	l := newFolderList(p, nil, rl)
+	if _, err := l.add([]savedFolder{{Path: abs("/api")}}); err != nil {
 		t.Fatal(err)
 	}
 	if saved, _ := readFolders(p); !slices.Equal(saved, []savedFolder{{Path: abs("/api")}}) {
 		t.Errorf("saved %v", saved)
 	}
-	if _, _, _, err := l.snapshot(); err == nil || !strings.Contains(err.Error(), "folders.json.bad") {
-		t.Errorf("pane error %v", err)
+	if e := shown(t, h).ListError; !strings.Contains(e, "folders.json.bad") {
+		t.Errorf("list error %q", e)
 	}
 }
 
@@ -85,16 +84,29 @@ func TestFolderListDoesNotOverwriteUnreadableFile(t *testing.T) {
 	writeFolders(p, []savedFolder{{Path: "/keep"}})
 	os.Chmod(p, 0)
 	t.Cleanup(func() { os.Chmod(p, 0o600) })
-	l := newFolderList(p, &viewer.Roots{})
-	if _, err := l.add([]savedFolder{{Path: "/api"}}, 0); err == nil {
+	rl, h, _ := testRail()
+	l := newFolderList(p, nil, rl)
+	if _, err := l.add([]savedFolder{{Path: "/api"}}); err == nil {
 		t.Error("add saved over a file it could not read")
 	}
 	os.Chmod(p, 0o600)
 	if saved, _ := readFolders(p); !slices.Equal(saved, []savedFolder{{Path: "/keep"}}) {
 		t.Errorf("file now %v", saved)
 	}
-	if _, _, _, err := l.snapshot(); err == nil || !strings.Contains(err.Error(), "permission denied") {
-		t.Errorf("pane error %v", err)
+	if e := shown(t, h).ListError; !strings.Contains(e, "permission denied") {
+		t.Errorf("list error %q", e)
+	}
+}
+
+// Without a place for the list, kijk still runs and says why nothing is saved.
+func TestFolderListWithoutPath(t *testing.T) {
+	rl, h, _ := testRail()
+	l := newFolderList("", errors.New("$HOME is not defined"), rl)
+	if _, err := l.add([]savedFolder{{Path: abs("/api")}}); err == nil {
+		t.Error("add said it saved the list")
+	}
+	if e := shown(t, h).ListError; !strings.Contains(e, "cannot find the folders list: $HOME is not defined") {
+		t.Errorf("list error %q", e)
 	}
 }
 
@@ -166,9 +178,9 @@ func TestCheckFoldersAddsNothingOnError(t *testing.T) {
 func TestFolderListUndo(t *testing.T) {
 	useConfigDir(t)
 	p, _ := foldersPath()
-	rts := &viewer.Roots{}
-	l := newFolderList(p, rts)
-	l.add([]savedFolder{{Path: abs("/api")}, {Path: abs("/k"), Open: abs("/k/web")}, {Path: abs("/notes")}}, 0)
+	rl, _, rts := testRail()
+	l := newFolderList(p, nil, rl)
+	l.add([]savedFolder{{Path: abs("/api")}, {Path: abs("/k"), Open: abs("/k/web")}, {Path: abs("/notes")}})
 	if !l.remove(abs("/k")) || !l.remove(abs("/notes")) || rts.Has(abs("/k")) {
 		t.Fatal("remove")
 	}
@@ -178,36 +190,36 @@ func TestFolderListUndo(t *testing.T) {
 	if !l.restore(abs("/notes")) || l.restore(abs("/notes")) {
 		t.Error("restore the last removal once")
 	}
-	list, open, _, _ := l.snapshot()
-	if !slices.Equal(list, []savedFolder{{Path: abs("/api")}, {Path: abs("/notes")}}) || open.Root != abs("/notes") || !rts.Has(abs("/notes")) {
-		t.Fatalf("list %v open %v", list, open)
+	list, _ := l.snapshot()
+	if !slices.Equal(list, []savedFolder{{Path: abs("/api")}, {Path: abs("/notes")}}) || !rts.Has(abs("/notes")) {
+		t.Fatalf("list %v", list)
 	}
 	if saved, _ := readFolders(p); !slices.Equal(saved, list) {
 		t.Fatalf("saved %v", saved)
 	}
 }
 
-func TestFolderRowMissing(t *testing.T) {
+func TestFolderMissing(t *testing.T) {
 	gone := filepath.Join(t.TempDir(), "gone")
-	if r := folderRowOf(savedFolder{Path: gone}); !r.Missing || r.Repo != "gone" {
-		t.Fatalf("missing row %+v", r)
+	if f := folderFactsOf(gone); !f.missing {
+		t.Fatalf("facts of a missing folder %+v", f)
 	}
 }
 
-// A row the window asks for is refreshed at once, not on its turn.
-func TestFolderRowRefreshWhenAsked(t *testing.T) {
+// A folder the window asks for is counted at once, not on its turn.
+func TestFolderRefreshWhenAsked(t *testing.T) {
 	isolatedGit(t)
 	useConfigDir(t)
 	dir, _ := filepath.EvalSymlinks(t.TempDir())
 	run(t, dir, "init", "-q")
 	other := t.TempDir()
 	p, _ := foldersPath()
-	h := newHub()
-	l := newFolderList(p, &viewer.Roots{})
-	go l.watch(h, nil)
+	rl, h, _ := testRail()
+	l := newFolderList(p, nil, rl)
+	go l.watch(h)
 	srv := httptest.NewServer(http.HandlerFunc(h.serveEvents))
 	t.Cleanup(srv.Close)
-	resp, err := http.Get(srv.URL + "?window=folders")
+	resp, err := http.Get(srv.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -234,8 +246,8 @@ func TestFolderRowRefreshWhenAsked(t *testing.T) {
 			t.Fatalf("no message with %s", want)
 		}
 	}
-	l.add([]savedFolder{{Path: dir}, {Path: other}}, 0)
-	next(`"add":0`)
+	l.add([]savedFolder{{Path: dir}, {Path: other}})
+	next(`"add":0,"del":0,"counted":true`)
 	os.WriteFile(filepath.Join(dir, "new.txt"), []byte("a\nb\n"), 0o644)
 	if !l.refresh(dir) || l.refresh("/nope") {
 		t.Fatal("refresh")
@@ -243,20 +255,36 @@ func TestFolderRowRefreshWhenAsked(t *testing.T) {
 	next(`"add":2`)
 }
 
-// kijk <PR link> asks the folders window to open the clone on that pull request.
-func TestFolderListOpenPR(t *testing.T) {
+// Line counts go on for a minute after the window closes, so a reload does not count every folder
+// again; then they are dropped, and the next window waits for fresh ones.
+func TestFolderCountsGrace(t *testing.T) {
+	isolatedGit(t)
 	useConfigDir(t)
+	dir, _ := filepath.EvalSymlinks(t.TempDir())
+	run(t, dir, "init", "-q")
 	p, _ := foldersPath()
-	l := newFolderList(p, &viewer.Roots{})
-	l.add([]savedFolder{{Path: abs("/shop")}}, 477)
-	if _, open, _, _ := l.snapshot(); open.Root != abs("/shop") || open.PR != 477 {
-		t.Fatalf("open %+v", open)
+	rl, h, _ := testRail()
+	l := newFolderList(p, nil, rl)
+	l.add([]savedFolder{{Path: dir}})
+	go l.watch(h)
+	counted := func() bool { m := shown(t, h); return len(m.Rows) == 1 && m.Rows[0].Saved.Counted }
+	wait := func(want bool, why string) {
+		t.Helper()
+		for deadline := time.Now().Add(3 * time.Second); counted() != want; time.Sleep(10 * time.Millisecond) {
+			if time.Now().After(deadline) {
+				t.Fatal(why)
+			}
+		}
 	}
-	l.add([]savedFolder{{Path: abs("/notes")}}, 0)
-	if _, open, _, _ := l.snapshot(); open.Root != abs("/notes") || open.PR != 0 {
-		t.Fatalf("a folder alone opens no pull request: %+v", open)
+	if counted() {
+		t.Fatal("counted with no window")
 	}
-	if u := foldersURL(7717, "t", []savedFolder{{Path: "/shop"}}, 477); !strings.HasSuffix(u, "&window=folders&open=%2Fshop&pr=477") {
-		t.Errorf("url %s", u)
-	}
+	h.mu.Lock()
+	h.left = time.Now() // a window closed just now
+	h.mu.Unlock()
+	wait(true, "not counted within the minute after a window closed")
+	h.mu.Lock()
+	h.left = time.Now().Add(-2 * time.Minute)
+	h.mu.Unlock()
+	wait(false, "counts kept after the minute")
 }

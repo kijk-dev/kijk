@@ -5,20 +5,26 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Rule is one answer of a fake tool: the first rule whose Has is in the arguments or stdin gives
 // what the tool prints to stdout and stderr and its exit status. An empty Has matches every call.
+// With Clone, the tool first clones that repo into its last argument, as gh repo clone does; with
+// Wait, it then waits that long, so a test can stop it while it runs.
 type Rule struct {
-	Has  string
-	Out  string
-	Err  string
-	Exit int
+	Has   string
+	Out   string
+	Err   string
+	Exit  int
+	Clone string
+	Wait  time.Duration
 }
 
 var fakeNames = []string{"gh", "glab"}
@@ -38,10 +44,12 @@ func FakeTool(t *testing.T, name string, rules ...Rule) (args func() []string) {
 	}
 }
 
-// Call is one call of a fake tool: its arguments, and what it read with --input -.
+// Call is one call of a fake tool: its arguments, what it read with --input -, and the GitLab
+// host it was given.
 type Call struct {
-	Args  []string
-	Stdin string
+	Args       []string
+	Stdin      string
+	GitlabHost string `json:",omitempty"`
 }
 
 // FakeToolCalls is FakeTool, and gives every call so far.
@@ -121,7 +129,7 @@ func RunFakeTool() {
 	}
 	dir := filepath.Dir(exe)
 	args := os.Args[1:]
-	call := Call{Args: args}
+	call := Call{Args: args, GitlabHost: os.Getenv("GITLAB_HOST")}
 	for i, a := range args {
 		if a == "--input" && i+1 < len(args) && args[i+1] == "-" {
 			in, _ := io.ReadAll(os.Stdin)
@@ -140,6 +148,14 @@ func RunFakeTool() {
 	all := strings.Join(args, " ") + " " + call.Stdin
 	for _, r := range rules {
 		if strings.Contains(all, r.Has) {
+			if r.Clone != "" {
+				cmd := exec.Command("git", "clone", "-q", r.Clone, args[len(args)-1])
+				cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+				if cmd.Run() != nil {
+					os.Exit(1)
+				}
+			}
+			time.Sleep(r.Wait)
 			fmt.Print(r.Out)
 			fmt.Fprint(os.Stderr, r.Err)
 			os.Exit(r.Exit)

@@ -131,11 +131,11 @@ func TestOnlyOneActionStarts(t *testing.T) {
 	}
 }
 
-func TestSessionMessageCarriesTheStatusBar(t *testing.T) {
+func TestRailMessageCarriesTheStatusBar(t *testing.T) {
 	u := newUpdater("0.2.0", "", &bytes.Buffer{})
 	u.foundLatest("0.3.0")
-	h := newHub()
-	h.publish(windowAgents, sessionMessage([]Row{}, nil, false, u.state(), nil))
+	rl, h, _ := testRail()
+	rl.setKijk(u.state())
 	srv := httptest.NewServer(http.HandlerFunc(h.serveEvents))
 	defer srv.Close()
 	resp, err := http.Get(srv.URL)

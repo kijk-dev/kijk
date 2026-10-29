@@ -76,25 +76,6 @@ func TestParseBoot(t *testing.T) {
 	}
 }
 
-func TestSessionMessageWithoutMachines(t *testing.T) {
-	var mm *machineManager
-	b := sessionMessage([]Row{}, nil, false, kijkState{Version: "0.9.0"}, mm.views())
-	if string(b) != `{"rows":[],"kijk":{"version":"0.9.0","canRestart":false}}` {
-		t.Fatalf("local-only message changed: %s", b)
-	}
-	b = sessionMessage(nil, nil, false, kijkState{}, []machineView{{Name: "azvm", State: stateDisabled, Rows: []Row{}}})
-	if !strings.Contains(string(b), `"machines":[{"name":"azvm","state":"disabled","stale":false,"rows":[]}]`) {
-		t.Fatalf("machines: %s", b)
-	}
-}
-
-func TestSessionMessageErrors(t *testing.T) {
-	b := sessionMessage([]Row{}, []typeError{{"claude", "cannot read"}}, true, kijkState{Version: "0.9.0"}, nil)
-	if string(b) != `{"rows":[],"errors":[{"type":"claude","error":"cannot read"}],"noneInstalled":true,"kijk":{"version":"0.9.0","canRestart":false}}` {
-		t.Fatalf("message: %s", b)
-	}
-}
-
 // The errors of the kijk on a remote machine pass through while it is connected.
 func TestRemoteErrors(t *testing.T) {
 	msg := `{"rows":[{"root":"/r","names":["a"],"agents":[{"type":"codex","busy":false}]}],"errors":[{"type":"claude","error":"cannot read session file"}],"noneInstalled":true}`
@@ -115,15 +96,31 @@ func TestRemoteErrors(t *testing.T) {
 	}
 }
 
+// A remote kijk that has not looked for agents yet does not empty the machine's rows.
+func TestRemoteBeforeScan(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, "data: %s\n\n", `{"rows":[{"root":"/r","names":["a"],"agents":[{"type":"codex","busy":false}]}],"scanned":true}`)
+		fmt.Fprintf(w, "data: %s\n\n", `{"rows":[],"scanned":false}`)
+	}))
+	defer srv.Close()
+	addr := strings.TrimPrefix(srv.URL, "http://")
+	r := &remoteMachine{name: "azvm", mm: newMachineManager("0.9.0"), state: stateConnected,
+		proxy: newRemoteProxy(&http.Transport{}, addr, &http.Cookie{Name: "kijk", Value: "token"})}
+	r.follow(context.Background())
+	if v := r.view(); len(v.Rows) != 1 || v.Rows[0].Root != "/r" {
+		t.Fatalf("rows %+v", v.Rows)
+	}
+}
+
 func TestMachineViewsAndCounts(t *testing.T) {
 	mm := newMachineManager("0.9.0")
 	mm.list = []*remoteMachine{
-		{name: "azvm", state: stateConnected, rows: []Row{{Names: []string{"a", "b"}}}},
-		{name: "old", state: stateUnreachable, rows: []Row{{Names: []string{"c"}}}},
+		{name: "azvm", state: stateConnected, rows: []Row{{AgentSource: &AgentSource{Names: []string{"a", "b"}}}}},
+		{name: "old", state: stateUnreachable, rows: []Row{{AgentSource: &AgentSource{Names: []string{"c"}}}}},
 		{name: "off", state: stateDisabled},
 	}
 	v := mm.views()
-	if len(v) != 3 || v[0].Stale || !v[1].Stale || v[2].Stale || v[2].Rows == nil {
+	if len(v) != 3 || v[0].Stale || !v[1].Stale || v[2].Stale {
 		t.Fatalf("views %+v", v)
 	}
 	if m, a := mm.counts(); m != 3 || a != 2 {

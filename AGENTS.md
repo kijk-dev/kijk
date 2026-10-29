@@ -5,10 +5,11 @@ in code, UI text and commit messages.
 
 ## Layout
 
-- `main` at the root: the agent scan and its rows, remote machines, the folders window, update,
-  telemetry, and `newServer`, which puts all routes together. Platform code sits in files with a
-  `_darwin`, `_linux`, `_windows` or `_unix` suffix. Only CI runs the Linux and Windows code, so
-  keep those files small and behind the same functions as the macOS ones.
+- `main` at the root: the agent scan, remote machines, the folders list, the rail (`rail.go`) that
+  merges them into one list of rows, update, telemetry, and `newServer`, which puts all routes
+  together. Platform code sits in files with a `_darwin`, `_linux`, `_windows` or `_unix` suffix.
+  Only CI runs the Linux and Windows code, so keep those files small and behind the same functions
+  as the macOS ones.
 - `internal/agents`: the list of agent types. Each type is one file that adds itself to `Types`,
   with its reader and an embedded icon, and has a test folder in `testdata/<name>/`.
   `internal/agentstest`: test helpers for agent types, such as a fake Codex app server.
@@ -26,7 +27,8 @@ in code, UI text and commit messages.
   `layout.js` the Unified / Split choice of every diff, `dialog.js` the confirm dialog before a
   write, `api.js`, `keys.js`, `tip.js`, `viewer.css`, and `engines/` with one file per diagram
   engine.
-  The app side is the page around it: `app.js` (the rail), `status.js`, `app.css` and
+  The app side is the page around it: `app.js` (the rail and the list switcher), `rail.js` (the
+  rows of the rail and the rules over them, with no DOM), `status.js`, `app.css` and
   `index.html`. App files may import viewer files; viewer files never import app files, and a
   test in `main_test.go` checks it.
 

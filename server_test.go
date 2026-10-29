@@ -89,9 +89,9 @@ func TestSavedFolders(t *testing.T) {
 	dir, _ := filepath.EvalSymlinks(t.TempDir())
 	os.WriteFile(filepath.Join(dir, "a.txt"), []byte("hi\n"), 0o644)
 	p, _ := foldersPath()
-	h, rts := newHub(), &viewer.Roots{}
-	fl := newFolderList(p, rts)
-	srv := newServer("secret", 7717, nil, h, rts, nil, nil, fl)
+	rl, h, rts := testRail()
+	fl := newFolderList(p, nil, rl)
+	srv := newServer("secret", 7717, nil, h, rts, nil, nil, &openDesk{h, rl, fl})
 	do := func(method, target, body string) (int, string) {
 		r := httptest.NewRequest(method, target, strings.NewReader(body))
 		r.Host = "127.0.0.1:7717"
@@ -104,8 +104,8 @@ func TestSavedFolders(t *testing.T) {
 	if c, _ := do("GET", file, ""); c != http.StatusForbidden {
 		t.Fatalf("folder not in the list: %d", c)
 	}
-	body, _ := json.Marshal(map[string]any{"folders": []string{dir}})
-	if c, b := do("POST", "/api/folders/add", string(body)); c != http.StatusOK || !strings.Contains(b, `"added":[true],"window":false`) {
+	body, _ := json.Marshal(openAsk{Folders: []string{dir}})
+	if c, b := do("POST", "/api/open", string(body)); c != http.StatusOK || b != `{"said":"Added `+filepath.Base(dir)+`.","window":false,"seq":1}`+"\n" {
 		t.Fatalf("add: %d %s", c, b)
 	}
 	if c, b := do("GET", file, ""); c != http.StatusOK {
@@ -115,8 +115,12 @@ func TestSavedFolders(t *testing.T) {
 	if c, _ := do("GET", escape, ""); c != http.StatusForbidden && c != http.StatusNotFound {
 		t.Fatalf("path escape: %d", c)
 	}
-	if c, b := do("POST", "/api/folders/add", `{"folders":["relative"]}`); c != http.StatusBadRequest {
-		t.Fatalf("relative path: %d %s", c, b)
+	for _, bad := range []string{`{"folders":["relative"]}`, `{"list":"agents"}`, `{"pr":{"kind":"github","host":"github.com","path":"a/b","number":0}}`,
+		`{"pr":{"kind":"github","host":"github.com","path":"../../x","number":1}}`, `{"pr":{"kind":"bitbucket","host":"github.com","path":"a/b","number":1}}`,
+		`{"pr":{"kind":"github","host":"github.com","path":"a/b","number":1},"folders":["/a","/b"]}`, `{"pr":{"kind":"github","host":"github.com","path":"a/b","number":1},"cwd":"code"}`, `{`} {
+		if c, b := do("POST", "/api/open", bad); c != http.StatusBadRequest {
+			t.Fatalf("%s: %d %s", bad, c, b)
+		}
 	}
 	if c, _ := do("POST", "/api/folders/remove", `{"root":`+strconv.Quote(dir)+`}`); c != http.StatusOK {
 		t.Fatalf("remove: %d", c)
@@ -127,57 +131,74 @@ func TestSavedFolders(t *testing.T) {
 	if c, _ := do("POST", "/api/folders/restore", `{"root":`+strconv.Quote(dir)+`}`); c != http.StatusOK {
 		t.Fatalf("restore: %d", c)
 	}
-	if c, b := do("GET", "/api/folders", ""); c != http.StatusOK || !strings.Contains(b, `"window":false`) {
-		t.Fatalf("list: %d %s", c, b)
+	if c, b := do("POST", "/api/open", `{}`); c != http.StatusOK || b != `{"window":false}`+"\n" {
+		t.Fatalf("plain kijk: %d %s", c, b)
+	}
+	serve := newServer("secret", 7717, nil, newHub(), &viewer.Roots{}, nil, nil, nil)
+	r := httptest.NewRequest("POST", "/api/open", strings.NewReader(`{}`))
+	r.Host = "127.0.0.1:7717"
+	r.AddCookie(&http.Cookie{Name: cookieName(7717), Value: "secret"})
+	w := httptest.NewRecorder()
+	if serve.ServeHTTP(w, r); w.Code != http.StatusNotFound {
+		t.Fatalf("kijk serve has no folders list, but /api/open answers %d", w.Code)
 	}
 }
 
-// The agent scan runs while an agents window is open, and for one minute after the last closes.
+// Every window gets the one message, whatever ?window= says. Opening one wakes every waiter, and
+// the work goes on for one minute after the last window closes.
 func TestHubWindowsAndGrace(t *testing.T) {
 	h := newHub()
 	srv := httptest.NewServer(http.HandlerFunc(h.serveEvents))
 	t.Cleanup(srv.Close)
-	if h.wanted(windowAgents, time.Now(), time.Minute) {
+	if h.wanted(time.Now(), time.Minute) {
 		t.Fatal("wanted before any window")
 	}
+	woke := make(chan string, 2)
+	for _, who := range []string{"the agent scan", "the folder counts"} {
+		opened := h.opened()
+		go func() {
+			<-opened
+			woke <- who
+		}()
+	}
 	ctx, cancel := context.WithCancel(context.Background())
-	req, _ := http.NewRequestWithContext(ctx, "GET", srv.URL+"?window=folders", nil)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
+	var bodies []*bufio.Reader
+	for _, q := range []string{"", "?window=folders"} {
+		req, _ := http.NewRequestWithContext(ctx, "GET", srv.URL+q, nil)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		bodies = append(bodies, bufio.NewReader(resp.Body))
 	}
-	defer resp.Body.Close()
-	select {
-	case <-h.wake(windowFolders):
-	case <-time.After(time.Second):
-		t.Fatal("no wake for the folders window")
+	for range 2 {
+		select {
+		case <-woke:
+		case <-time.After(time.Second):
+			t.Fatal("a waiter did not wake when a window opened")
+		}
 	}
-	if h.count(windowFolders) != 1 || h.wanted(windowAgents, time.Now(), time.Minute) {
-		t.Fatal("a folders window is not an agents window")
+	if h.open() != 2 || !h.wanted(time.Now(), time.Minute) {
+		t.Fatalf("%d windows open", h.open())
 	}
-	h.publish(windowAgents, []byte(`{"rows":[]}`))
-	h.publish(windowFolders, []byte(`{"folders":[]}`))
-	line, _ := bufio.NewReader(resp.Body).ReadString('\n')
-	if line != "data: {\"folders\":[]}\n" {
-		t.Fatalf("folders window got %q", line)
+	h.publish([]byte(`{"rows":[]}`))
+	for i, rd := range bodies {
+		if line, _ := rd.ReadString('\n'); line != "data: {\"rows\":[]}\n" {
+			t.Fatalf("window %d got %q", i, line)
+		}
 	}
-
-	agents, _ := http.NewRequestWithContext(ctx, "GET", srv.URL, nil)
-	ar, err := http.DefaultClient.Do(agents)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ar.Body.Close()
 	cancel()
-	deadline := time.Now().Add(2 * time.Second)
-	for h.count(windowAgents) > 0 && time.Now().Before(deadline) {
-		time.Sleep(10 * time.Millisecond)
+	for deadline := time.Now().Add(2 * time.Second); h.open() > 0; time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("windows still open after they closed")
+		}
 	}
 	closed := time.Now()
-	if !h.wanted(windowAgents, closed.Add(59*time.Second), time.Minute) {
+	if !h.wanted(closed.Add(59*time.Second), time.Minute) {
 		t.Error("stopped within the minute")
 	}
-	if h.wanted(windowAgents, closed.Add(61*time.Second), time.Minute) {
+	if h.wanted(closed.Add(61*time.Second), time.Minute) {
 		t.Error("still wanted after a minute")
 	}
 }

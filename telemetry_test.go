@@ -145,7 +145,7 @@ func TestActiveOncePerLocalDay(t *testing.T) {
 	}
 }
 
-// With no agents window, kijk active waits one minute after the start or the new day, and leaves
+// With no kijk window, kijk active waits one minute after the start or the new day, and leaves
 // out the agent counts.
 func TestActiveWithoutAgentScan(t *testing.T) {
 	start := time.Date(2026, 10, 12, 23, 59, 30, 0, time.Local)
@@ -223,8 +223,8 @@ func TestAgentCopies(t *testing.T) {
 
 func TestAgentCountCountsSessions(t *testing.T) {
 	rows := []Row{
-		{Names: []string{"a", "b", "c"}, Agents: []RowAgent{{Type: "claude"}, {Type: "codex"}, {Type: "claude"}}},
-		{Names: []string{"d"}, Agents: []RowAgent{{Type: "codex", Busy: true}}},
+		{AgentSource: &AgentSource{Names: []string{"a", "b", "c"}, Agents: []RowAgent{{Type: "claude"}, {Type: "codex"}, {Type: "claude"}}}},
+		{AgentSource: &AgentSource{Names: []string{"d"}, Agents: []RowAgent{{Type: "codex", Busy: true}}}},
 	}
 	if n := agentCount(rows); n != 4 {
 		t.Fatalf("agentCount = %d, want 4", n)

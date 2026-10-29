@@ -15,13 +15,10 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"runtime"
 	"slices"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -85,37 +82,27 @@ func main() {
 		fmt.Println("kijk", kijkVersion)
 		return
 	}
-	if a.pr.Number > 0 {
-		clone := prClone(a.pr, savedFolderPaths(), localAgentFolders)
-		if clone == "" {
-			fmt.Fprintln(os.Stderr, "kijk:", noClone(a.pr))
-			os.Exit(1)
-		}
-		a.folders = []string{clone}
-	}
 	var adds []savedFolder
+	cwd, _ := os.Getwd()
 	if len(a.folders) > 0 {
-		cwd, _ := os.Getwd()
 		if adds, err = checkFolders(a.folders, cwd); err != nil {
 			fmt.Fprintf(os.Stderr, "kijk: %v.\n", err)
 			os.Exit(1)
 		}
 	}
+	ask := askOf(a, adds, cwd)
+	plain := ask.plain()
+	term := terminal{os.Stdin, os.Stdout, os.Stderr}
 
 	removeOldExe()
 	if s, ok := runningInstance(a.port); ok {
-		if a.foldersWindow {
-			os.Exit(toRunning(a.port, s.Token, adds, a.pr.Number, a.noOpen, os.Stdout, os.Stderr))
+		if plain {
+			fmt.Println("kijk is already running at", uiURL(a.port, s.Token))
 		}
-		url := uiURL(a.port, s.Token)
-		fmt.Println("kijk is already running at", url)
-		if !a.noOpen {
-			openUI(url)
-		}
-		return
+		os.Exit(deliver(runningOpener(a.port, s.Token), ask, windows(a, s.Token), term))
 	}
 	fp, fpErr := foldersPath()
-	if fpErr != nil && a.foldersWindow {
+	if fpErr != nil && !plain {
 		fmt.Fprintln(os.Stderr, "kijk: cannot find the folders list:", fpErr)
 		os.Exit(1)
 	}
@@ -130,13 +117,6 @@ func main() {
 	if err != nil {
 		log.Printf("cannot write the state file, so a second start will not find this one: %v", err)
 	}
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
-	go func() {
-		<-stop
-		remove()
-		os.Exit(0)
-	}()
 
 	exe, _ := selfPath()
 	u := newUpdater(kijkVersion, exe, os.Stdout)
@@ -162,47 +142,43 @@ func main() {
 	}
 	h := newHub()
 	rts := &viewer.Roots{}
+	rl := newRail(h, rts)
 	var mm *machineManager
 	if runtime.GOOS != "windows" {
 		mm = newMachineManager(kijkVersion)
 	}
-	fl := newFolderList(fp, rts)
-	if fpErr != nil {
-		fl.readErr = fmt.Errorf("cannot find the folders list: %w", fpErr)
-	}
+	fl := newFolderList(fp, fpErr, rl)
 	if fl.readErr != nil {
 		fmt.Fprintln(os.Stderr, "kijk:", fl.readErr)
 	}
-	addedNote := ""
-	if len(adds) > 0 {
-		added, err := fl.add(adds, a.pr.Number)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "kijk:", err)
-			remove()
-			os.Exit(1)
-		}
-		addedNote = addedText(adds, added, false)
-	}
-	go fl.watch(h, u)
-	go watchSessions(newScanner(agents.Types, agents.NewEnv(kijkVersion)), h, rts, u, tel, mm, fl)
+	go fl.watch(h)
+	go watchSessions(newScanner(agents.Types, agents.NewEnv(kijkVersion)), h, rl, u, tel, mm, fl)
 
 	web, _ := fs.Sub(webFiles, "web")
-	url := uiURL(a.port, token)
+	d := &openDesk{h, rl, fl}
+	srv := newServer(token, a.port, web, h, rts, u, mm, d)
+	served := make(chan error, 1)
+	go func() { served <- http.Serve(ln, srv) }()
+	// A SIGTERM waits in stop until deliver returns, as a clone in deliver cleans up first. Ctrl+C
+	// is the clone's alone.
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, syscall.SIGTERM)
+	if code := deliver(d.open, ask, windows(a, token), term); code != 0 {
+		remove()
+		os.Exit(code)
+	}
+	signal.Notify(stop, os.Interrupt)
+	go func() {
+		<-stop
+		remove()
+		os.Exit(0)
+	}()
 	if restarted {
-		fmt.Printf("kijk %s restarted at %s\n", kijkVersion, url)
+		fmt.Printf("kijk %s restarted at %s\n", kijkVersion, uiURL(a.port, token))
 	} else {
-		fmt.Printf("kijk %s is running at %s\n", kijkVersion, url)
+		fmt.Printf("kijk %s is running at %s\n", kijkVersion, uiURL(a.port, token))
 	}
-	if addedNote != "" {
-		fmt.Println(addedNote)
-	}
-	if a.foldersWindow {
-		url = foldersURL(a.port, token, adds, a.pr.Number)
-	}
-	if !a.noOpen {
-		openUI(url)
-	}
-	log.Fatal(http.Serve(ln, newServer(token, a.port, web, h, rts, u, mm, fl)))
+	log.Fatal(<-served)
 }
 
 // cliArgs is what kijk was asked to do, when it is not one of the commands that exit at once.
@@ -210,12 +186,33 @@ type cliArgs struct {
 	port                                  int
 	noOpen, version, noCheck, noTelemetry bool
 	folders                               []string // to add to the folders list
-	foldersWindow                         bool     // kijk <folder>… or kijk folders
+	list                                  string   // "folders" for kijk folders
 	pr                                    prLink   // kijk <PR link>
 	flags                                 []string // as given, for a restart
 }
 
-// parseArgs reads flags, then folders. kijk folders opens the folders window and takes no folder.
+// askOf is what the command asks the kijk that shows it. adds are its folders, checked; cwd is
+// where it runs, where a clone of a pull request's repo may be.
+func askOf(a cliArgs, adds []savedFolder, cwd string) openAsk {
+	ask := openAsk{List: a.list}
+	if a.pr.Number > 0 {
+		ask.PR, ask.Cwd = &a.pr, cwd
+	}
+	for _, f := range adds {
+		ask.Folders = append(ask.Folders, cmp.Or(f.Open, f.Path))
+	}
+	return ask
+}
+
+// windows opens a new kijk window on request seq, or is nil with -no-open.
+func windows(a cliArgs, token string) func(seq int) {
+	if a.noOpen {
+		return nil
+	}
+	return func(seq int) { openUI(windowURL(a.port, token, seq)) }
+}
+
+// parseArgs reads flags, then folders. kijk folders shows the Folders list and takes no folder.
 func parseArgs(args []string) (cliArgs, error) {
 	var a cliArgs
 	fs := flag.NewFlagSet("kijk", flag.ContinueOnError)
@@ -229,14 +226,14 @@ func parseArgs(args []string) (cliArgs, error) {
 		fs.PrintDefaults()
 	}
 	if len(args) > 0 && args[0] == "folders" {
-		a.foldersWindow = true
+		a.list = listFolders
 		args = args[1:]
 	}
 	if err := fs.Parse(args); err != nil {
 		return a, err
 	}
 	a.flags = slices.Clone(args[:len(args)-fs.NArg()])
-	if a.foldersWindow && fs.NArg() > 0 {
+	if a.list != "" && fs.NArg() > 0 {
 		return a, errors.New("kijk folders takes no folder. To add one, run kijk <folder>")
 	}
 	if l, ok := parsePRLink(fs.Arg(0)); ok {
@@ -244,106 +241,13 @@ func parseArgs(args []string) (cliArgs, error) {
 			return a, errors.New("kijk <PR link> takes one link and no folder")
 		}
 		a.pr = l
-		a.foldersWindow = true
 		return a, nil
 	}
-	if fs.NArg() > 0 {
-		a.folders = fs.Args()
-		a.foldersWindow = true
-	}
+	a.folders = fs.Args()
 	return a, nil
 }
 
-func foldersURL(port int, token string, adds []savedFolder, pr int) string {
-	u := uiURL(port, token) + "&window=folders"
-	if len(adds) > 0 {
-		u += "&open=" + url.QueryEscape(adds[len(adds)-1].Path)
-	}
-	if pr > 0 {
-		u += "&pr=" + strconv.Itoa(pr)
-	}
-	return u
-}
-
-const foldersTitle = `"kijk · Folders"`
-
-// addedText says what kijk <folder>… did. window says a folders window shows it.
-func addedText(adds []savedFolder, added []bool, window bool) string {
-	if len(adds) == 1 {
-		f := adds[0]
-		name := filepath.Base(f.Path)
-		text := "Added " + name
-		if !added[0] {
-			text = name + " is already in the list"
-		}
-		if f.Open != "" {
-			text += ", opened at " + relCwd(f.Path, f.Open) + "/"
-		}
-		if window {
-			return text + ". It is open in the window " + foldersTitle + "."
-		}
-		return text + "."
-	}
-	n := 0
-	for _, a := range added {
-		if a {
-			n++
-		}
-	}
-	where := "the folders window"
-	if window {
-		where = "the window " + foldersTitle
-	}
-	text := fmt.Sprintf("Added %s to %s.", plural(n, "folder"), where)
-	switch old := len(adds) - n; {
-	case n == 0:
-		return fmt.Sprintf("All %d folders are already in the list.", len(adds))
-	case old == 1:
-		text += " 1 was already in the list."
-	case old > 1:
-		text += fmt.Sprintf(" %d were already in the list.", old)
-	}
-	return text
-}
-
-func plural(n int, word string) string {
-	if n == 1 {
-		return "1 " + word
-	}
-	return fmt.Sprintf("%d %ss", n, word)
-}
-
-// toRunning hands kijk <folder>… and kijk folders to the running kijk. It opens a folders window
-// only when none is open: kijk cannot bring an open window to the front.
-func toRunning(port int, token string, adds []savedFolder, pr int, noOpen bool, stdout, stderr io.Writer) int {
-	var res foldersReply
-	var err error
-	if len(adds) == 0 {
-		err = callRunning(port, token, "GET", "/api/folders", nil, &res)
-	} else {
-		paths := make([]string, len(adds))
-		for i, f := range adds {
-			paths[i] = cmp.Or(f.Open, f.Path)
-		}
-		err = callRunning(port, token, "POST", "/api/folders/add", map[string]any{"folders": paths, "pr": pr}, &res)
-	}
-	if err != nil {
-		fmt.Fprintln(stderr, "kijk:", err)
-		return 1
-	}
-	if len(adds) > 0 {
-		fmt.Fprintln(stdout, addedText(adds, res.Added, res.Window))
-	} else if res.Window {
-		fmt.Fprintln(stdout, "The folders window is already open: "+foldersTitle+".")
-	}
-	if res.Error != "" {
-		fmt.Fprintln(stderr, "kijk:", res.Error)
-	}
-	if !res.Window && !noOpen {
-		openUI(foldersURL(port, token, adds, pr))
-	}
-	return 0
-}
+var errTooOld = errors.New("the running kijk is too old for this. Quit it, then try again")
 
 // callRunning sends a request to the kijk on port, with its token, and reads the JSON reply.
 func callRunning(port int, token, method, path string, body, out any) error {
@@ -362,7 +266,7 @@ func callRunning(port int, token, method, path string, body, out any) error {
 	b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	switch {
 	case resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed:
-		return errors.New("the running kijk is too old for folders. Quit it, then try again")
+		return errTooOld
 	case resp.StatusCode != http.StatusOK:
 		return errors.New(strings.TrimSpace(string(b)))
 	}
@@ -379,27 +283,13 @@ func takeRestartEnv() (token string, restarted bool) {
 	return token, restarted
 }
 
-// sessionMessage is one message on /api/events. noneInstalled says that the tool of no agent type
-// is on this machine. Empty fields are left out.
-func sessionMessage(rows []Row, errs []typeError, noneInstalled bool, k kijkState, machines []machineView) []byte {
-	b, _ := json.Marshal(struct {
-		Rows          []Row         `json:"rows"`
-		Errors        []typeError   `json:"errors,omitempty"`
-		NoneInstalled bool          `json:"noneInstalled,omitempty"`
-		Kijk          kijkState     `json:"kijk"`
-		Machines      []machineView `json:"machines,omitempty"`
-	}{rows, errs, noneInstalled, k, machines})
-	return b
-}
-
-// watchSessions looks for agents only while an agents window is open, and for a minute after the
-// last one closes. An update or machine state change publishes at once, with the last poll's rows.
-func watchSessions(s *scanner, h *hub, rts *viewer.Roots, u *updater, tel *telemetry, mm *machineManager, fl *folderList) {
+// watchSessions looks for agents while a kijk window is open, and for a minute after the last one
+// closes. An update or machine state change reaches the rail at once, with the last scan's rows.
+func watchSessions(s *scanner, h *hub, rl *rail, u *updater, tel *telemetry, mm *machineManager, fl *folderList) {
 	var rows []Row
 	var errs []typeError
 	installed := true
 	var updated, machinesChanged <-chan struct{}
-	k := kijkState{Version: kijkVersion}
 	if u != nil {
 		updated = u.changed
 	}
@@ -410,8 +300,9 @@ func watchSessions(s *scanner, h *hub, rts *viewer.Roots, u *updater, tel *telem
 	stopMachines := func() {}
 	var since, next time.Time
 	for {
+		opened := h.opened()
 		now := time.Now()
-		if want := h.wanted(windowAgents, now, time.Minute); want != looking {
+		if want := h.wanted(now, time.Minute); want != looking {
 			looking = want
 			if looking {
 				if mm != nil {
@@ -421,14 +312,12 @@ func watchSessions(s *scanner, h *hub, rts *viewer.Roots, u *updater, tel *telem
 			} else {
 				stopMachines()
 				rows, errs, installed = nil, nil, true
-				rts.Set(nil)
-				h.forget(windowAgents)
+				rl.setAgents(nil)
 			}
 		}
 		var counts *agentCounts
 		if looking && !now.Before(next) {
 			rows, errs, installed = s.scan()
-			rts.Set(rowRoots(rows))
 			// Wait for remote machines to connect, so the first event counts their agents too.
 			if mm.settled() || time.Since(since) > 30*time.Second {
 				machines, remote := mm.counts()
@@ -438,10 +327,10 @@ func watchSessions(s *scanner, h *hub, rts *viewer.Roots, u *updater, tel *telem
 		}
 		tel.active(now, fl.count(), looking, counts)
 		if u != nil {
-			k = u.state()
+			rl.setKijk(u.state())
 		}
 		if looking {
-			h.publish(windowAgents, sessionMessage(rows, errs, !installed, k, mm.views()))
+			rl.setAgents(&agentPart{rows, errs, !installed, mm.views()})
 		}
 		wait := time.Second
 		if looking {
@@ -451,7 +340,7 @@ func watchSessions(s *scanner, h *hub, rts *viewer.Roots, u *updater, tel *telem
 		case <-time.After(wait):
 		case <-updated:
 		case <-machinesChanged:
-		case <-h.wake(windowAgents):
+		case <-opened:
 		}
 	}
 }

@@ -31,6 +31,12 @@ func (a *api) folderEvents(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	release, ok := a.roots.hold(root)
+	if !ok {
+		http.Error(w, "This folder is not open in kijk", http.StatusForbidden)
+		return
+	}
+	defer release()
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "streaming not supported", http.StatusInternalServerError)

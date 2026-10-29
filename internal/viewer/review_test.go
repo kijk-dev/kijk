@@ -16,7 +16,7 @@ import (
 // reviewServer serves a clone whose origin is on GitHub; post sends a write.
 func reviewServer(t *testing.T, root string) (get func(string, url.Values) *httptest.ResponseRecorder, post func(string, string) *httptest.ResponseRecorder) {
 	rts := &Roots{}
-	rts.SetFolders([]string{root})
+	rts.Set([]string{root})
 	srv := http.NewServeMux()
 	cache := t.TempDir()
 	Register(srv, rts, Options{CacheDir: func() (string, error) { return cache, nil }})

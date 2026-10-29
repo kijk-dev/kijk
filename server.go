@@ -8,7 +8,6 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
-	"path/filepath"
 	"strconv"
 	"sync"
 	"time"
@@ -21,9 +20,9 @@ import (
 // viewers on different ports would otherwise log each other out.
 func cookieName(port int) string { return fmt.Sprintf("kijk-%d", port) }
 
-// newServer builds the routes. kijk serve passes no web files, updater, machines or folders: it
-// has no window, does not update itself, and does not reach other machines.
-func newServer(token string, port int, web fs.FS, h *hub, rts *viewer.Roots, u *updater, mm *machineManager, fl *folderList) http.Handler {
+// newServer builds the routes. kijk serve passes no web files, updater, machines or desk: it has
+// no window or folders list, does not update itself, and does not reach other machines.
+func newServer(token string, port int, web fs.FS, h *hub, rts *viewer.Roots, u *updater, mm *machineManager, d *openDesk) http.Handler {
 	mux := http.NewServeMux()
 	if web != nil {
 		mux.Handle("GET /", http.FileServerFS(web))
@@ -37,14 +36,11 @@ func newServer(token string, port int, web fs.FS, h *hub, rts *viewer.Roots, u *
 	mux.HandleFunc("GET /api/agenttypes", func(w http.ResponseWriter, r *http.Request) { reply(w, agents.Types) })
 	mux.HandleFunc("GET /api/events", h.serveEvents)
 	mux.HandleFunc("POST /api/count", countUse)
-	if fl != nil {
-		mux.HandleFunc("GET /api/folders", func(w http.ResponseWriter, r *http.Request) {
-			reply(w, foldersReply{Window: h.count(windowFolders) > 0})
-		})
-		mux.HandleFunc("POST /api/folders/add", addFolders(fl, h))
-		mux.HandleFunc("POST /api/folders/remove", changeFolder(fl.remove))
-		mux.HandleFunc("POST /api/folders/restore", changeFolder(fl.restore))
-		mux.HandleFunc("POST /api/folders/refresh", changeFolder(fl.refresh))
+	if d != nil {
+		mux.HandleFunc("POST /api/open", d.serve)
+		mux.HandleFunc("POST /api/folders/remove", changeFolder(d.fl.remove))
+		mux.HandleFunc("POST /api/folders/restore", changeFolder(d.fl.restore))
+		mux.HandleFunc("POST /api/folders/refresh", changeFolder(d.fl.refresh))
 	}
 	if u == nil {
 		return guard(token, port, secure(mux))
@@ -90,47 +86,6 @@ func accepted(w http.ResponseWriter) {
 func reply(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(v)
-}
-
-// foldersReply tells kijk <folder> and kijk folders what happened, and whether a folders window
-// is open.
-type foldersReply struct {
-	Added  []bool `json:"added"`
-	Window bool   `json:"window"`
-	Error  string `json:"error,omitempty"`
-}
-
-// addFolders checks the folders again: the list decides what the server may read.
-func addFolders(fl *folderList, h *hub) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			Folders []string `json:"folders"`
-			PR      int      `json:"pr"`
-		}
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil || len(req.Folders) == 0 {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		list := make([]savedFolder, 0, len(req.Folders))
-		for _, p := range req.Folders {
-			if !filepath.IsAbs(p) {
-				http.Error(w, p+" is not an absolute path", http.StatusBadRequest)
-				return
-			}
-			f, err := checkFolder(p, "")
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusUnprocessableEntity)
-				return
-			}
-			list = append(list, f)
-		}
-		res := foldersReply{Window: h.count(windowFolders) > 0}
-		var err error
-		if res.Added, err = fl.add(list, max(req.PR, 0)); err != nil {
-			res.Error = err.Error()
-		}
-		reply(w, res)
-	}
 }
 
 func changeFolder(change func(root string) bool) http.HandlerFunc {
@@ -187,38 +142,27 @@ func guard(token string, port int, next http.Handler) http.Handler {
 	})
 }
 
-// Window kinds. An /api/events stream without a kind is an agents window, as a local kijk that
-// follows a remote one is.
-const (
-	windowAgents  = "agents"
-	windowFolders = "folders"
-)
-
-// hub keeps the latest message per window kind and pushes it to every open window of that kind.
+// hub keeps the latest rail message and pushes it to every open window.
 type hub struct {
-	mu    sync.Mutex
-	last  map[string][]byte
-	subs  map[chan []byte]string
-	left  map[string]time.Time // when the last window of a kind closed
-	wakes map[string]chan struct{}
+	mu   sync.Mutex
+	last []byte
+	subs map[chan []byte]struct{}
+	left time.Time     // when the last window closed
+	wake chan struct{} // closed when a window opens, then replaced
 }
 
 func newHub() *hub {
-	return &hub{last: map[string][]byte{}, subs: map[chan []byte]string{}, left: map[string]time.Time{},
-		wakes: map[string]chan struct{}{windowAgents: make(chan struct{}, 1), windowFolders: make(chan struct{}, 1)}}
+	return &hub{subs: map[chan []byte]struct{}{}, wake: make(chan struct{})}
 }
 
-func (h *hub) publish(kind string, b []byte) {
+func (h *hub) publish(b []byte) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if bytes.Equal(b, h.last[kind]) {
+	if bytes.Equal(b, h.last) {
 		return
 	}
-	h.last[kind] = b
-	for c, k := range h.subs {
-		if k != kind {
-			continue
-		}
+	h.last = b
+	for c := range h.subs {
 		select { // keep only the newest message for a slow client
 		case <-c:
 		default:
@@ -227,65 +171,49 @@ func (h *hub) publish(kind string, b []byte) {
 	}
 }
 
-// forget drops the latest message, so a window that opens later waits for a fresh one.
-func (h *hub) forget(kind string) {
-	h.mu.Lock()
-	delete(h.last, kind)
-	h.mu.Unlock()
-}
-
-func (h *hub) count(kind string) int {
+// open is the number of windows open now.
+func (h *hub) open() int {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	n := 0
-	for _, k := range h.subs {
-		if k == kind {
-			n++
-		}
-	}
-	return n
+	return len(h.subs)
 }
 
-// wanted reports whether a window of kind is open, or closed less than grace ago, so a reload
-// does not stop and start the work behind it.
-func (h *hub) wanted(kind string, now time.Time, grace time.Duration) bool {
-	if h.count(kind) > 0 {
-		return true
-	}
+// wanted reports whether a window is open, or closed less than grace ago, so a reload does not
+// stop and start the work behind it.
+func (h *hub) wanted(now time.Time, grace time.Duration) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	left, ok := h.left[kind]
-	return ok && now.Sub(left) < grace
+	return len(h.subs) > 0 || now.Sub(h.left) < grace
 }
 
-// wake fires when a window of kind opens.
-func (h *hub) wake(kind string) <-chan struct{} { return h.wakes[kind] }
+// opened gives a channel that closes when the next window opens. Every goroutine that waits on it
+// wakes: the agent scan and the folder line counts.
+func (h *hub) opened() <-chan struct{} {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.wake
+}
 
+// serveEvents ignores ?window=: there is one kind of window.
 func (h *hub) serveEvents(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "streaming not supported", http.StatusInternalServerError)
 		return
 	}
-	kind := windowAgents
-	if r.URL.Query().Get("window") == windowFolders {
-		kind = windowFolders
-	}
 	c := make(chan []byte, 1)
 	h.mu.Lock()
-	h.subs[c] = kind
-	if h.last[kind] != nil {
-		c <- h.last[kind]
+	h.subs[c] = struct{}{}
+	if h.last != nil {
+		c <- h.last
 	}
+	close(h.wake)
+	h.wake = make(chan struct{})
 	h.mu.Unlock()
-	select {
-	case h.wakes[kind] <- struct{}{}:
-	default:
-	}
 	defer func() {
 		h.mu.Lock()
 		delete(h.subs, c)
-		h.left[kind] = time.Now()
+		h.left = time.Now()
 		h.mu.Unlock()
 	}()
 

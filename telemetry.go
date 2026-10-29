@@ -105,8 +105,9 @@ type agentCounts struct {
 	machines, remote int
 }
 
-// active sends "kijk active" once a local day. While kijk looks for agents it waits for their
-// counts; otherwise it sends one minute after kijk starts or the date changes, without them.
+// active sends "kijk active" once a local day. While kijk looks for agents, which it does while a
+// kijk window is open, it waits for their counts; otherwise it sends one minute after kijk starts
+// or the date changes, without them.
 func (t *telemetry) active(now time.Time, folders int, looking bool, counts *agentCounts) {
 	if t == nil {
 		return

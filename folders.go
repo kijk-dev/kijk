@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -13,10 +14,10 @@ import (
 	"time"
 
 	"github.com/kijk-dev/kijk/internal/git"
-	"github.com/kijk-dev/kijk/internal/viewer"
 )
 
-// savedFolder is one row of the folders window: its folder, and the folder given last inside it.
+// savedFolder is one folder of the folders list: its row's folder, and the folder given last
+// inside it.
 type savedFolder struct {
 	Path string `json:"path"`
 	Open string `json:"open,omitempty"`
@@ -172,16 +173,15 @@ func checkFolders(args []string, cwd string) ([]savedFolder, error) {
 // folders.json while it runs.
 type folderList struct {
 	path    string
-	roots   *viewer.Roots
+	rl      *rail
 	changed chan struct{}
 
 	mu      sync.Mutex
 	list    []savedFolder
-	readErr error // kept for the Folders pane; unless the file moved away, changes are not saved
+	readErr error // kept for the Folders list; unless the file moved away, changes are not saved
 	saveErr error
 	removed *removedFolder
-	open    openRequest
-	asked   map[string]bool // rows to refresh now: the open folder changed
+	asked   map[string]bool // folders to count now: the open folder changed
 }
 
 // removedFolder is the last removal, so Undo can put it back in its place.
@@ -190,37 +190,27 @@ type removedFolder struct {
 	at int
 }
 
-// openRequest asks the folders window to open a folder. Seq grows, so a window acts on each once.
-type openRequest struct {
-	Seq  int    `json:"seq"`
-	Root string `json:"root,omitempty"`
-	PR   int    `json:"pr,omitempty"` // a pull request to open in the PRs tab, from kijk <PR link>
-}
-
-func newFolderList(path string, rts *viewer.Roots) *folderList {
-	l := &folderList{path: path, roots: rts, changed: make(chan struct{}, 1)}
-	l.list, l.readErr = readFolders(path)
-	rts.SetFolders(folderPaths(l.list))
+// newFolderList reads the list at path. pathErr says why there is no path.
+func newFolderList(path string, pathErr error, rl *rail) *folderList {
+	l := &folderList{path: path, rl: rl, changed: make(chan struct{}, 1)}
+	if pathErr != nil {
+		l.readErr = fmt.Errorf("cannot find the folders list: %w", pathErr)
+	} else {
+		l.list, l.readErr = readFolders(path)
+	}
+	rl.setSaved(l.list, l.readErr)
 	return l
 }
 
-func folderPaths(list []savedFolder) []string {
-	paths := make([]string, len(list))
-	for i, f := range list {
-		paths[i] = f.Path
-	}
-	return paths
-}
-
-// changedLocked saves the list and tells the server and the windows. l.mu is held.
+// changedLocked saves the list and gives it to the rail. l.mu is held.
 func (l *folderList) changedLocked() {
-	l.roots.SetFolders(folderPaths(l.list))
 	l.saveErr = nil
 	if l.readErr != nil && !errors.Is(l.readErr, errMovedAway) {
 		l.saveErr = errors.New("changes to the folders list are not saved, so kijk does not overwrite a file it could not read")
 	} else if err := writeFolders(l.path, l.list); err != nil {
 		l.saveErr = fmt.Errorf("cannot save the folders list: %w", err)
 	}
+	l.rl.setSaved(l.list, errors.Join(l.readErr, l.saveErr))
 	l.wakeLocked()
 }
 
@@ -231,18 +221,16 @@ func (l *folderList) wakeLocked() {
 	}
 }
 
-// add adds the folders and asks the folders window to open the last one, at its pull request pr
-// when pr is not 0.
-func (l *folderList) add(fs []savedFolder, pr int) (added []bool, err error) {
+// add adds fs, which the caller just checked, so they are counted again at once: an old count may
+// have found one missing.
+func (l *folderList) add(fs []savedFolder) (added []bool, err error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	for _, f := range fs {
 		var a bool
 		l.list, a = addFolder(l.list, f)
 		added = append(added, a)
-	}
-	if len(fs) > 0 {
-		l.open = openRequest{l.open.Seq + 1, fs[len(fs)-1].Path, pr}
+		l.askLocked(f.Path)
 	}
 	l.changedLocked()
 	return added, l.saveErr
@@ -275,6 +263,17 @@ func (l *folderList) restore(root string) bool {
 	return true
 }
 
+// paths are the saved folders, in list order.
+func (l *folderList) paths() []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	paths := make([]string, len(l.list))
+	for i, f := range l.list {
+		paths[i] = f.Path
+	}
+	return paths
+}
+
 func (l *folderList) count() int {
 	if l == nil {
 		return 0
@@ -284,144 +283,118 @@ func (l *folderList) count() int {
 	return len(l.list)
 }
 
-// refresh asks for one row now, so the open folder's line counts follow live updates.
+// refresh asks for one folder's line counts now, so the open folder's counts follow live updates.
 func (l *folderList) refresh(root string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if indexOf(l.list, root) < 0 {
 		return false
 	}
-	if l.asked == nil {
-		l.asked = map[string]bool{}
-	}
-	l.asked[root] = true
+	l.askLocked(root)
 	l.wakeLocked()
 	return true
 }
 
-// snapshot gives the list, and takes the rows asked for since the last call.
-func (l *folderList) snapshot() ([]savedFolder, openRequest, map[string]bool, error) {
+// askLocked has watch count root now. l.mu is held.
+func (l *folderList) askLocked(root string) {
+	if l.asked == nil {
+		l.asked = map[string]bool{}
+	}
+	l.asked[root] = true
+}
+
+// snapshot gives the list, and takes the folders asked for since the last call.
+func (l *folderList) snapshot() ([]savedFolder, map[string]bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	asked := l.asked
 	l.asked = nil
-	return slices.Clone(l.list), l.open, asked, errors.Join(l.readErr, l.saveErr)
+	return slices.Clone(l.list), asked
 }
 
-// folderRow is one row of the folders window.
-type folderRow struct {
-	Root    string `json:"root"`
-	Repo    string `json:"repo"`
-	Parent  string `json:"parent"` // the folder that holds it, with ~ for the home folder
-	Branch  string `json:"branch,omitempty"`
-	Cwd     string `json:"cwd,omitempty"` // where it opens, relative to Root with slashes
-	Add     int    `json:"add"`
-	Del     int    `json:"del"`
-	Missing bool   `json:"missing,omitempty"`
-}
-
-func folderRowOf(f savedFolder) folderRow {
-	r := folderRow{Root: f.Path, Repo: filepath.Base(f.Path), Parent: tilde(filepath.Dir(f.Path))}
-	if st, err := os.Stat(f.Path); err != nil || !st.IsDir() {
-		r.Missing = true
-		return r
+func folderFactsOf(root string) folderFacts {
+	if st, err := os.Stat(root); err != nil || !st.IsDir() {
+		return folderFacts{missing: true}
 	}
-	if f.Open != "" {
-		r.Cwd = relCwd(f.Path, f.Open)
-	}
-	r.Branch, r.Add, r.Del = git.Uncommitted(f.Path)
-	return r
+	var ff folderFacts
+	ff.branch, ff.add, ff.del = git.Uncommitted(root)
+	return ff
 }
 
-func folderMessage(rows []folderRow, err error, open openRequest, k kijkState) []byte {
-	msg := struct {
-		Folders []folderRow `json:"folders"`
-		Error   string      `json:"error,omitempty"`
-		Open    openRequest `json:"open"`
-		Kijk    kijkState   `json:"kijk"`
-	}{Folders: rows, Open: open, Kijk: k}
-	if err != nil {
-		msg.Error = err.Error()
-	}
-	b, _ := json.Marshal(msg)
-	return b
-}
-
-// folderRefresh is how often each row is refreshed. Rows take turns, one git status at a time,
+// folderRefresh is how often each folder is counted. Folders take turns, one git status at a time,
 // so many folders or one big repo never start a burst of git processes.
 const folderRefresh = 10 * time.Second
 
-// watch pushes the rows to the folders windows. A new or changed folder gets its row at once, so
-// an open request never comes before its row.
-func (l *folderList) watch(h *hub, u *updater) {
-	made := map[string]folderRow{}
-	from := map[string]savedFolder{} // the entry each row was made from
+// watch counts the saved folders' lines while a window is open, and for a minute after, so a
+// reload does not start a burst. A new folder, or one the window asks for, is counted at once.
+func (l *folderList) watch(h *hub) {
+	facts := map[string]folderFacts{}
 	turn := 0
 	var due time.Time
 	for {
+		opened := h.opened()
 		wait := time.Second
-		if h.count(windowFolders) == 0 {
-			h.forget(windowFolders)
-			clear(made)
-			clear(from)
+		since := l.rl.seq()
+		if !h.wanted(time.Now(), time.Minute) {
+			if len(facts) > 0 {
+				clear(facts)
+				l.rl.setFacts(nil, since)
+			}
 		} else {
-			list, open, asked, err := l.snapshot()
-			var stale []savedFolder
+			list, asked := l.snapshot()
+			var stale []string
 			for _, f := range list {
-				if old, ok := from[f.Path]; !ok || old != f || asked[f.Path] {
-					stale = append(stale, f)
+				if _, ok := facts[f.Path]; !ok || asked[f.Path] {
+					stale = append(stale, f.Path)
 				}
 			}
 			now := time.Now()
 			if len(stale) == 0 && len(list) > 0 && !now.Before(due) {
-				stale = append(stale, list[turn%len(list)])
+				stale = append(stale, list[turn%len(list)].Path)
 				turn++
 				due = now.Add(folderRefresh / time.Duration(len(list)))
 			}
-			makeRows(stale, made, from)
-			for p := range from {
+			changed := len(stale) > 0
+			countFolders(stale, facts)
+			for p := range facts {
 				if indexOf(list, p) < 0 {
-					delete(made, p)
-					delete(from, p)
+					delete(facts, p)
+					changed = true
 				}
 			}
-			rows := make([]folderRow, len(list))
-			for i, f := range list {
-				rows[i] = made[f.Path]
+			if changed {
+				for _, root := range l.rl.setFacts(maps.Clone(facts), since) {
+					delete(facts, root)
+				}
 			}
-			k := kijkState{Version: kijkVersion}
-			if u != nil {
-				k = u.state()
-			}
-			h.publish(windowFolders, folderMessage(rows, err, open, k))
 			if len(list) > 0 {
 				wait = min(wait, max(time.Until(due), 0))
 			}
 		}
 		select {
 		case <-l.changed:
-		case <-h.wake(windowFolders):
+		case <-opened:
 		case <-time.After(wait):
 		}
 	}
 }
 
-// makeRows refreshes the rows of list, in parallel when a window first opens with many folders.
-func makeRows(list []savedFolder, made map[string]folderRow, from map[string]savedFolder) {
-	rows := make([]folderRow, len(list))
+// countFolders counts the lines of roots, in parallel when a window first opens with many folders.
+func countFolders(roots []string, facts map[string]folderFacts) {
+	got := make([]folderFacts, len(roots))
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, 4)
-	for i, f := range list {
+	for i, root := range roots {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			sem <- struct{}{}
-			rows[i] = folderRowOf(f)
+			got[i] = folderFactsOf(root)
 			<-sem
 		}()
 	}
 	wg.Wait()
-	for i, f := range list {
-		made[f.Path], from[f.Path] = rows[i], f
+	for i, root := range roots {
+		facts[root] = got[i]
 	}
 }
