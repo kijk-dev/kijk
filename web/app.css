@@ -57,8 +57,9 @@ body.rail-collapsed { --rail-w: 32px; }
   font: 600 10px/1 system-ui, -apple-system, sans-serif; letter-spacing: .02em;
 }
 @media (prefers-color-scheme: dark) {
-  .rail-collapsed .badge { background: hsl(var(--hue) 26% 30%); color: hsl(var(--hue) 45% 85%); }
+  :where(:scope:not([data-theme="kijk-light"])) .rail-collapsed .badge { background: hsl(var(--hue) 26% 30%); color: hsl(var(--hue) 45% 85%); }
 }
+:where(:scope[data-theme="kijk-dark"]) .rail-collapsed .badge { background: hsl(var(--hue) 26% 30%); color: hsl(var(--hue) 45% 85%); }
 .rail-collapsed li.busy .badge { outline: 2px solid var(--busy); outline-offset: 2px; animation: ring 1.2s ease-in-out infinite; }
 @keyframes ring { 50% { outline-color: transparent; } }
 .key {

@@ -415,32 +415,77 @@ func topLevel(src string) string {
 	return string(out)
 }
 
-// TestDarkThemeMatchesTheSystem checks that data-theme="kijk-dark" sets the colors kijk shows when
-// the system is dark, so the two copies cannot drift apart.
+// TestDarkThemeMatchesTheSystem checks that every rule kijk applies when the system is dark is
+// skipped with data-theme="kijk-light" and has a copy for data-theme="kijk-dark" that sets the same.
 func TestDarkThemeMatchesTheSystem(t *testing.T) {
-	b, err := fs.ReadFile(webFiles, "web/viewer.css")
-	if err != nil {
-		t.Fatal(err)
-	}
-	tokens := func(selector string) []string {
-		css := string(b)
-		at := strings.Index(css, selector+" {\n")
-		if at < 0 {
-			t.Fatalf("viewer.css has no %s block", selector)
+	const system, chosen = `:not([data-theme="kijk-light"])`, `[data-theme="kijk-dark"]`
+	n := 0
+	for _, name := range []string{"viewer.css", "app.css"} {
+		b, err := fs.ReadFile(webFiles, "web/"+name)
+		if err != nil {
+			t.Fatal(err)
 		}
-		body, _, _ := strings.Cut(css[at+len(selector)+3:], "}")
-		var out []string
-		for l := range strings.Lines(body) {
-			if l = strings.TrimSpace(l); strings.HasPrefix(l, "--") {
-				out = append(out, l)
+		css := string(b)
+		for rest := css; ; {
+			at := strings.Index(rest, "@media (prefers-color-scheme: dark) {")
+			if at < 0 {
+				break
+			}
+			media, after := cssBlock(rest[at:])
+			rest = after
+			for media = strings.TrimSpace(media); media != ""; media = strings.TrimSpace(media) {
+				selector, _, _ := strings.Cut(media, "{")
+				selector = strings.TrimSpace(selector)
+				var body string
+				body, media = cssBlock(media)
+				if !strings.Contains(selector, system) {
+					t.Errorf("%s: %s applies when the system is dark, also with kijk-light", name, selector)
+					continue
+				}
+				twin := strings.Replace(selector, system, chosen, 1)
+				at := strings.Index(css, "\n"+twin+" {")
+				if at < 0 {
+					t.Errorf("%s: %s has no copy %s", name, selector, twin)
+					continue
+				}
+				copied, _ := cssBlock(css[at:])
+				if got, want := declarations(copied), declarations(body); !slices.Equal(got, want) {
+					t.Errorf("%s: %s sets %q, want %q as %s", name, twin, got, want, selector)
+				}
+				n += len(declarations(body))
 			}
 		}
-		slices.Sort(out)
-		return out
 	}
-	system := tokens(`:scope:not([data-theme="kijk-light"])`)
-	chosen := tokens(`:scope[data-theme="kijk-dark"]`)
-	if len(system) < 30 || !slices.Equal(system, chosen) {
-		t.Errorf("the kijk-dark tokens differ from the system dark tokens:\nsystem %q\nkijk-dark %q", system, chosen)
+	if n < 30 {
+		t.Errorf("found %d dark declarations; the test no longer reads the CSS", n)
 	}
+}
+
+// cssBlock gives the inside of the first { } of css and what follows it.
+func cssBlock(css string) (inside, after string) {
+	open := strings.Index(css, "{")
+	depth := 0
+	for i := open; i < len(css); i++ {
+		switch css[i] {
+		case '{':
+			depth++
+		case '}':
+			if depth--; depth == 0 {
+				return css[open+1 : i], css[i+1:]
+			}
+		}
+	}
+	return css[open+1:], ""
+}
+
+// declarations gives the sorted declarations of a rule, without color-scheme, which kijk-dark adds.
+func declarations(body string) []string {
+	var out []string
+	for d := range strings.SplitSeq(regexp.MustCompile(`(?s)/\*.*?\*/`).ReplaceAllString(body, ""), ";") {
+		if d = strings.TrimSpace(d); d != "" && !strings.HasPrefix(d, "color-scheme:") {
+			out = append(out, d)
+		}
+	}
+	slices.Sort(out)
+	return out
 }

@@ -773,8 +773,8 @@ button.pill:hover { background: color-mix(in srgb, var(--modified) 22%, var(--se
   flex: none; display: flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 50%;
   background: hsl(var(--hue) 45% 85%); color: hsl(var(--hue) 40% 28%); font: 600 10.5px/1 system-ui, -apple-system, sans-serif;
 }
-@media (prefers-color-scheme: dark) { :scope:not([data-theme="kijk-light"]) .av { background: hsl(var(--hue) 26% 30%); color: hsl(var(--hue) 45% 85%); } }
-:scope[data-theme="kijk-dark"] .av { background: hsl(var(--hue) 26% 30%); color: hsl(var(--hue) 45% 85%); }
+@media (prefers-color-scheme: dark) { :where(:scope:not([data-theme="kijk-light"])) .av { background: hsl(var(--hue) 26% 30%); color: hsl(var(--hue) 45% 85%); } }
+:where(:scope[data-theme="kijk-dark"]) .av { background: hsl(var(--hue) 26% 30%); color: hsl(var(--hue) 45% 85%); }
 .thr .foot { display: flex; align-items: center; gap: 8px; padding: 10px 12px 12px 14px; border-top: 1px solid var(--border); background: var(--panel); border-radius: 0 0 7px 7px; }
 .thr .foot input { flex: 1; min-width: 0; font-size: 13px; padding: 4px 9px; }
 .thr .foot .hint { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
