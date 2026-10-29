@@ -2371,7 +2371,7 @@ func TestBrowser(t *testing.T) {
 		want := "No running agents · kijk shows " + strings.Join(labels[:len(labels)-1], ", ") + " and " + labels[len(labels)-1] + " agents"
 		e := openPage(t, newTab(t, tab), n, "/")
 		e.waitFor(want, `(s => !s.hidden && !s.classList.contains('error') && s.textContent === `+jsString(want)+`)(document.querySelector('#status'))`)
-		e.waitFor("no notice", `document.querySelector('#statusbar .kijk') && !document.querySelector('#statusbar .agent-error')`)
+		e.waitFor("no notice", `document.querySelector('#statusbar .notice') && !document.querySelector('#statusbar .agent-error')`)
 		e.noErrors()
 	})
 }

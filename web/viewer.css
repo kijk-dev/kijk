@@ -1,4 +1,6 @@
-:root {
+/* Scoped, so a page that shows kijk views inside its own can import this file. */
+@scope (.kijk) {
+:scope {
   --bg: #ffffff;
   --panel: #f5f7f9;
   --border: #dde0e4;
@@ -44,7 +46,7 @@
   color-scheme: light dark;
 }
 @media (prefers-color-scheme: dark) {
-  :root {
+  :scope {
     --bg: #15171b;
     --panel: #1c1f24;
     --border: #2d3137;
@@ -88,7 +90,7 @@
 button:focus-visible { outline: 2px solid var(--busy); outline-offset: 1px; }
 [hidden] { display: none !important; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-body {
+:scope {
   background: var(--bg);
   color: var(--text);
   font: 13px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -876,3 +878,4 @@ kbd { font: 11px/1 var(--code-font); padding: 1px 4px; border: 1px solid var(--b
 .thr.conv::before { display: none; }
 .thr.conv .c { padding-bottom: 10px; }
 @media (prefers-reduced-motion: reduce) { .rundot { animation: none; } }
+}
