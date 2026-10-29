@@ -4,11 +4,9 @@ import { h, patch } from './api.js';
 // one for all diffs; a viewer too narrow for two halves shows unified and keeps the choice.
 const KEY = 'kijk.diffLayout';
 const WIDE = 700; // px: below this a half shows too little of a line
-const viewer = document.getElementById('viewer');
-const slot = document.getElementById('difflayout');
+let slot = null;
 let chosen = 'unified';
-try { if (localStorage.getItem(KEY) === 'split') chosen = 'split'; } catch { /* storage blocked */ }
-let narrow = viewer.clientWidth < WIDE;
+let narrow = false;
 let changed = () => {};
 
 export const diffLayout = () => (chosen === 'split' && !narrow ? 'split' : 'unified');
@@ -37,7 +35,13 @@ function draw() {
     }, text))));
 }
 
-draw();
-new ResizeObserver(() => {
-  if ((viewer.clientWidth < WIDE) !== narrow) set(() => { narrow = !narrow; });
-}).observe(viewer);
+// initLayout puts the switch in slot and follows the width of viewer. Before it diffs show unified.
+export function initLayout(viewer, at) {
+  slot = at;
+  try { if (localStorage.getItem(KEY) === 'split') chosen = 'split'; } catch { /* storage blocked */ }
+  narrow = viewer.clientWidth < WIDE;
+  draw();
+  new ResizeObserver(() => {
+    if ((viewer.clientWidth < WIDE) !== narrow) set(() => { narrow = !narrow; });
+  }).observe(viewer);
+}
