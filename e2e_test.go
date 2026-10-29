@@ -4,6 +4,9 @@ import (
 	"cmp"
 	"encoding/json"
 	"fmt"
+	"io/fs"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"os/exec"
@@ -316,6 +319,96 @@ func TestBrowser(t *testing.T) {
 		b.waitFor("the long comment wrapped in the box", comment+`?.offsetHeight > 18 && `+fileBox("cart.go")+`.querySelector('.fbody').scrollWidth === `+fileBox("cart.go")+`.querySelector('.fbody').clientWidth`)
 		b.click("Unified", layoutButton("Unified"))
 		b.waitFor("the note under its line, unified", `!document.querySelector('#viewer .srow') && `+boxRow("cart.go", "\tItems map[int]int")+`?.nextElementSibling?.matches('.thr.note')`)
+		b.noErrors()
+	})
+
+	// Another app's page shows file boxes with diffs of its own. It gets only the files it copies from
+	// web/, and no kijk server.
+	t.Run("boxes on another page", func(t *testing.T) {
+		web, err := fs.Sub(webFiles, "web")
+		if err != nil {
+			t.Fatal(err)
+		}
+		copied := append([]string{"viewer.css"}, boxFiles...)
+		mux := http.NewServeMux()
+		mux.HandleFunc("/kijk/{file}", func(w http.ResponseWriter, r *http.Request) {
+			if !slices.Contains(copied, r.PathValue("file")) {
+				http.NotFound(w, r)
+				return
+			}
+			http.ServeFileFS(w, r, web, r.PathValue("file"))
+		})
+		mux.Handle("/", http.FileServer(http.Dir(filepath.Join("testdata", "boxpage"))))
+		srv := httptest.NewServer(mux)
+		t.Cleanup(srv.Close)
+		b := openURL(t, newTab(t, tab), nil, srv.URL+"/")
+		box := func(path string) string {
+			return fmt.Sprintf(`document.querySelector('#boxes .fbox[data-path=%s]')`, jsString(path))
+		}
+		has := func(path, cls, text string) string {
+			return fmt.Sprintf(`[...(%s?.querySelectorAll('.ln.%s .tx') || [])].some(e => e.textContent === %s)`, box(path), cls, jsString(text))
+		}
+
+		b.waitFor("two boxes", `document.querySelectorAll('#boxes .fbox').length === 2`)
+		b.waitFor("the diff of cart.js", has("src/cart.js", "add", "    this.prices = prices ?? {};"))
+		b.waitFor("the diff of price.js", has("src/price.js", "del", "  return prices[item] || 0;"))
+		b.waitFor("hunk headers with no Show more lines", `document.querySelectorAll('#boxes .ln.sep').length === 4 && !document.querySelector('#boxes .more')`)
+		samePage := evalJS[bool](b, `(() => {
+			const props = ['background-color', 'color', 'font', 'margin', 'padding', 'border', 'border-radius', 'box-sizing', 'color-scheme', 'outline'];
+			const look = () => JSON.stringify([document.documentElement, document.body, document.getElementById('own')]
+				.map(e => props.map(p => getComputedStyle(e).getPropertyValue(p))));
+			const css = document.querySelector('link[href$="viewer.css"]');
+			const on = look();
+			css.disabled = true;
+			const off = look();
+			css.disabled = false;
+			return on === off;
+		})()`)
+		if !samePage {
+			b.fail("viewer.css changed the look of the page's own html, body or button")
+		}
+
+		b.click("Split", byText("#layout button", "Split"))
+		b.waitFor("split boxes", `document.querySelectorAll('#boxes .fbody.halves').length === 2 && document.querySelector('#boxes .srow')`)
+		b.click("Unified", byText("#layout button", "Unified"))
+		b.waitFor("unified boxes", `!document.querySelector('#boxes .fbody.halves, #boxes .srow')`)
+
+		bg := func(rgb string) string {
+			return fmt.Sprintf(`getComputedStyle(document.getElementById('boxes')).backgroundColor === %s`, jsString(rgb))
+		}
+		theme := func(id string) {
+			b.evalJS(fmt.Sprintf(`for (const e of document.querySelectorAll('.kijk')) e.dataset.theme = %s`, jsString(id)))
+		}
+		const light, dark = "rgb(255, 255, 255)", "rgb(21, 23, 27)"
+		b.emulate("light", 1400)
+		b.waitFor("the system's light", bg(light))
+		theme("kijk-dark")
+		b.waitFor("kijk-dark on a light system", bg(dark))
+		b.emulate("dark", 1400)
+		theme("kijk-light")
+		b.waitFor("kijk-light on a dark system", bg(light))
+		b.evalJS(`for (const e of document.querySelectorAll('.kijk')) delete e.dataset.theme`)
+		b.waitFor("the system's dark", bg(dark))
+		b.emulate("light", 1400)
+
+		// The app redraws a file the agent changed; the view stays where it is.
+		b.evalJS(`globalThis.before = {scroll: document.querySelector('#boxes .allfiles'), box: ` + box("src/cart.js") + `}; before.scroll.scrollTop = 150`)
+		b.waitFor("scrolled into cart.js", `document.querySelector('#boxes .allfiles').scrollTop === 150`)
+		b.evalJS(`later()`)
+		b.waitFor("the new line, in the same box and scroll", has("src/cart.js", "add", "    // An item in both carts takes the count of the other cart.")+
+			` && document.querySelector('#boxes .allfiles') === before.scroll && `+box("src/cart.js")+` === before.box && before.scroll.scrollTop === 150`)
+
+		if os.Getenv("KIJK_E2E_SHOTS") != "" {
+			dir := e2eOut(t)
+			b.evalJS(`document.querySelector('#boxes .allfiles').scrollTop = 0`)
+			b.screenshot(dir, "boxpage-light")
+			theme("kijk-dark")
+			b.screenshot(dir, "boxpage-dark")
+			b.click("Split", byText("#layout button", "Split"))
+			b.waitFor("split boxes", `document.querySelectorAll('#boxes .fbody.halves').length === 2`)
+			b.screenshot(dir, "boxpage-split")
+			b.click("Unified", byText("#layout button", "Unified"))
+		}
 		b.noErrors()
 	})
 
