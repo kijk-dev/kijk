@@ -1,7 +1,6 @@
 import { el } from './api.js';
 
-// The lines of a diff or a file, a file's line counts and status, and which view is open, for
-// view.js, git.js and the box view of boxes.js.
+// The lines of a diff or a file, a file's line counts and status, and which view is open.
 // Nothing here touches the page or the network when it loads.
 
 export const LINE_HEIGHT = 18;
