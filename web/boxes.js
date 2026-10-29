@@ -1,7 +1,6 @@
 import { el, h, patch } from './api.js';
-import { line, pairRows, splitRow, setView, isCurrent, LINE_HEIGHT } from './lines.js';
+import { line, pairRows, splitRow, setView, isCurrent, LINE_HEIGHT, lineCount, kind } from './lines.js';
 import { diffLayout } from './layout.js';
-import { lineCount, kind } from './git.js';
 import { onKey, keyLabel } from './keys.js';
 
 // The file boxes of Branch changes and of a pull request's Changes: one box per file, each drawn

@@ -1,7 +1,8 @@
 import { el, get, post } from './api.js';
 import { refreshTip, tipSide } from './tip.js';
 import { openKey, openFolder, openFolderPR, closeFolder, setMachine, setupFolder, showFetched, SERVER } from './folder.js';
-import { ago, lineCount } from './git.js';
+import { ago } from './git.js';
+import { lineCount } from './lines.js';
 import { mac, typing, listenKeys } from './keys.js';
 import { initLayout } from './layout.js';
 import { showKijk, showAgentErrors, showUndo, showSaid, restarting } from './status.js';

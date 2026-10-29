@@ -1,6 +1,7 @@
 import { el } from './api.js';
 
-// The lines of a diff or a file, and which view is open, for view.js and the box view of boxes.js.
+// The lines of a diff or a file, a file's line counts and status, and which view is open, for
+// view.js, git.js and the box view of boxes.js.
 // Nothing here touches the page or the network when it loads.
 
 export const LINE_HEIGHT = 18;
@@ -10,6 +11,23 @@ export let current = null; // the open file or diff; a newer open makes older fe
 export function setView(v) { current = v; }
 
 export const isCurrent = v => current === v;
+
+const KIND = { A: 'added', D: 'deleted', '?': 'untracked', U: 'conflict' };
+export const kind = status => KIND[status] || 'modified';
+
+const num = n => n.toLocaleString('en-US');
+
+// lineCount shows "+40 −12", or nothing when both are zero. Screen readers hear words instead.
+export function lineCount(add = 0, del = 0) {
+  if (!add && !del) return null;
+  const s = el('span', 'lc');
+  if (add) s.append(el('span', 'lc-add', `+${num(add)}`));
+  if (del) s.append(el('span', 'lc-del', `−${num(del)}`));
+  for (const part of s.children) part.setAttribute('aria-hidden', 'true');
+  const lines = n => `${num(n)} ${n === 1 ? 'line' : 'lines'}`;
+  s.append(el('span', 'sr-only', add && del ? `${lines(add)} added, ${num(del)} removed` : add ? `${lines(add)} added` : `${lines(del)} removed`));
+  return s;
+}
 
 // content is plain text, or colored pieces [class, text] from the server. marks are find matches;
 // side ('l' or 'r') takes only those of one half of a split row. words are [from, to] to underline.

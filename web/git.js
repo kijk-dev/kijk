@@ -1,7 +1,6 @@
 import { el, get } from './api.js';
+import { kind, lineCount } from './lines.js';
 
-const KIND = { A: 'added', D: 'deleted', '?': 'untracked', U: 'conflict' };
-export const kind = status => KIND[status] || 'modified';
 const filesOf = c => (c.orig ? [c.path, c.orig] : [c.path]);
 const shown = path => path.replace(/\/$/, '');
 
@@ -29,20 +28,6 @@ export function marks(st) {
     if (untrackedDirs.some(d => p.startsWith(d))) return 'untracked';
     return ignored.some(i => (i.endsWith('/') ? p.startsWith(i) : p === i)) ? 'ignored' : '';
   };
-}
-
-const num = n => n.toLocaleString('en-US');
-
-// lineCount shows "+40 −12", or nothing when both are zero. Screen readers hear words instead.
-export function lineCount(add = 0, del = 0) {
-  if (!add && !del) return null;
-  const s = el('span', 'lc');
-  if (add) s.append(el('span', 'lc-add', `+${num(add)}`));
-  if (del) s.append(el('span', 'lc-del', `−${num(del)}`));
-  for (const part of s.children) part.setAttribute('aria-hidden', 'true');
-  const lines = n => `${num(n)} ${n === 1 ? 'line' : 'lines'}`;
-  s.append(el('span', 'sr-only', add && del ? `${lines(add)} added, ${num(del)} removed` : add ? `${lines(add)} added` : `${lines(del)} removed`));
-  return s;
 }
 
 // items is the flat list the arrow keys walk: conflicts, then staged, then unstaged.

@@ -1,5 +1,5 @@
 import { h, patch } from './api.js';
-import { lineCount, kind } from './git.js';
+import { lineCount, kind } from './lines.js';
 import { forgeMark, forgeWords, prChips } from './pr.js';
 import { onKey, keyLabel } from './keys.js';
 import { pull, read, line, own, list, askList, watch, redraw, mark, setSince, rowCounts } from './prstore.js';

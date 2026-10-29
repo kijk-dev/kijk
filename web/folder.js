@@ -6,7 +6,8 @@ import { setTabs, tabState, openTab, activeTab, recentFiles, closeActive, goPlac
 import { showPR, ownPR, forgeWords, FORGE } from './pr.js';
 import { setupReview, setBranchFolder, refreshBranch, focusBranchList } from './review.js';
 import { setupPrs, setPrsFolder, prsState, prsStatus, prsShown, showPrsItem, focusPrs, branchHead, overviewRow, openPR } from './prs.js';
-import { marks, showChanges, showGraph, revealHead, reviewKey, ago, lineCount } from './git.js';
+import { marks, showChanges, showGraph, revealHead, reviewKey, ago } from './git.js';
+import { lineCount } from './lines.js';
 import { openFind, findAgain, openGotoLine, openGotoFile, openRecent } from './find.js';
 import { onKey, keyLabel, keyNames } from './keys.js';
 import { confirm } from './dialog.js';
