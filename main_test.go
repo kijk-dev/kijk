@@ -414,3 +414,33 @@ func topLevel(src string) string {
 	}
 	return string(out)
 }
+
+// TestDarkThemeMatchesTheSystem checks that data-theme="kijk-dark" sets the colors kijk shows when
+// the system is dark, so the two copies cannot drift apart.
+func TestDarkThemeMatchesTheSystem(t *testing.T) {
+	b, err := fs.ReadFile(webFiles, "web/viewer.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tokens := func(selector string) []string {
+		css := string(b)
+		at := strings.Index(css, selector+" {\n")
+		if at < 0 {
+			t.Fatalf("viewer.css has no %s block", selector)
+		}
+		body, _, _ := strings.Cut(css[at+len(selector)+3:], "}")
+		var out []string
+		for l := range strings.Lines(body) {
+			if l = strings.TrimSpace(l); strings.HasPrefix(l, "--") {
+				out = append(out, l)
+			}
+		}
+		slices.Sort(out)
+		return out
+	}
+	system := tokens(`:scope:not([data-theme="kijk-light"])`)
+	chosen := tokens(`:scope[data-theme="kijk-dark"]`)
+	if len(system) < 30 || !slices.Equal(system, chosen) {
+		t.Errorf("the kijk-dark tokens differ from the system dark tokens:\nsystem %q\nkijk-dark %q", system, chosen)
+	}
+}
