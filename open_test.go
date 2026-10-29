@@ -11,13 +11,15 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/kijk-dev/kijk/internal/gittest"
 )
 
 func TestDeliver(t *testing.T) {
 	api := openAsk{Folders: []string{"/code/api"}}
-	billing := openAsk{PR: &prLink{Host: "github.com", Path: "acme/billing", Number: 12}}
 	for _, c := range []struct {
 		name        string
 		ask         openAsk
@@ -35,8 +37,6 @@ func TestDeliver(t *testing.T) {
 			0, "", "", []int{0}},
 		{"the list was not saved, but the folder opens", api, openReply{Said: "Added api.", Seq: 5, Error: "cannot save the folders list: disk full"}, nil,
 			0, "Added api.\n", "kijk: cannot save the folders list: disk full\n", []int{5}},
-		{"no clone of the pull request's repo", billing, openReply{NoClone: true}, nil,
-			1, "", "kijk: No folder of github.com/acme/billing is in kijk. Add a folder of this repo first: kijk <folder>\n", nil},
 		{"the running kijk refuses", api, openReply{}, errors.New("the running kijk is too old for this. Quit it, then try again"),
 			1, "", "kijk: the running kijk is too old for this. Quit it, then try again\n", nil},
 	} {
@@ -44,13 +44,118 @@ func TestDeliver(t *testing.T) {
 		var sent openAsk
 		var opened []int
 		code := deliver(func(a openAsk) (openReply, error) { sent = a; return c.rep, c.err }, c.ask,
-			func(seq int) { opened = append(opened, seq) }, terminal{&out, &errOut})
+			func(seq int) { opened = append(opened, seq) }, terminal{nil, &out, &errOut})
 		if code != c.code || out.String() != c.out || errOut.String() != c.errOut || !slices.Equal(opened, c.opened) || jsonOf(sent) != jsonOf(c.ask) {
 			t.Errorf("%s: exit %d, out %q, err %q, windows %v, sent %s", c.name, code, out.String(), errOut.String(), opened, jsonOf(sent))
 		}
 	}
-	if code := deliver(func(openAsk) (openReply, error) { return openReply{Seq: 1}, nil }, openAsk{}, nil, terminal{io.Discard, io.Discard}); code != 0 {
+	if code := deliver(func(openAsk) (openReply, error) { return openReply{Seq: 1}, nil }, openAsk{}, nil, terminal{nil, io.Discard, io.Discard}); code != 0 {
 		t.Errorf("-no-open: exit %d", code)
+	}
+}
+
+// When the kijk that shows it finds no clone, the command clones the repo with gh or glab, where
+// the terminal is, and asks again with the clone.
+func TestDeliverClones(t *testing.T) {
+	isolatedGit(t)
+	useCacheDir(t)
+	cache, _ := cacheDir()
+	src := gitRepo(t)
+	write(t, filepath.Join(src, "README.md"), "# Billing\n")
+	run(t, src, "add", ".")
+	run(t, src, "commit", "-qm", "Start")
+	billing := &prLink{Kind: "github", Host: "github.com", Path: "acme/billing", Number: 12}
+	ledger := &prLink{Kind: "github", Host: "github.com", Path: "acme/ledger", Number: 7}
+	api := &prLink{Kind: "gitlab", Host: "gitlab.com", Path: "team/api", Number: 3}
+	dir := cloneDir(cache, *billing)
+	searched := func(l *prLink) string {
+		return "No clone of " + l.Host + "/" + l.Path + " in 3 folders on this machine.\n"
+	}
+	cloning := func(l *prLink) string { return "Cloning it with gh into " + tilde(cloneDir(cache, *l)) + " …\n" }
+	for _, c := range []struct {
+		name        string
+		pr          *prLink
+		gh          []gittest.Rule // nil: neither gh nor glab is installed
+		code        int
+		out, errOut string
+		opened      []int
+	}{
+		{"cloned, then opened", billing, []gittest.Rule{{Has: "repo clone", Clone: src}},
+			0, searched(billing) + cloning(billing) + "Added billing and opened #12.\n", "", []int{2}},
+		{"the clone fails", ledger, []gittest.Rule{{Has: "repo clone", Err: "GraphQL: Could not resolve to a Repository\n", Exit: 1}},
+			1, searched(ledger) + cloning(ledger), "GraphQL: Could not resolve to a Repository\nkijk: cannot clone github.com/acme/ledger: gh repo clone: exit status 1. Clone it, then run kijk <folder>.\n", nil},
+		{"no glab", api, nil,
+			1, searched(api), "kijk: glab is not installed, so kijk cannot clone gitlab.com/team/api. Clone it, then run this command again.\n", nil},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if c.gh != nil {
+				gittest.FakeTool(t, "gh", c.gh...)
+			} else {
+				t.Setenv("PATH", t.TempDir())
+			}
+			var asks []openAsk
+			replies := []openReply{{NoClone: true, Said: strings.TrimSpace(searched(c.pr))}, {Said: "Added billing and opened #12.", Seq: 2}}
+			open := func(a openAsk) (openReply, error) {
+				asks = append(asks, a)
+				return replies[len(asks)-1], nil
+			}
+			var out, errOut bytes.Buffer
+			var opened []int
+			code := deliver(open, openAsk{PR: c.pr, Cwd: "/code"}, func(seq int) { opened = append(opened, seq) }, terminal{nil, &out, &errOut})
+			if code != c.code || out.String() != c.out || errOut.String() != c.errOut || !slices.Equal(opened, c.opened) {
+				t.Fatalf("exit %d, windows %v\nout %q\nwant %q\nerr %q\nwant %q", code, opened, out.String(), c.out, errOut.String(), c.errOut)
+			}
+			if c.code != 0 {
+				if len(asks) != 1 {
+					t.Errorf("asked again after a failed clone: %+v", asks)
+				}
+				return
+			}
+			if again := jsonOf(asks[1]); again != jsonOf(openAsk{Folders: []string{dir}, PR: billing}) {
+				t.Errorf("asked again with %s", again)
+			}
+			if _, err := os.Stat(filepath.Join(dir, "README.md")); err != nil {
+				t.Error("no clone:", err)
+			}
+		})
+	}
+}
+
+// A link can name any host, and gh and glab send the user's token to it, so kijk does not start them
+// for a host they are not logged in to.
+func TestCloneRefusesAnUnknownHost(t *testing.T) {
+	useCacheDir(t)
+	gittest.Logins(t, []string{"github.example.org"}, []string{"gitlab.example.org"})
+	gh := gittest.FakeToolCalls(t, "gh", gittest.Rule{Has: "repo clone", Exit: 1})
+	glab := gittest.FakeToolCalls(t, "glab", gittest.Rule{Has: "repo clone", Exit: 1})
+	for link, said := range map[string]string{
+		"https://evil.example/acme/billing/pull/12":                   "kijk: kijk clones only from github.com or a host gh is logged in to. Log in with gh auth login --hostname evil.example, or clone it yourself and run kijk <folder>.\n",
+		"https://evil.example:8443/acme/billing/pull/12":              "kijk: kijk clones only from github.com or a host gh is logged in to. Log in with gh auth login --hostname evil.example, or clone it yourself and run kijk <folder>.\n",
+		"https://gitlab.example.org:8443/team/api/-/merge_requests/3": "kijk: kijk clones only from gitlab.com or a host glab is logged in to. Log in with glab auth login --hostname gitlab.example.org:8443, or clone it yourself and run kijk <folder>.\n",
+	} {
+		l, _ := parsePRLink(link)
+		var errOut bytes.Buffer
+		if dir, code := clone(l, terminal{nil, io.Discard, &errOut}); dir != "" || code != 1 || errOut.String() != said {
+			t.Errorf("%s: %q, exit %d, said %q", link, dir, code, errOut.String())
+		}
+	}
+	if c := append(gh(), glab()...); len(c) > 0 {
+		t.Errorf("started the tool: %+v", c)
+	}
+}
+
+// A forge on its own port: glab reaches that port, and the clone's folder names the host alone.
+func TestCloneOnItsOwnPort(t *testing.T) {
+	useCacheDir(t)
+	gittest.Logins(t, nil, []string{"gitlab.example.org:8443"})
+	cache, _ := cacheDir()
+	l, _ := parsePRLink("https://gitlab.example.org:8443/team/api/-/merge_requests/3")
+	calls := gittest.FakeToolCalls(t, "glab", gittest.Rule{Has: "repo clone", Exit: 1})
+	clone(l, terminal{nil, io.Discard, io.Discard})
+	dir := filepath.Join(cache, "kijk", "clones", "gitlab.example.org", "team", "api")
+	c := calls()
+	if len(c) != 1 || c[0].GitlabHost != "gitlab.example.org:8443" || !strings.HasPrefix(c[0].Args[len(c[0].Args)-1], dir+"+part-") {
+		t.Fatalf("calls %+v", c)
 	}
 }
 
@@ -60,11 +165,11 @@ func TestOpenOnAnOldKijk(t *testing.T) {
 	defer srv.Close()
 	open := runningOpener(srv.Listener.Addr().(*net.TCPAddr).Port, "t")
 	var errOut bytes.Buffer
-	if code := deliver(open, openAsk{Folders: []string{"/code/api"}}, func(int) { t.Error("a folder opened a window") }, terminal{io.Discard, &errOut}); code != 1 || errOut.String() != "kijk: the running kijk is too old for this. Quit it, then try again\n" {
+	if code := deliver(open, openAsk{Folders: []string{"/code/api"}}, func(int) { t.Error("a folder opened a window") }, terminal{nil, io.Discard, &errOut}); code != 1 || errOut.String() != "kijk: the running kijk is too old for this. Quit it, then try again\n" {
 		t.Errorf("a folder: exit %d, err %q", code, errOut.String())
 	}
 	var opened []int
-	if code := deliver(open, openAsk{}, func(seq int) { opened = append(opened, seq) }, terminal{io.Discard, io.Discard}); code != 0 || !slices.Equal(opened, []int{0}) {
+	if code := deliver(open, openAsk{}, func(seq int) { opened = append(opened, seq) }, terminal{nil, io.Discard, io.Discard}); code != 0 || !slices.Equal(opened, []int{0}) {
 		t.Errorf("plain kijk: exit %d, windows %v", code, opened)
 	}
 }
@@ -239,35 +344,62 @@ func TestDeskListAndPlain(t *testing.T) {
 func TestDeskPullRequest(t *testing.T) {
 	main, worktree, other := shopClones(t)
 	main, worktree, other = realPath(main), realPath(worktree), realPath(other)
+	home := realPath(t.TempDir())
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	useCacheDir(t)
+	// common is looked at before the agents' folders, so only some cases have it.
+	common := filepath.Join(home, "code", "shop")
+	setCommon := func(want bool) {
+		_, err := os.Stat(common)
+		switch {
+		case !want:
+			os.RemoveAll(common)
+		case err != nil:
+			run(t, home, "clone", "-q", main, common)
+			run(t, common, "remote", "set-url", "origin", "https://github.com/acme/shop.git")
+		}
+	}
+	os.Mkdir(filepath.Join(main, "web"), 0o755)
 	useConfigDir(t)
-	shop := &prLink{Host: "github.com", Path: "acme/shop", Number: 477}
+	shop := &prLink{Kind: "github", Host: "github.com", Path: "acme/shop", Number: 477}
+	web := &prLink{Kind: "github", Host: "github.com", Path: "acme/web", Number: 12}
 	name := filepath.Base(main)
 	agentRow := func(root string) Row {
 		return Row{Root: root, Repo: filepath.Base(root), AgentSource: &AgentSource{Names: []string{"a"}, Agents: []RowAgent{{"claude", false}}}}
 	}
 	for _, c := range []struct {
 		name   string
+		ask    openAsk
 		saved  []savedFolder
 		agents []Row
 		want   openReply
 		open   openRequest
 		list   []string // the folders list after
+		common bool     // a clone sits in ~/code/shop
 	}{
-		{"saved", []savedFolder{{Path: other}, {Path: main}}, nil,
-			openReply{Said: "Opened #477 in " + name + ".", Seq: 1}, openRequest{Seq: 1, Root: main, PR: 477}, []string{other, main}},
-		{"an agent works in the clone", nil, []Row{agentRow(main)},
-			openReply{Said: "Opened #477 in " + name + ".", Seq: 1}, openRequest{Seq: 1, Root: main, PR: 477}, []string{}},
-		{"an agent works in a worktree of it", nil, []Row{agentRow(worktree)},
-			openReply{Said: "Added " + name + " and opened #477.", Seq: 1}, openRequest{Seq: 1, Root: main, PR: 477, Added: true}, []string{main}},
-		{"no clone", []savedFolder{{Path: other}}, nil,
-			openReply{NoClone: true}, openRequest{}, []string{other}},
+		{"saved", openAsk{PR: shop}, []savedFolder{{Path: other}, {Path: main}}, nil,
+			openReply{Said: "Opened #477 in " + name + ".", Seq: 1}, openRequest{Seq: 1, Root: main, PR: 477}, []string{other, main}, false},
+		{"an agent works in the clone", openAsk{PR: shop}, nil, []Row{agentRow(main)},
+			openReply{Said: "Opened #477 in " + name + ".", Seq: 1}, openRequest{Seq: 1, Root: main, PR: 477}, []string{}, false},
+		{"an agent works in a worktree of it", openAsk{PR: shop}, nil, []Row{agentRow(worktree)},
+			openReply{Said: "Found " + name + " at " + main + ". Added it and opened #477.", Seq: 1}, openRequest{Seq: 1, Root: main, PR: 477, Added: true}, []string{main}, false},
+		{"kijk runs in a folder of the clone", openAsk{PR: shop, Cwd: filepath.Join(main, "web")}, nil, nil,
+			openReply{Said: "Found " + name + " at " + main + ". Added it and opened #477.", Seq: 1}, openRequest{Seq: 1, Root: main, PR: 477, Added: true}, []string{main}, false},
+		{"a common place", openAsk{PR: shop}, nil, nil,
+			openReply{Said: "Found shop at " + filepath.FromSlash("~/code/shop") + ". Added it and opened #477.", Seq: 1}, openRequest{Seq: 1, Root: common, PR: 477, Added: true}, []string{common}, true},
+		{"the command cloned it", openAsk{PR: shop, Folders: []string{common}}, nil, nil,
+			openReply{Said: "Added shop and opened #477.", Seq: 1}, openRequest{Seq: 1, Root: common, PR: 477, Added: true}, []string{common}, true},
+		{"no clone", openAsk{PR: web}, []savedFolder{{Path: other}}, nil,
+			openReply{NoClone: true, Said: "No clone of github.com/acme/web in 1 folder on this machine."}, openRequest{}, []string{other}, false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			useConfigDir(t)
+			setCommon(c.common)
 			d, h := testDesk(t)
 			d.fl.add(c.saved)
 			d.rl.setAgents(&agentPart{rows: c.agents})
-			rep, err := d.open(openAsk{PR: shop})
+			rep, err := d.open(c.ask)
 			if err != nil || rep != c.want {
 				t.Fatalf("got %+v %v, want %+v", rep, err, c.want)
 			}

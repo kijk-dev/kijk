@@ -115,7 +115,9 @@ func TestSavedFolders(t *testing.T) {
 	if c, _ := do("GET", escape, ""); c != http.StatusForbidden && c != http.StatusNotFound {
 		t.Fatalf("path escape: %d", c)
 	}
-	for _, bad := range []string{`{"folders":["relative"]}`, `{"list":"agents"}`, `{"pr":{"host":"github.com","path":"a/b","number":0}}`, `{`} {
+	for _, bad := range []string{`{"folders":["relative"]}`, `{"list":"agents"}`, `{"pr":{"kind":"github","host":"github.com","path":"a/b","number":0}}`,
+		`{"pr":{"kind":"github","host":"github.com","path":"../../x","number":1}}`, `{"pr":{"kind":"bitbucket","host":"github.com","path":"a/b","number":1}}`,
+		`{"pr":{"kind":"github","host":"github.com","path":"a/b","number":1},"folders":["/a","/b"]}`, `{"pr":{"kind":"github","host":"github.com","path":"a/b","number":1},"cwd":"code"}`, `{`} {
 		if c, b := do("POST", "/api/open", bad); c != http.StatusBadRequest {
 			t.Fatalf("%s: %d %s", bad, c, b)
 		}

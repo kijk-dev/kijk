@@ -9,12 +9,15 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/kijk-dev/kijk/internal/gittest"
 )
 
 // TestMain lets a copy of the test binary stand in for a kijk release: with KIJK_TEST_VERSION
 // set, "<binary> version" answers like kijk would. Started as ssh or as kijk serve, it plays
-// those parts for the fake ssh tests.
+// those parts for the fake ssh tests, and as gh or glab the fake forge tools.
 func TestMain(m *testing.M) {
+	gittest.RunFakeTool()
 	switch filepath.Base(os.Args[0]) {
 	case "ssh":
 		os.Exit(fakeSSH(os.Args[1:]))

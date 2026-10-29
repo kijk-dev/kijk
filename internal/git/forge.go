@@ -406,6 +406,21 @@ func Origin(root string) (host, path string, ok bool) {
 	return parseRemote(raw)
 }
 
+// OriginURL is the host and project path of a folder's origin after the user's insteadOf rewrites,
+// so an origin written with a short alias names its forge. It does not reach the network.
+func OriginURL(root string) (host, path string, ok bool) {
+	raw, err := Run(root, "ls-remote", "--get-url", "origin")
+	if err != nil {
+		return "", "", false
+	}
+	return parseRemote(raw)
+}
+
+// Tool is the program that talks to a forge of kind: gh for GitHub, glab for GitLab.
+func Tool(kind string) string {
+	return map[string]string{"github": "gh", "gitlab": "glab"}[kind]
+}
+
 // MainClone is the folder of the main clone a worktree belongs to, or root itself.
 func MainClone(root string) string {
 	out, err := Run(root, "rev-parse", "--path-format=absolute", "--show-toplevel", "--git-common-dir")

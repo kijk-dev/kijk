@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/kijk-dev/kijk/internal/gittest"
 )
 
 func TestParseRemote(t *testing.T) {
@@ -25,6 +27,23 @@ func TestParseRemote(t *testing.T) {
 		if got != want {
 			t.Errorf("parseRemote(%q) = %q, want %q", raw, got, want)
 		}
+	}
+}
+
+// An origin written with a short alias names its forge after the user's insteadOf rewrite.
+func TestOriginURL(t *testing.T) {
+	gittest.Isolate(t)
+	repo := gittest.Repo(t)
+	gittest.Run(t, repo, "remote", "add", "origin", "gh:Acme/Shop")
+	gittest.Run(t, repo, "config", "url.git@github.com:.insteadOf", "gh:")
+	if host, path, ok := OriginURL(repo); !ok || host != "github.com" || path != "Acme/Shop" {
+		t.Errorf("OriginURL = %q %q %v", host, path, ok)
+	}
+	if host, _, _ := Origin(repo); host != "gh" {
+		t.Errorf("Origin = %q, want the origin as written", host)
+	}
+	if _, _, ok := OriginURL(gittest.Repo(t)); ok {
+		t.Error("a repo with no origin has one")
 	}
 }
 

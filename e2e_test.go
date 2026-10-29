@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -920,7 +921,7 @@ func TestBrowser(t *testing.T) {
 		cmd := exec.Command(exe, "-port", fmt.Sprint(k.port), "-no-open", "https://github.com/acme/billing/pull/12")
 		cmd.Env = append(os.Environ(), k.env...)
 		out, err := cmd.CombinedOutput()
-		if cmd.ProcessState.ExitCode() != 1 || !strings.Contains(string(out), "No folder of github.com/acme/billing is in kijk. Add a folder of this repo first: kijk <folder>") {
+		if cmd.ProcessState.ExitCode() != 1 || !strings.Contains(string(out), "kijk: cannot clone github.com/acme/billing: gh repo clone: exit status 1. Clone it, then run kijk <folder>.") {
 			t.Fatalf("a link to a repo kijk has no clone of: %v\n%s", err, out)
 		}
 		b.noErrors()
@@ -1492,6 +1493,57 @@ func TestBrowser(t *testing.T) {
 			t.Fatalf("%d merges", c)
 		}
 		b.noErrors()
+	})
+
+	// kijk <PR link> for a repo with no clone on the machine: gh clones it into kijk's cache.
+	t.Run("pull request with no clone", func(t *testing.T) {
+		forge := newFakeForge(t)
+		_, head := billingForge(t, forge)
+		home := t.TempDir()
+		k := startKijkIn(t, exe, home, forge.env())
+		w := openPage(t, newTab(t, tab), k, "/")
+		code := filepath.Join(home, "code")
+		os.MkdirAll(code, 0o755)
+		kijkPR := func() (string, error) {
+			cmd := exec.Command(exe, "-port", fmt.Sprint(k.port), "-no-open", "https://github.com/acme/billing/pull/12")
+			cmd.Dir, cmd.Env = code, append(os.Environ(), k.env...)
+			out, err := cmd.CombinedOutput()
+			return string(out), err
+		}
+		cache := filepath.Join(home, ".cache")
+		if runtime.GOOS == "darwin" {
+			cache = filepath.Join(home, "Library", "Caches")
+		}
+		dir := filepath.Join(cache, "kijk", "clones", "github.com", "acme", "billing")
+		said := "No clone of github.com/acme/billing on this machine.\n" +
+			"Cloning it with gh into " + strings.Replace(dir, home, "~", 1) + " …\n" +
+			"Cloning into '" + dir + "+part-"
+		if out, err := kijkPR(); err != nil || !strings.HasPrefix(out, said) || !strings.HasSuffix(out, "\nAdded billing and opened #12. It is open in the kijk window.\n") {
+			w.fail("kijk <PR link>: %v\n%s", err, out)
+		}
+		w.waitFor("#12 in the window", `!document.querySelector('#prs-pr').hidden && document.querySelector('#prs-pr .pr-num')?.textContent === '#12' && document.querySelector('#prs-pr .pr-title')?.textContent === 'Mail invoices'`)
+		w.waitFor("its file", boxHas("invoice.go", "add", "func Mail() {}"))
+		if got := gitOut(t, dir, "rev-parse", "refs/kijk/pr/12"); got != head {
+			w.fail("refs/kijk/pr/12 of the clone is %q, want %q", got, head)
+		}
+		if out, err := kijkPR(); err != nil || out != "Opened #12 in billing. It is open in the kijk window.\n" {
+			w.fail("a second run: %v\n%s", err, out)
+		}
+		if n := strings.Count(strings.Join(forge.calls(), "\n"), " repo clone "); n != 1 {
+			w.fail("%d clones, want 1", n)
+		}
+
+		// gh would send the user's login to a host it is not logged in to, so kijk does not run it.
+		cmd := exec.Command(exe, "-port", fmt.Sprint(k.port), "-no-open", "https://code.example.org/acme/billing/pull/12")
+		cmd.Dir, cmd.Env = code, append(os.Environ(), k.env...)
+		out, _ := cmd.CombinedOutput()
+		if cmd.ProcessState.ExitCode() != 1 || !strings.HasSuffix(string(out), "kijk: kijk clones only from github.com or a host gh is logged in to. Log in with gh auth login --hostname code.example.org, or clone it yourself and run kijk <folder>.\n") {
+			w.fail("a link to another host: %s", out)
+		}
+		if n := strings.Count(strings.Join(forge.calls(), "\n"), " repo clone "); n != 1 {
+			w.fail("%d clones after a link to another host, want 1", n)
+		}
+		w.noErrors()
 	})
 
 	t.Run("viewed marks", func(t *testing.T) {

@@ -83,16 +83,16 @@ func main() {
 		return
 	}
 	var adds []savedFolder
+	cwd, _ := os.Getwd()
 	if len(a.folders) > 0 {
-		cwd, _ := os.Getwd()
 		if adds, err = checkFolders(a.folders, cwd); err != nil {
 			fmt.Fprintf(os.Stderr, "kijk: %v.\n", err)
 			os.Exit(1)
 		}
 	}
-	ask := askOf(a, adds)
+	ask := askOf(a, adds, cwd)
 	plain := ask.plain()
-	term := terminal{os.Stdout, os.Stderr}
+	term := terminal{os.Stdin, os.Stdout, os.Stderr}
 
 	removeOldExe()
 	if s, ok := runningInstance(a.port); ok {
@@ -117,13 +117,6 @@ func main() {
 	if err != nil {
 		log.Printf("cannot write the state file, so a second start will not find this one: %v", err)
 	}
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
-	go func() {
-		<-stop
-		remove()
-		os.Exit(0)
-	}()
 
 	exe, _ := selfPath()
 	u := newUpdater(kijkVersion, exe, os.Stdout)
@@ -164,17 +157,28 @@ func main() {
 	web, _ := fs.Sub(webFiles, "web")
 	d := &openDesk{h, rl, fl}
 	srv := newServer(token, a.port, web, h, rts, u, mm, d)
-	// The port listens already, so a window that opens now waits for Serve below.
+	served := make(chan error, 1)
+	go func() { served <- http.Serve(ln, srv) }()
+	// A SIGTERM waits in stop until deliver returns, as a clone in deliver cleans up first. Ctrl+C
+	// is the clone's alone.
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, syscall.SIGTERM)
 	if code := deliver(d.open, ask, windows(a, token), term); code != 0 {
 		remove()
 		os.Exit(code)
 	}
+	signal.Notify(stop, os.Interrupt)
+	go func() {
+		<-stop
+		remove()
+		os.Exit(0)
+	}()
 	if restarted {
 		fmt.Printf("kijk %s restarted at %s\n", kijkVersion, uiURL(a.port, token))
 	} else {
 		fmt.Printf("kijk %s is running at %s\n", kijkVersion, uiURL(a.port, token))
 	}
-	log.Fatal(http.Serve(ln, srv))
+	log.Fatal(<-served)
 }
 
 // cliArgs is what kijk was asked to do, when it is not one of the commands that exit at once.
@@ -187,11 +191,12 @@ type cliArgs struct {
 	flags                                 []string // as given, for a restart
 }
 
-// askOf is what the command asks the kijk that shows it. adds are its folders, checked.
-func askOf(a cliArgs, adds []savedFolder) openAsk {
+// askOf is what the command asks the kijk that shows it. adds are its folders, checked; cwd is
+// where it runs, where a clone of a pull request's repo may be.
+func askOf(a cliArgs, adds []savedFolder, cwd string) openAsk {
 	ask := openAsk{List: a.list}
 	if a.pr.Number > 0 {
-		ask.PR = &a.pr
+		ask.PR, ask.Cwd = &a.pr, cwd
 	}
 	for _, f := range adds {
 		ask.Folders = append(ask.Folders, cmp.Or(f.Open, f.Path))
