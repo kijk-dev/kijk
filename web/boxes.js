@@ -7,7 +7,10 @@ import { onKey, keyLabel } from './keys.js';
 // when it comes near the screen. A source says what the boxes show:
 //   files()                the files, in order: {path, orig, status, add, del}
 //   basis()                what every box depends on besides its own file
-//   fetch(f, context)      the diff of one file
+//   fetch(f, context)      the diff of one file, with context lines around each change: {hunks:
+//                          [{oldStart, newStart, lines: [{k, o, n, t, x}]}]}, where k is ' ', '+'
+//                          or '-', o and n the old and new line, t the text and x optional colored
+//                          pieces [class, text]. Or {binary: true}, or {error}
 //   more                   false when fetch cannot give more context lines: no "Show more lines"
 //   headParts(f)           extra parts of a box's header, after its line counts
 //   openFile(f)            opens the whole file; without it there is no button
