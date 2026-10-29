@@ -1,6 +1,6 @@
 // A page of another app that shows kijk's file boxes with diffs of its own, and no kijk server.
 import { boxView, showBoxes } from '/kijk/boxes.js';
-import { initLayout, onDiffLayout } from '/kijk/layout.js';
+import { initLayout } from '/kijk/layout.js';
 import { listenKeys } from '/kijk/keys.js';
 
 const CART = `@@ -2,7 +2,7 @@
@@ -73,7 +73,6 @@ listenKeys();
 const viewer = document.getElementById('boxes');
 initLayout(viewer, document.getElementById('layout'));
 const v = boxView(viewer, 'run 42', {}, null, () => {}, src);
-onDiffLayout(() => v.relayout());
 await showBoxes(v);
 
 // The journey calls this as the app does when the agent changes a file.

@@ -1,4 +1,5 @@
 import { h, patch } from './api.js';
+import { current } from './lines.js';
 
 // The layout of every line diff: unified, or split into old and new side by side. The choice is
 // one for all diffs; a viewer too narrow for two halves shows unified and keeps the choice.
@@ -7,18 +8,15 @@ const WIDE = 700; // px: below this a half shows too little of a line
 let slot = null;
 let chosen = 'unified';
 let narrow = false;
-let changed = () => {};
 
 export const diffLayout = () => (chosen === 'split' && !narrow ? 'split' : 'unified');
 
-// onDiffLayout runs fn when the layout diffs show in changes: by the switch, or across the width.
-export function onDiffLayout(fn) { changed = fn; }
-
+// set redraws the open view when the layout its diffs show changes: by the switch, or across the width.
 function set(next) {
   const was = diffLayout();
   next();
   draw();
-  if (diffLayout() !== was) changed();
+  if (diffLayout() !== was) current?.relayout?.();
 }
 
 // The Unified / Split switch at the end of the tab strip; the CSS shows it while a line diff shows.

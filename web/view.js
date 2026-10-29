@@ -1,5 +1,5 @@
 import { get, url, el, splitKey, base } from './api.js';
-import { diffLayout, onDiffLayout } from './layout.js';
+import { diffLayout } from './layout.js';
 import { LINE_HEIGHT, current, setView, line, pairRows, splitRow } from './lines.js';
 
 // The file types of filetypes.go. They come from the local kijk, also for a remote folder.
@@ -10,8 +10,6 @@ let viewChanged = () => {};
 
 // onView runs after a file or diff is drawn, also after a reload, so find can search it again.
 export function onView(fn) { viewChanged = fn; }
-
-onDiffLayout(() => current?.relayout?.());
 
 // typeOf gives the file type of a path, as TypeOf in filetypes.go does; {} shows as source.
 function typeOf(path) {
