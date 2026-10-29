@@ -16,6 +16,8 @@ import (
 // question they get, and log every call. A question with no file fails, as a tool would; with
 // gh-error.txt, gh fails every call with its text. A write m (such as gh-thread.json for "thread")
 // first copies the files in after-m/ over the answers, once, so the next read shows what it did.
+// repo clone clones the repo named in clone-from.txt, with origin set to the forge's URL and an
+// insteadOf that fetches it from that repo.
 type fakeForge struct{ dir string }
 
 func newFakeForge(t *testing.T) *fakeForge {
@@ -27,6 +29,11 @@ in=
 case " $* " in *" --input - "*) in=$(cat) ;; esac
 printf '%%s\n' "home=$HOME gh $(printf '%%s ' "$@" | tr '\n' ' ')$in" >> "$d/calls.log" # one write, so calls at once do not mix
 if [ -f "$d/gh-error.txt" ]; then cat "$d/gh-error.txt" >&2; exit 1; fi
+if [ "$1 $2" = "repo clone" ]; then
+  from=$(cat "$d/clone-from.txt") || exit 1
+  git clone "$from" "$4" && git -C "$4" remote set-url origin "https://$3.git" && git -C "$4" config "url.$from.insteadOf" "https://$3.git"
+  exit
+fi
 f=
 m=
 if [ "$1" = pr ]; then
@@ -62,6 +69,12 @@ d=%[1]q
 in=
 case " $* " in *" --input - "*) in=$(cat) ;; esac
 printf '%%s\n' "home=$HOME glab $(printf '%%s ' "$@" | tr '\n' ' ')$in" >> "$d/calls.log" # one write, so calls at once do not mix
+if [ "$1 $2" = "repo clone" ]; then
+  from=$(cat "$d/clone-from.txt") || exit 1
+  url="https://$GITLAB_HOST/$3.git"
+  git clone "$from" "$4" && git -C "$4" remote set-url origin "$url" && git -C "$4" config "url.$from.insteadOf" "$url"
+  exit
+fi
 f=
 m=
 host=
@@ -326,6 +339,32 @@ func reviewForge(t *testing.T, f *fakeForge, repo, origin string, ownThread bool
 
 	f.set(t, "gh-pr-477.json", pr477(theirs, main, func(ts []obj) []obj { return ts }))
 	f.set(t, "gh-log-303.txt", "2026-10-21T10:00:01.0000000Z === RUN   TestBackoffJitter\n2026-10-21T10:00:02.0000000Z     backoff_test.go:41: delay 1.204s outside [0.5s, 1.2s]\n2026-10-21T10:00:03.0000000Z --- FAIL: TestBackoffJitter (0.00s)\n")
+}
+
+// billingForge makes acme/billing, a repo no folder on the machine is a clone of, with sanne's pull
+// request #12, and lets the fake gh clone it. It gives the origin and #12's head.
+func billingForge(t *testing.T, f *fakeForge) (origin, head string) {
+	t.Helper()
+	origin = filepath.Join(t.TempDir(), "billing.git")
+	run(t, t.TempDir(), "init", "-q", "--bare", "-b", "main", origin)
+	work := namedRepo(t, "billing")
+	write(t, filepath.Join(work, "README.md"), "# Billing\n")
+	run(t, work, "add", ".")
+	run(t, work, "commit", "-qm", "Start billing")
+	run(t, work, "push", "-q", origin, "HEAD:refs/heads/main")
+	main := gitOut(t, work, "rev-parse", "HEAD")
+	write(t, filepath.Join(work, "invoice.go"), "package billing\n\n// Mail sends an invoice to its customer.\nfunc Mail() {}\n")
+	run(t, work, "add", ".")
+	run(t, work, "commit", "-qm", "Mail invoices")
+	run(t, work, "push", "-q", origin, "HEAD:refs/pull/12/head")
+	head = gitOut(t, work, "rev-parse", "HEAD")
+	f.set(t, "clone-from.txt", origin)
+	row := ghRow(12, "Mail invoices", "sanne", "mail-invoices", false, 4, 0, "SUCCESS")
+	row["url"] = "https://github.com/acme/billing/pull/12"
+	f.set(t, "gh-list.json", ghData(obj{"viewer": ghUser("you"),
+		"repository": obj{"pullRequests": obj{"totalCount": 1, "nodes": []obj{row}}}, "asked": obj{"nodes": []obj{}}}))
+	f.set(t, "gh-pr-12.json", ghPR(row, "Each invoice goes out by mail.", head, main, []obj{}, []obj{}, []obj{}, []obj{}, []obj{}))
+	return origin, head
 }
 
 // pr477 is gh's answer about sanne's #477; edit changes its threads.

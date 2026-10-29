@@ -56,7 +56,7 @@ export function onKey(action, fn) {
   handlers.set(action, fn);
 }
 
-const typing = t => t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName);
+export const typing = t => t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName);
 
 document.addEventListener('keydown', e => {
   // On macOS ⌥ alone types a character, such as ∑ for ⌥W, so a text field keeps it.

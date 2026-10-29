@@ -1,9 +1,11 @@
-import { el, get, post, folderKey } from './api.js';
+import { el, get, post } from './api.js';
 import { refreshTip, tipSide } from './tip.js';
 import { openKey, openFolder, openFolderPR, closeFolder, setMachine, setupFolder, showFetched, SERVER } from './folder.js';
 import { ago, lineCount } from './git.js';
-import { mac } from './keys.js';
+import { mac, typing } from './keys.js';
 import { showKijk, showAgentErrors, showUndo, showSaid, restarting } from './status.js';
+import { LISTS, inList, keyed, listRows, cwdIn, target, closeRule, finish } from './rail.js';
+import { plural } from './boxes.js';
 
 // The agent types kijk knows, in its order. They come from the local kijk, also for remote rows.
 const agentTypes = await get('agenttypes');
@@ -12,33 +14,41 @@ const agentType = name => agentTypes.find(a => a.name === name) || { label: name
 // What the Agents list says when the tool of no agent type is on this machine.
 const NONE_INSTALLED = `No running agents · kijk shows ${andList(agentTypes.map(a => a.label))} agents`;
 
-// The page is the agents window, or at /?window=folders the folders window: same views, other rows.
+// A new window that a command opened acts on that command's request, once: a reload must not.
 const params = new URLSearchParams(location.search);
-const foldersMode = params.get('window') === 'folders';
-const TITLE = foldersMode ? 'kijk · Folders' : 'kijk';
-const PANE = foldersMode ? 'folders' : 'agents';
-let arriving = params.get('open'); // a folder kijk <folder> just added, to open and flash
-let arrivingPR = Number(params.get('pr')) || 0; // with kijk <PR link>, the pull request to open in it
-if (arriving) history.replaceState(null, '', '/?window=folders');
+let wantSeq = Number(params.get('open')) || 0;
+if (params.has('open') || params.has('window')) history.replaceState(null, '', '/');
 let openSeq = null; // the last open request seen; null until the first message of a connection
 let listError = '';
+let scanned = false; // the agent scan of this look has run, so the Agents list is known
 let noAgents = 'No running agents'; // what the Agents list says for the local machine when it has none
 
 const rowsEl = document.getElementById('rows');
 const statusEl = document.getElementById('status');
+const railEl = document.getElementById('rail');
 const railBtn = document.getElementById('rail-toggle');
 const viewer = document.getElementById('viewer');
 const start = document.getElementById('start');
-let rows = []; // every row in the list, local and remote, each with its folder key and machine
+let list = startList(); // the list that shows: 'agents' or 'folders'
+let rows = new Map(); // every row of both lists, local and remote, by folder key
 let machines = null; // the saved remote machines from the last message; null when none is saved
 let numbered = []; // the rows that have a Ctrl+Alt number, in order
-let openMachine = ''; // the machine of the open folder
+let openRow = null; // the row of the open folder as it was opened; it may have left both lists since
 const finished = new Set(); // folders whose agent went idle since the user last opened them
 const collapsed = new Set(); // machine groups folded by the user; '' is Local
 try { for (const g of JSON.parse(localStorage.getItem('kijk.collapsed')) || []) collapsed.add(g); } catch { /* storage blocked */ }
-const lastKey = foldersMode ? 'kijk.lastFolder' : 'kijk.last';
+const lastKey = 'kijk.last';
 let reopen = null; // the folder open before a reload, opened again once its row shows up
-try { reopen = localStorage.getItem(lastKey); } catch { /* storage blocked */ }
+try {
+  reopen = localStorage.getItem(lastKey) || localStorage.getItem('kijk.lastFolder'); // an older kijk's folders window
+  localStorage.removeItem('kijk.lastFolder');
+} catch { /* storage blocked */ }
+
+// startList is the folders window's old address, else the list that showed last.
+function startList() {
+  if (params.get('window') === 'folders') return 'folders';
+  try { return LISTS.find(l => l === localStorage.getItem('kijk.list')) || 'agents'; } catch { return 'agents'; }
+}
 
 // announce reads a message to screen readers; the region is always in the page, so it is heard.
 const announcer = document.getElementById('announce');
@@ -54,7 +64,8 @@ function agentIcon(r) {
   if (type.color) icon.style.setProperty('--agent-color', type.color);
   return icon;
 }
-setupFolder({ lastKey, start, announce, say: showSaid, agentIcon, onFolderEvent: () => { if (foldersMode) refreshRow(); } });
+setupFolder({ lastKey, start, announce, say: showSaid, agentIcon, onGone,
+  onFolderEvent: () => { if (rows.get(openKey)?.saved) refreshRow(); } });
 tipSide('#rail', 'right');
 tipSide('#statusbar', 'above');
 
@@ -65,11 +76,12 @@ function showStatus(text, isError) {
   announce(text);
 }
 
-// Row elements are kept and updated in place, so a click is not lost when the list refreshes.
-const rowEls = new Map();
+// Row elements are kept and updated in place, so a click is not lost when the list refreshes. A repo
+// in both lists has an element in each; only one list shows at a time.
+const els = { agents: new Map(), folders: new Map() };
 
 function rowEl(key) {
-  let li = rowEls.get(key);
+  let li = els.agents.get(key);
   if (li) return li;
   li = el('li');
   li.tabIndex = 0;
@@ -88,13 +100,13 @@ function rowEl(key) {
   li.done = el('span', 'done');
   li.when = el('span', 'when');
   li.repo = el('div', 'repo');
-  li.agent = el('span', 'agents');
+  li.icons = el('span', 'agents');
   li.where = el('span', 'where');
   li.repo.append(li.where);
   li.badge.append(li.initials, li.key);
-  top.append(li.agent, li.badge, li.names, li.done, li.when);
+  top.append(li.icons, li.badge, li.names, li.done, li.when);
   li.append(top, li.repo);
-  rowEls.set(key, li);
+  els.agents.set(key, li);
   return li;
 }
 
@@ -124,22 +136,8 @@ function rowItem(r, n) {
   li.key.textContent = n || '';
   li.names.textContent = r.names.join(', ');
   li.when.textContent = ago(r.lastActivity);
-  const agents = r.agents || [];
-  const types = [...new Set(agents.map(a => a.type))];
-  // Only the icon of a type with a Busy agent pulses.
-  const working = t => agents.some(a => a.type === t && a.busy);
-  const icons = types.map(t => `${t}${working(t) ? '+' : ''}`).join(' ');
-  if (li.agent.dataset.kind !== icons) {
-    li.agent.dataset.kind = icons;
-    li.agent.replaceChildren(...types.map(t => {
-      const { icon: svg, color } = agentType(t);
-      const icon = el('span', `agent${working(t) ? ' on' : ''}`);
-      icon.innerHTML = svg; // from the local kijk's own files, never a remote machine's text
-      if (color) icon.style.setProperty('--agent-color', color);
-      return icon;
-    }));
-    li.style.setProperty('--icons', Math.max(types.length, 1));
-  }
+  const agents = r.agents;
+  const types = showIcons(li, agents);
   li.where.textContent = where;
   const labels = types.map(t => agentType(t).label);
   const perAgent = r.names.map((name, i) => [agentType(agents[i]?.type).label, agents[i]?.busy && !r.stale ? 'Busy' : 'Idle', name]);
@@ -153,11 +151,32 @@ function rowItem(r, n) {
   return li;
 }
 
+// showIcons shows a row's agent types, one icon each, or the folder icon where no agent works. Only
+// the icon of a type with a Busy agent pulses.
+function showIcons(li, agents = []) {
+  const types = [...new Set(agents.map(a => a.type))];
+  const working = t => agents.some(a => a.type === t && a.busy);
+  const kind = types.map(t => `${t}${working(t) ? '+' : ''}`).join(' ');
+  if (li.icons.dataset.kind === kind) return types;
+  li.icons.dataset.kind = kind;
+  li.icons.className = types.length ? 'agents' : 'ficon';
+  if (!types.length) li.icons.innerHTML = FOLDER;
+  else li.icons.replaceChildren(...types.map(t => {
+    const { icon: svg, color } = agentType(t);
+    const icon = el('span', `agent${working(t) ? ' on' : ''}`);
+    icon.innerHTML = svg; // from the local kijk's own files, never a remote machine's text
+    if (color) icon.style.setProperty('--agent-color', color);
+    return icon;
+  }));
+  li.style.setProperty('--icons', Math.max(types.length, 1));
+  return types;
+}
+
 const FOLDER = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>';
 const REMOVE = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>';
 
 function folderEl(key) {
-  let li = rowEls.get(key);
+  let li = els.folders.get(key);
   if (li) return li;
   li = el('li', 'folder');
   li.tabIndex = 0;
@@ -175,8 +194,7 @@ function folderEl(key) {
     }
   };
   const top = el('div', 'line');
-  const icon = el('span', 'ficon');
-  icon.innerHTML = FOLDER;
+  li.icons = el('span');
   li.badge = el('span', 'badge');
   li.initials = el('span');
   li.key = el('span', 'key');
@@ -196,35 +214,40 @@ function folderEl(key) {
   li.where = el('span', 'where');
   const repo = el('div', 'repo');
   repo.append(li.where);
-  top.append(icon, li.badge, li.names, li.lc, li.rm);
+  top.append(li.icons, li.badge, li.names, li.lc, li.rm);
   li.append(top, repo);
-  rowEls.set(key, li);
+  els.folders.set(key, li);
   return li;
 }
 
 function folderItem(r, n) {
   const li = folderEl(r.key);
+  const s = r.saved;
   li.row = r;
   li.classList.toggle('selected', r.key === openKey);
-  li.classList.toggle('missing', !!r.missing);
-  li.toggleAttribute('aria-disabled', !!r.missing);
+  li.classList.toggle('missing', !!s.missing);
+  li.classList.toggle('busy', !!r.busy);
+  li.toggleAttribute('aria-disabled', !!s.missing);
   li.initials.textContent = initials(r.repo);
   li.badge.style.setProperty('--hue', hue(r.root));
   li.key.textContent = n || '';
   li.names.textContent = r.repo;
-  const lc = (!r.missing && lineCount(r.add, r.del)) || el('span', 'lc');
+  showIcons(li, r.agents);
+  const lc = (!s.missing && lineCount(s.add, s.del)) || el('span', 'lc');
   li.lc.replaceWith(lc);
   li.lc = lc;
-  if (r.missing) li.where.replaceChildren(el('span', 'gone', 'missing'), ` · ${r.parent}`);
-  else li.where.textContent = r.branch ? `${r.branch} · ${r.parent}` : r.parent;
-  const changed = r.add || r.del ? `+${r.add} −${r.del} not committed` : r.branch ? 'Nothing to commit' : '';
+  if (s.missing) li.where.replaceChildren(el('span', 'gone', 'missing'), ` · ${s.parent}`);
+  else li.where.textContent = r.branch ? `${r.branch} · ${s.parent}` : s.parent;
+  const changed = s.add || s.del ? `+${s.add} −${s.del} not committed` : r.branch && s.counted ? 'Nothing to commit' : '';
+  const agents = (r.names || []).map((name, i) => [agentType(r.agents[i]?.type).label, r.agents[i]?.busy ? 'Busy' : 'Idle', name]);
   const key = openHint(n);
-  li.dataset.tip = r.missing
+  li.dataset.tip = s.missing
     ? [r.repo, r.root, 'Missing: this folder is not on disk.', 'It comes back when the folder does.'].join('\n')
-    : [r.repo, r.branch ? `${r.repo} · ${r.branch}` : 'Not a git repository', changed, r.cwd ? `${r.root} · opens at ${r.cwd}/` : r.root, key]
-      .filter(Boolean).join('\n');
-  li.setAttribute('aria-label', r.missing ? `${r.repo}, missing, ${r.parent}`
-    : [r.repo, r.branch || 'not a git repository', r.parent, changed].filter(Boolean).join(', '));
+    : [r.repo, r.branch ? `${r.repo} · ${r.branch}` : 'Not a git repository', changed, ...agents.map(a => a.join(' · ')),
+      s.open ? `${r.root} · opens at ${s.open}/` : r.root, key].filter(Boolean).join('\n');
+  li.setAttribute('aria-label', s.missing ? `${r.repo}, missing, ${s.parent}`
+    : [r.repo, r.branch || 'not a git repository', s.parent, changed, ...agents.map(([type, state, name]) => `${name}, ${type}, ${state}`)]
+      .filter(Boolean).join(', '));
   li.rm.setAttribute('aria-label', `Remove ${r.repo} from the list`);
   return li;
 }
@@ -363,38 +386,44 @@ function sync(list, items) {
   if (!same) list.replaceChildren(...items);
 }
 
+// render draws the list that shows: agents grouped by machine once one is saved, or saved folders.
 function render() {
   numbered = [];
   const number = r => {
-    if (r.stale || r.missing || numbered.length >= 9) return 0;
+    if (r.stale || r.saved?.missing || numbered.length >= 9) return 0;
     numbered.push(r);
     return numbered.length;
   };
-  if (foldersMode) {
-    sync(rowsEl, rows.map(r => folderItem(r, number(r))));
+  const shown = listRows(rows, list);
+  if (list === 'folders') {
+    sync(rowsEl, shown.map(r => folderItem(r, number(r))));
   } else if (!machines) {
-    sync(rowsEl, rows.map(r => rowItem(r, number(r))));
+    sync(rowsEl, shown.map(r => rowItem(r, number(r))));
     groupEls.clear();
   } else {
     const groups = [{ name: '', state: 'connected' }, ...machines];
     sync(rowsEl, groups.map(m => {
-      const own = rows.filter(r => r.machine === m.name);
+      const own = shown.filter(r => r.machine === m.name);
       const open = m.state !== 'disabled' && !collapsed.has(m.name);
       return groupItem(m, own, open, own.map(r => rowItem(r, open ? number(r) : 0)));
     }));
     for (const name of groupEls.keys()) if (!groups.some(m => m.name === name)) groupEls.delete(name);
   }
-  for (const key of rowEls.keys()) if (!rows.some(r => r.key === key)) rowEls.delete(key);
+  for (const [l, m] of Object.entries(els)) {
+    for (const key of m.keys()) if (!rows.has(key) || !inList(rows.get(key), l)) m.delete(key);
+  }
+  showLists();
   refreshTip();
 }
 
-// open shows a row's folder. again opens it anew when it is open already, for kijk <folder>.
-function open(r, again) {
-  if ((r.key === openKey && !again) || r.stale || r.missing) return;
-  openMachine = r.machine;
+// open shows a row's folder at cwd, by default where the list that shows opens it. again opens it
+// anew when it is open already, for kijk <folder>.
+function open(r, again, cwd = cwdIn(r, list)) {
+  if ((r.key === openKey && !again) || r.stale || r.saved?.missing) return;
+  openRow = r;
   finished.delete(r.key);
-  openFolder(r, again);
-  document.title = foldersMode ? TITLE : `${r.repo} — kijk`;
+  openFolder({ ...r, cwd }, again);
+  document.title = `${r.repo} — kijk`;
   render();
 }
 
@@ -412,31 +441,97 @@ function refreshRow() {
 // closeOpen closes the open folder and gives the page its title back.
 function closeOpen() {
   closeFolder();
-  openMachine = '';
-  document.title = TITLE;
+  openRow = null;
+  document.title = 'kijk';
 }
 
-// followMachine passes the open remote folder's machine to the view, and closes the folder when the
-// machine is disabled or removed.
-function followMachine() {
-  if (!openKey || !openMachine) return;
-  const m = machines?.find(x => x.name === openMachine);
-  if (!m || m.state === 'disabled') return closeOpen();
-  setMachine(m);
+// onGone closes the open folder when kijk refuses to show it any more, as after a restart once its
+// agent ended.
+function onGone() {
+  const { repo } = openRow;
+  closeOpen();
+  showSaid(`${repo} is no longer in kijk.`);
 }
 
-// Ctrl+Alt+1…9 opens the folder of rows 1 to 9. e.code, because Alt changes e.key on macOS.
-document.addEventListener('keydown', e => {
-  const n = /^Digit([1-9])$/.exec(e.code)?.[1];
-  const r = n && numbered[n - 1];
-  if (!r || !e.ctrlKey || !e.altKey || e.metaKey || e.shiftKey) return;
+// followRule applies the close rule to the open folder, and passes its machine to the view.
+function followRule() {
+  if (!openKey) return;
+  if (closeRule(openKey, rows, machines) === 'close') return closeOpen();
+  const m = openRow.machine && machines?.find(x => x.name === openRow.machine);
+  if (m) setMachine(m);
+}
+
+// setList shows another list. It draws only: no request, and the open folder stays open.
+function setList(l) {
+  if (!LISTS.includes(l) || l === list) return;
+  list = l;
+  drawList();
+}
+
+function drawList() {
+  try { localStorage.setItem('kijk.list', list); } catch { /* storage blocked */ }
+  railEl.setAttribute('aria-label', NAMES[list]);
+  railEl.querySelector('header span').textContent = NAMES[list];
+  document.querySelector('.split[data-var="--rail"]').setAttribute('aria-label', `Resize ${list} pane`);
+  for (const [l, b] of Object.entries(tabs)) {
+    b.setAttribute('aria-selected', l === list);
+    b.tabIndex = l === list ? 0 : -1;
+  }
+  if (listsEl.contains(document.activeElement)) tabs[list].focus();
+  collapseRail(document.body.classList.contains('rail-collapsed'));
+  showListStatus();
+  showStart();
+  render();
+}
+
+// The list switcher is one Tab stop: the arrow keys, Home and End show a list and move to its button.
+const NAMES = { agents: 'Agents', folders: 'Folders' };
+const listsEl = document.getElementById('lists');
+const tabs = Object.fromEntries([...listsEl.querySelectorAll('[role=tab]')].map(b => [b.dataset.list, b]));
+listsEl.onclick = e => setList(e.target.closest('[role=tab]')?.dataset.list);
+listsEl.onkeydown = e => {
+  const i = LISTS.indexOf(list), n = LISTS.length;
+  const to = { ArrowDown: LISTS[(i + 1) % n], ArrowUp: LISTS[(i + n - 1) % n], Home: LISTS[0], End: LISTS[n - 1] }[e.key];
+  if (!to) return;
   e.preventDefault();
-  open(r);
+  setList(to);
+};
+tipSide('#lists', 'right');
+
+// showLists says what each list holds in its button's name and tooltip, and puts a dot on Agents
+// while Folders shows: amber when an agent is Busy, blue when one finished.
+function showLists() {
+  const live = listRows(rows, 'agents').filter(r => !r.stale);
+  const busy = live.filter(r => r.busy).length;
+  const done = live.filter(r => finished.has(r.key)).length;
+  const saved = listRows(rows, 'folders');
+  const missing = saved.filter(r => r.saved.missing).length;
+  const holds = {
+    agents: scanned ? [live.length ? plural(live.length, 'agent') : 'No running agents', busy && `${busy} busy`, done && `${done} finished`] : ['Looking for agents…'],
+    folders: [saved.length ? plural(saved.length, 'folder') : 'No folders yet', missing && `${missing} missing`],
+  };
+  for (const [l, b] of Object.entries(tabs)) {
+    const what = holds[l].filter(Boolean).join(', ');
+    b.dataset.tip = [NAMES[l], what, l !== list && `${mac ? '⌃⌥0' : 'Ctrl+Alt+0'} to show`].filter(Boolean).join('\n');
+    b.setAttribute('aria-label', `${NAMES[l]}, ${what}`);
+  }
+  tabs.agents.querySelector('.dot').className = `dot${list === 'agents' ? '' : busy ? ' busy' : done ? ' fin' : ''}`;
+}
+
+// Ctrl+Alt+0 switches lists, and Ctrl+Alt+1…9 open rows 1 to 9 of the list that shows. Not while
+// typing, where AltGr sends Ctrl+Alt on Windows. e.code, because Alt changes e.key on macOS.
+document.addEventListener('keydown', e => {
+  const n = /^Digit([0-9])$/.exec(e.code)?.[1];
+  if (!n || !e.ctrlKey || !e.altKey || e.metaKey || e.shiftKey || typing(e.target)) return;
+  if (n === '0') setList(list === 'agents' ? 'folders' : 'agents');
+  else if (numbered[n - 1]) open(numbered[n - 1]);
+  else return;
+  e.preventDefault();
 });
 
 function collapseRail(on) {
   document.body.classList.toggle('rail-collapsed', on);
-  railBtn.dataset.tip = `${on ? 'Show' : 'Hide'} ${PANE}`;
+  railBtn.dataset.tip = `${on ? 'Show' : 'Hide'} ${list}`;
   railBtn.setAttribute('aria-label', railBtn.dataset.tip);
   refreshTip();
 }
@@ -499,33 +594,62 @@ for (const handle of document.querySelectorAll('.split')) {
   };
 }
 
-const events = new EventSource(foldersMode ? '/api/events?window=folders' : '/api/events');
+// One stream for the window: every message holds every row of both lists.
+const events = new EventSource('/api/events');
 events.onopen = () => { openSeq = null; };
 events.onmessage = e => {
   const msg = JSON.parse(e.data);
   showKijk(msg.kijk);
-  if (foldersMode) return showFolders(msg);
   machines = msg.machines || null;
+  scanned = msg.scanned;
+  listError = msg.listError || '';
   showAgentErrors(agentErrors(msg.errors, machines));
   noAgents = msg.noneInstalled ? NONE_INSTALLED : 'No running agents';
-  const next = (msg.rows || []).map(r => ({ ...r, key: r.root, machine: '' }));
-  for (const m of machines || []) {
-    for (const r of m.rows) next.push({ ...r, key: folderKey(m.name, r.root), machine: m.name, stale: m.stale });
-  }
-  for (const r of next) {
-    if (r.stale) continue;
-    if (r.busy) finished.delete(r.key);
-    else if (r.key !== openKey && rows.find(x => x.key === r.key)?.busy) finished.add(r.key);
-  }
+  const next = keyed(msg.rows, machines);
+  finish(rows, next, openKey, finished);
   rows = next;
-  showStart();
-  // With machines, an empty group says so under its own header.
-  showStatus(rows.length || machines ? '' : noAgents);
-  followMachine();
-  const last = !openKey && rows.find(r => r.key === reopen && !r.stale);
+  takeRequest(msg.open);
+  followRule();
+  const last = !openKey && rows.get(reopen);
   if (last) open(last);
-  else render();
+  showListStatus();
+  showStart();
+  render();
 };
+
+// takeRequest acts once on each open request that kijk <folder>, kijk folders and kijk <PR link> send.
+function takeRequest(req) {
+  const fresh = openSeq === null ? wantSeq > 0 && req.seq >= wantSeq : req.seq > openSeq;
+  const t = target(req, rows, list);
+  // An agent's row comes with the first agent scan, so the request waits for it.
+  if (fresh && req.root && !t.row && !scanned) return;
+  openSeq = req.seq;
+  wantSeq = 0;
+  if (!fresh) return;
+  setList(t.list);
+  if (!t.row) return;
+  open(t.row, true, req.cwd || cwdIn(t.row, list));
+  if (req.pr) openFolderPR(req.pr);
+  flash(els[t.list].get(t.row.key));
+  announce(`${req.added ? 'Added' : 'Opened'} ${t.row.repo}`);
+}
+
+// flash shows once which row a command opened.
+function flash(li) {
+  if (!li) return;
+  li.classList.remove('arrived');
+  void li.offsetWidth; // restarts the flash when the row flashed a moment ago
+  li.classList.add('arrived');
+  li.onanimationend = () => li.classList.remove('arrived');
+  li.scrollIntoView({ block: 'nearest' });
+}
+
+// showListStatus says why the list that shows is empty, or that the folders list was not saved.
+function showListStatus() {
+  if (list === 'folders') return showStatus(listError || (listRows(rows, list).length ? '' : 'No folders yet'), !!listError);
+  // With machines, an empty group says so under its own header.
+  showStatus(!scanned ? 'Looking for agents…' : listRows(rows, list).length || machines ? '' : noAgents);
+}
 
 // andList joins words as "a, b and c".
 function andList(words) {
@@ -550,64 +674,16 @@ function openHint(n) {
   return n ? `${mac ? '⌃⌥' : 'Ctrl+Alt+'}${n} to open` : '';
 }
 
-function showFolders(msg) {
-  rows = (msg.folders || []).map(r => ({ ...r, key: r.root, machine: '', names: [r.repo] }));
-  const req = msg.open || { seq: 0 };
-  if (openSeq !== null && req.seq > openSeq && req.root) {
-    arriving = req.root;
-    arrivingPR = req.pr || 0;
-  }
-  openSeq = req.seq;
-  listError = msg.error || '';
-  const current = openKey && rows.find(r => r.key === openKey);
-  if (openKey && (!current || current.missing)) closeOpen(); // removed in another window, or gone from disk
-  showList();
-  if (arriving) {
-    arrive(arriving);
-    arriving = null;
-    return;
-  }
-  const last = !openKey && rows.find(r => r.key === reopen && !r.missing);
-  if (last) open(last);
-  else render();
-}
-
-// arrive opens a folder that kijk <folder> added, and flashes its row once.
-function arrive(root) {
-  const r = rows.find(x => x.key === root && !x.missing);
-  if (!r) return render();
-  open(r, true);
-  if (arrivingPR) openFolderPR(arrivingPR);
-  arrivingPR = 0;
-  const li = rowEls.get(r.key);
-  li.classList.remove('arrived');
-  void li.offsetWidth; // restarts the flash when the row flashed a moment ago
-  li.classList.add('arrived');
-  li.onanimationend = () => li.classList.remove('arrived');
-  li.scrollIntoView({ block: 'nearest' });
-  announce(`Added ${r.repo}`);
-}
-
-function showList() {
-  if (listError) showStatus(listError, true);
-  else showStatus(rows.length ? '' : 'No folders yet');
-  showStart();
-}
-
 const startText = start.querySelector('p');
 const startHelp = el('div', 'help');
-if (foldersMode) {
-  startHelp.append(command('kijk ~/code/my-project'), el('p', 'hint', 'Run it in a terminal to add a folder.'));
-  start.append(startHelp);
-}
+startHelp.append(command('kijk ~/code/my-project'), el('p', 'hint', 'Run it in a terminal to add a folder.'));
+start.append(startHelp);
 
 function showStart() {
-  if (foldersMode) {
-    startText.textContent = rows.length ? 'Select a folder' : 'No folders yet';
-    startHelp.hidden = !!rows.length;
-  } else {
-    startText.textContent = rows.some(r => !r.stale) ? 'Select an agent' : 'Start a coding agent to see its work here';
-  }
+  const any = listRows(rows, list).some(r => !r.stale);
+  if (list === 'folders') startText.textContent = any ? 'Select a folder' : 'No folders yet';
+  else startText.textContent = any ? 'Select an agent' : 'Start a coding agent to see its work here';
+  startHelp.hidden = list !== 'folders' || any;
 }
 
 let undo = null; // the last removal while its notice shows: { row, at, wasOpen, timer }
@@ -615,22 +691,26 @@ let undo = null; // the last removal while its notice shows: { row, at, wasOpen,
 // removeFolder takes a row off the list at once, with an Undo notice instead of a question.
 async function removeFolder(r) {
   if (!r) return;
-  const at = rows.findIndex(x => x.key === r.key);
+  const at = listRows(rows, 'folders').findIndex(x => x.key === r.key);
   try {
     await post('folders/remove', { root: r.root });
   } catch (err) {
     announce(err.message);
     return;
   }
-  const wasOpen = r.key === openKey;
-  const hadFocus = rowEls.get(r.key)?.contains(document.activeElement);
-  rows = rows.filter(x => x.key !== r.key);
+  // A folder where agents work stays in the Agents list, and stays open.
+  const wasOpen = r.key === openKey && !r.agents;
+  const hadFocus = els.folders.get(r.key)?.contains(document.activeElement);
+  if (r.agents) rows.set(r.key, { ...r, saved: undefined });
+  else rows.delete(r.key);
   if (wasOpen) {
     closeOpen();
+    reopen = null;
     try { localStorage.removeItem(lastKey); } catch { /* storage blocked */ }
   }
   render();
-  showList();
+  showListStatus();
+  showStart();
   if (hadFocus) rowsEl.children[Math.min(at, rowsEl.children.length - 1)]?.focus();
   clearTimeout(undo?.timer);
   undo = { row: r, at, wasOpen, timer: setTimeout(endUndo, 10000) };
@@ -654,10 +734,11 @@ async function undoRemove() {
     announce(err.message);
     return;
   }
-  if (!rows.some(x => x.key === u.row.key)) rows.splice(Math.min(u.at, rows.length), 0, u.row);
-  showList();
+  if (!rows.get(u.row.key)?.saved) rows.set(u.row.key, u.row);
+  showListStatus();
+  showStart();
   if (u.wasOpen) open(u.row);
-  else render();
+  render();
   announce(`${u.row.repo} is back in the list`);
 }
 
@@ -669,13 +750,7 @@ document.addEventListener('keydown', e => {
   undoRemove();
 });
 
-if (foldersMode) {
-  document.title = TITLE;
-  document.getElementById('rail').setAttribute('aria-label', 'Folders');
-  document.querySelector('#rail header span').textContent = 'Folders';
-  document.querySelector('.split[data-var="--rail"]').setAttribute('aria-label', 'Resize folders pane');
-  showStart();
-}
+drawList();
 
 events.onerror = () => {
   if (!restarting()) showStatus('Lost connection to kijk. Retrying…', true);

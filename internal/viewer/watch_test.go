@@ -2,6 +2,7 @@ package viewer
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -18,7 +19,8 @@ import (
 
 // watchFolder opens the folder event stream for root and returns its messages.
 func watchFolder(t *testing.T, root string) <-chan folderChange {
-	rts := &Roots{m: map[string]bool{root: true}}
+	rts := &Roots{}
+	rts.Set([]string{root})
 	srv := httptest.NewServer(http.HandlerFunc((&api{roots: rts}).folderEvents))
 	t.Cleanup(srv.Close)
 	resp, err := http.Get(srv.URL + "?root=" + url.QueryEscape(root))
@@ -104,5 +106,53 @@ func TestFolderEventsWorktree(t *testing.T) {
 		if c.Git {
 			return
 		}
+	}
+}
+
+// A folder a window shows stays readable after its row is gone, until no window shows it.
+func TestShownFolderStaysReadable(t *testing.T) {
+	gittest.Isolate(t)
+	root := gittest.Repo(t)
+	rts := &Roots{}
+	srv := httptest.NewServer(http.HandlerFunc((&api{roots: rts}).folderEvents))
+	t.Cleanup(srv.Close)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stream := func() int {
+		req, _ := http.NewRequestWithContext(ctx, "GET", srv.URL+"?root="+url.QueryEscape(root), nil)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { resp.Body.Close() })
+		return resp.StatusCode
+	}
+	if c := stream(); c != http.StatusForbidden {
+		t.Fatalf("a folder in no row: %d", c)
+	}
+	rts.Set([]string{root})
+	if c := stream(); c != http.StatusOK {
+		t.Fatalf("a listed folder: %d", c)
+	}
+	rts.Set(nil)
+	if !rts.Has(root) {
+		t.Fatal("the shown folder went with its row")
+	}
+	if c := stream(); c != http.StatusOK {
+		t.Fatalf("a second stream on the shown folder: %d", c)
+	}
+	if rts.Has(filepath.Join(root, "sub")) || rts.Has(filepath.Dir(root)) {
+		t.Fatal("showing a folder made another one readable")
+	}
+	cancel()
+	for deadline := time.Now().Add(2 * time.Second); rts.Has(root); time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("the folder stayed readable after its streams closed")
+		}
+	}
+	ctx, cancel = context.WithCancel(context.Background())
+	defer cancel()
+	if c := stream(); c != http.StatusForbidden {
+		t.Fatalf("a stream after the row and the streams are gone: %d", c)
 	}
 }

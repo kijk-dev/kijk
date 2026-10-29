@@ -14,10 +14,12 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/kijk-dev/kijk/internal/agents"
+	"github.com/kijk-dev/kijk/internal/gittest"
 )
 
 // These tests build real kijk binaries and publish them as a fake release, so they are slow and
@@ -144,11 +146,18 @@ func startKijk(t *testing.T, exe string) *kijkProcess {
 // startKijkIn starts kijk with home as its home folder. env comes last, so it replaces a default.
 func startKijkIn(t *testing.T, exe, home string, env ...string) *kijkProcess {
 	t.Helper()
+	return startKijkWith(t, exe, home, nil, env...)
+}
+
+// startKijkWith is startKijkIn, and gives kijk args after its flags.
+func startKijkWith(t *testing.T, exe, home string, args []string, env ...string) *kijkProcess {
+	t.Helper()
 	ln, _ := net.Listen("tcp", "127.0.0.1:0")
 	port := ln.Addr().(*net.TCPAddr).Port
 	ln.Close()
 	k := &kijkProcess{port: port, logFile: filepath.Join(home, "kijk.log"), exited: make(chan struct{}), env: append(append(homeFolders(),
 		"HOME="+home, "XDG_CONFIG_HOME="+filepath.Join(home, ".config"), "APPDATA="+home,
+		"XDG_CACHE_HOME="+filepath.Join(home, ".cache"), "LOCALAPPDATA="+home,
 		"CLAUDE_CONFIG_DIR="+t.TempDir(), "CODEX_HOME="+filepath.Join(home, "codex"), "KIJK_NO_UPDATE_CHECK=1", "KIJK_NO_TELEMETRY=1",
 	), env...)}
 	out, err := os.Create(k.logFile)
@@ -156,7 +165,7 @@ func startKijkIn(t *testing.T, exe, home string, env ...string) *kijkProcess {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { out.Close() })
-	k.cmd = exec.Command(exe, "-port", fmt.Sprint(port), "-no-open")
+	k.cmd = exec.Command(exe, append([]string{"-port", fmt.Sprint(port), "-no-open"}, args...)...)
 	k.cmd.Env = append(os.Environ(), k.env...)
 	k.cmd.Stdout, k.cmd.Stderr = out, out
 	if err := k.cmd.Start(); err != nil {
@@ -179,6 +188,36 @@ func startKijkIn(t *testing.T, exe, home string, env ...string) *kijkProcess {
 		t.Fatal("kijk did not start")
 	}
 	return k
+}
+
+// restart stops kijk and starts exe on the same port with the same token, as kijk's own restart
+// does, so an open window reconnects.
+func (k *kijkProcess) restart(t *testing.T, exe string) {
+	t.Helper()
+	k.cmd.Process.Kill()
+	<-k.exited
+	out, err := os.OpenFile(k.logFile, os.O_WRONLY|os.O_APPEND, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { out.Close() })
+	k.cmd = exec.Command(exe, "-port", fmt.Sprint(k.port), "-no-open")
+	k.cmd.Env = append(os.Environ(), append(k.env, "KIJK_TOKEN="+k.token)...)
+	k.cmd.Stdout, k.cmd.Stderr = out, out
+	if err := k.cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	k.exited = make(chan struct{})
+	go func(cmd *exec.Cmd, exited chan struct{}) { cmd.Wait(); close(exited) }(k.cmd, k.exited)
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
+		if resp, err := k.request("GET", "/api/agenttypes"); err == nil {
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				return
+			}
+		}
+	}
+	t.Fatal("kijk did not start again")
 }
 
 func (k *kijkProcess) request(method, path string) (*http.Response, error) {
@@ -241,5 +280,47 @@ func TestUpdateAndRestartARunningKijk(t *testing.T) {
 	case <-k.exited:
 		t.Fatal("the kijk process exited instead of replacing itself")
 	default:
+	}
+}
+
+// Stopped while it clones at its first start, kijk removes its state file and the half clone.
+func TestStopDuringAClone(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds kijk")
+	}
+	if runtime.GOOS == "windows" {
+		t.Skip("no SIGTERM to send")
+	}
+	isolatedGit(t)
+	src := gitRepo(t)
+	write(t, filepath.Join(src, "README.md"), "# Billing\n")
+	run(t, src, "add", ".")
+	run(t, src, "commit", "-qm", "Start")
+	gittest.FakeTool(t, "gh", gittest.Rule{Has: "repo clone", Clone: src, Wait: time.Minute})
+	home := t.TempDir()
+	k := startKijkWith(t, buildKijk(t, "0.0.1"), home, []string{"https://github.com/acme/billing/pull/12"})
+	// found gives the state file and part folders left in home.
+	found := func() (left []string) {
+		filepath.WalkDir(home, func(p string, d fs.DirEntry, err error) error {
+			if err == nil && (d.Name() == fmt.Sprintf("running-%d.json", k.port) || strings.HasPrefix(d.Name(), "billing+part-")) {
+				left = append(left, p)
+			}
+			return nil
+		})
+		return left
+	}
+	for end := time.Now().Add(20 * time.Second); len(found()) < 2; time.Sleep(50 * time.Millisecond) {
+		if time.Now().After(end) {
+			t.Fatalf("no clone started; found %v", found())
+		}
+	}
+	k.cmd.Process.Signal(syscall.SIGTERM)
+	select {
+	case <-k.exited:
+	case <-time.After(20 * time.Second):
+		t.Fatal("kijk did not stop")
+	}
+	if left := found(); len(left) > 0 {
+		t.Fatalf("left %v", left)
 	}
 }

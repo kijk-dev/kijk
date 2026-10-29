@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -898,13 +899,12 @@ func TestBrowser(t *testing.T) {
 		b.waitFor("the PRs tab on #482", prsTab+`.classList.contains('active') && !document.querySelector('#prs-branch').hidden && document.querySelector('#prs-branch .pr-num')?.textContent === '#482'`)
 		b.noErrors()
 
-		// kijk <PR link> opens the pull request in the folders window, in the clone kijk knows.
-		f := openPage(t, newTab(t, tab), k, "/?window=folders")
-		f.waitFor("the folders window", `document.title === 'kijk · Folders'`)
-		if out := runCmd(t, k.env, exe, "-port", fmt.Sprint(k.port), "-no-open", "https://github.com/acme/review/pull/477"); !strings.Contains(out, "Added review") {
+		// kijk <PR link> opens the pull request in the kijk window, in the clone of the agent that works there.
+		if out := runCmd(t, k.env, exe, "-port", fmt.Sprint(k.port), "-no-open", "https://github.com/acme/review/pull/477"); !strings.Contains(out, "Opened #477 in review. It is open in the kijk window.") {
 			t.Fatalf("kijk <PR link> said:\n%s", out)
 		}
-		f.waitFor("#477 in the folders window", `!document.querySelector('#prs-pr').hidden && document.querySelector('#prs-pr .pr-num')?.textContent === '#477' && (t => t?.firstChild.textContent === 'Changes' && t.querySelector('.muted')?.textContent === '#477')(document.querySelector('#filetabs .filetab.active'))`)
+		b.waitFor("#477 in the window", `!document.querySelector('#prs-pr').hidden && document.querySelector('#prs-pr .pr-num')?.textContent === '#477' && (t => t?.firstChild.textContent === 'Changes' && t.querySelector('.muted')?.textContent === '#477')(document.querySelector('#filetabs .filetab.active'))`)
+		b.waitFor("the Agents list, where the agent's row is", `document.querySelector('#rail').getAttribute('aria-label') === 'Agents' && `+row("Fix the login")+`.classList.contains('selected')`)
 		// Not logged in to gh: the tab opens on This branch and says why there is no list.
 		forge.set(t, "gh-error.txt", "To get started with GitHub CLI, please run:  gh auth login")
 		b.act("reload", chromedp.Reload())
@@ -921,10 +921,10 @@ func TestBrowser(t *testing.T) {
 		cmd := exec.Command(exe, "-port", fmt.Sprint(k.port), "-no-open", "https://github.com/acme/billing/pull/12")
 		cmd.Env = append(os.Environ(), k.env...)
 		out, err := cmd.CombinedOutput()
-		if cmd.ProcessState.ExitCode() != 1 || !strings.Contains(string(out), "No folder of github.com/acme/billing is in kijk. Add a folder of this repo first: kijk <folder>") {
+		if cmd.ProcessState.ExitCode() != 1 || !strings.Contains(string(out), "kijk: cannot clone github.com/acme/billing: gh repo clone: exit status 1. Clone it, then run kijk <folder>.") {
 			t.Fatalf("a link to a repo kijk has no clone of: %v\n%s", err, out)
 		}
-		f.noErrors()
+		b.noErrors()
 	})
 
 	t.Run("reviews", func(t *testing.T) {
@@ -1495,6 +1495,57 @@ func TestBrowser(t *testing.T) {
 		b.noErrors()
 	})
 
+	// kijk <PR link> for a repo with no clone on the machine: gh clones it into kijk's cache.
+	t.Run("pull request with no clone", func(t *testing.T) {
+		forge := newFakeForge(t)
+		_, head := billingForge(t, forge)
+		home := t.TempDir()
+		k := startKijkIn(t, exe, home, forge.env())
+		w := openPage(t, newTab(t, tab), k, "/")
+		code := filepath.Join(home, "code")
+		os.MkdirAll(code, 0o755)
+		kijkPR := func() (string, error) {
+			cmd := exec.Command(exe, "-port", fmt.Sprint(k.port), "-no-open", "https://github.com/acme/billing/pull/12")
+			cmd.Dir, cmd.Env = code, append(os.Environ(), k.env...)
+			out, err := cmd.CombinedOutput()
+			return string(out), err
+		}
+		cache := filepath.Join(home, ".cache")
+		if runtime.GOOS == "darwin" {
+			cache = filepath.Join(home, "Library", "Caches")
+		}
+		dir := filepath.Join(cache, "kijk", "clones", "github.com", "acme", "billing")
+		said := "No clone of github.com/acme/billing on this machine.\n" +
+			"Cloning it with gh into " + strings.Replace(dir, home, "~", 1) + " …\n" +
+			"Cloning into '" + dir + "+part-"
+		if out, err := kijkPR(); err != nil || !strings.HasPrefix(out, said) || !strings.HasSuffix(out, "\nAdded billing and opened #12. It is open in the kijk window.\n") {
+			w.fail("kijk <PR link>: %v\n%s", err, out)
+		}
+		w.waitFor("#12 in the window", `!document.querySelector('#prs-pr').hidden && document.querySelector('#prs-pr .pr-num')?.textContent === '#12' && document.querySelector('#prs-pr .pr-title')?.textContent === 'Mail invoices'`)
+		w.waitFor("its file", boxHas("invoice.go", "add", "func Mail() {}"))
+		if got := gitOut(t, dir, "rev-parse", "refs/kijk/pr/12"); got != head {
+			w.fail("refs/kijk/pr/12 of the clone is %q, want %q", got, head)
+		}
+		if out, err := kijkPR(); err != nil || out != "Opened #12 in billing. It is open in the kijk window.\n" {
+			w.fail("a second run: %v\n%s", err, out)
+		}
+		if n := strings.Count(strings.Join(forge.calls(), "\n"), " repo clone "); n != 1 {
+			w.fail("%d clones, want 1", n)
+		}
+
+		// gh would send the user's login to a host it is not logged in to, so kijk does not run it.
+		cmd := exec.Command(exe, "-port", fmt.Sprint(k.port), "-no-open", "https://code.example.org/acme/billing/pull/12")
+		cmd.Dir, cmd.Env = code, append(os.Environ(), k.env...)
+		out, _ := cmd.CombinedOutput()
+		if cmd.ProcessState.ExitCode() != 1 || !strings.HasSuffix(string(out), "kijk: kijk clones only from github.com or a host gh is logged in to. Log in with gh auth login --hostname code.example.org, or clone it yourself and run kijk <folder>.\n") {
+			w.fail("a link to another host: %s", out)
+		}
+		if n := strings.Count(strings.Join(forge.calls(), "\n"), " repo clone "); n != 1 {
+			w.fail("%d clones after a link to another host, want 1", n)
+		}
+		w.noErrors()
+	})
+
 	t.Run("viewed marks", func(t *testing.T) {
 		repo, origin := reviewRepo(t)
 		forge := newFakeForge(t)
@@ -2008,18 +2059,127 @@ func TestBrowser(t *testing.T) {
 	t.Run("folders", func(t *testing.T) {
 		notes := filepath.Join(t.TempDir(), "notes")
 		write(t, filepath.Join(notes, "todo.md"), "# Todo\n")
-		if out := runCmd(t, k.env, exe, "-port", fmt.Sprint(k.port), "-no-open", notes); !strings.Contains(out, "Added notes") {
-			p.on(t).fail("kijk <folder> said:\n%s", out)
+		f := openPage(t, newTab(t, tab), k, "/")
+		f.click("the Folders list", listTab("folders"))
+		f.waitFor("no folders yet", listShows("folders")+` && document.querySelector('#status').textContent === 'No folders yet'`)
+		if out := runCmd(t, k.env, exe, "-port", fmt.Sprint(k.port), "-no-open", notes); !strings.Contains(out, "Added notes. It is open in the kijk window.") {
+			f.fail("kijk <folder> said:\n%s", out)
 		}
-		f := openPage(t, newTab(t, tab), k, "/?window=folders")
-		f.click("the notes row", row("notes"))
+		f.waitFor("notes open in the window", row("notes")+`?.classList.contains('selected') && document.querySelector('#folder-name')?.textContent === 'notes'`)
 		f.waitFor("todo.md in the tree", treeItem("todo.md"))
+		f.waitFor("the long parent folder cut short inside the rail", `(w => w.scrollWidth > w.clientWidth && w.getBoundingClientRect().right <= document.querySelector('#rail').getBoundingClientRect().right)(`+row("notes")+`.querySelector('.where'))`)
+		f.click("the notes row", row("notes"))
 		f.click("Remove", row("notes")+`?.querySelector('button.rm')`)
 		f.waitFor("no notes row", "!"+row("notes"))
 		f.waitFor("the undo notice", `document.querySelector('#statusbar').textContent.includes('Removed notes')`)
 		f.click("Undo", byText("#statusbar button", "Undo"))
 		f.waitFor("the notes row again", row("notes"))
 		f.noErrors()
+	})
+
+	// The Agents and Folders lists are two views of the same rows, in one window.
+	t.Run("one window", func(t *testing.T) {
+		w := openPage(t, newTab(t, tab), k, "/?window=folders")
+		w.waitFor("the Folders list at the folders window's old address, which then goes", listShows("folders")+` && location.search === ''`)
+		if out := runCmd(t, k.env, exe, "-port", fmt.Sprint(k.port), "-no-open", shop); !strings.Contains(out, "Added shop. It is open in the kijk window.") {
+			w.fail("kijk <folder> said:\n%s", out)
+		}
+		w.waitFor("shop open", row("shop")+`?.classList.contains('selected') && document.querySelector('#folder-name')?.textContent === 'shop' && document.title === 'shop — kijk'`)
+		w.waitFor("the Busy agent's icon on the folder", row("shop")+`.querySelector('.agents .agent.on') && `+row("shop")+`.dataset.tip.includes('Claude Code · Busy · Add the cart')`)
+		toShow := "Ctrl+Alt+0 to show"
+		if w.mac {
+			toShow = "⌃⌥0 to show"
+		}
+		w.waitFor("the dot and the counts on Agents", listTab("agents")+`.querySelector('.dot').matches('.busy') && `+listTab("agents")+`.getAttribute('aria-label') === 'Agents, 2 agents, 1 busy' && `+
+			listTab("agents")+`.dataset.tip === `+jsString("Agents\n2 agents, 1 busy\n"+toShow))
+		w.waitFor("the counts on Folders", listTab("folders")+`.getAttribute('aria-label').startsWith('Folders, 2 folders')`) // notes is missing once the folders journey's temp folder is gone
+		w.hover("the Agents button", listTab("agents"))
+		shots(w, "one-window-folders")
+		w.click("the Files tab", filesTab)
+		w.click("README.md", treeItem("README.md"))
+		w.waitFor("README.md open", activeFile("README.md"))
+
+		// A switch only draws: the folder, its file and the title stay, and the same row is selected.
+		w.click("the Agents list", listTab("agents"))
+		w.waitFor("the Agents list with shop's agent selected", listShows("agents")+` && `+row("Add the cart")+`.classList.contains('selected') && !`+listTab("agents")+`.querySelector('.dot').matches('.busy, .fin')`)
+		w.waitFor("the folder still open", activeFile("README.md")+` && document.querySelector('#folder-name').textContent === 'shop' && document.title === 'shop — kijk'`)
+		w.key("Ctrl+Alt+0", "0", chromedp.ModifierCtrl, chromedp.ModifierAlt)
+		w.waitFor("the Folders list again", listShows("folders")+` && `+row("shop")+`.classList.contains('selected') && `+activeFile("README.md"))
+
+		// The switcher is a tablist with one Tab stop.
+		w.evalJS(listTab("folders") + `.focus()`)
+		w.key("↑", kb.ArrowUp)
+		w.waitFor("Agents, focused", listShows("agents")+` && document.activeElement === `+listTab("agents")+` && `+listTab("agents")+`.tabIndex === 0 && `+listTab("folders")+`.tabIndex === -1`)
+		w.key("End", kb.End)
+		w.waitFor("Folders, focused", listShows("folders")+` && document.activeElement === `+listTab("folders"))
+		w.key("Home", kb.Home)
+		w.waitFor("Agents again", listShows("agents")+` && document.activeElement === `+listTab("agents"))
+
+		// Ctrl+Alt and a digit is AltGr on Windows, so it types in a text field.
+		w.click("the Git tab", gitTab)
+		w.click("the commit message", `document.querySelector('#message')`)
+		w.key("Ctrl+Alt+0", "0", chromedp.ModifierCtrl, chromedp.ModifierAlt)
+		w.key("Ctrl+Alt+2", "2", chromedp.ModifierCtrl, chromedp.ModifierAlt)
+		w.settle()
+		w.waitFor("no switch and no other folder", listShows("agents")+` && document.querySelector('#folder-name').textContent === 'shop'`)
+
+		// Folded, the rail is a strip of badges beside the switcher, which still switches.
+		w.click("Hide agents", `document.querySelector('#rail-toggle')`)
+		w.waitFor("the folded rail", `document.body.classList.contains('rail-collapsed') && document.querySelector('#rail-toggle').getAttribute('aria-label') === 'Show agents'`)
+		w.click("the Folders list", listTab("folders"))
+		w.click("the Folders list again", listTab("folders"))
+		w.waitFor("folder badges in the folded rail", listShows("folders")+` && document.body.classList.contains('rail-collapsed') && document.querySelectorAll('#rows li.folder .badge').length === 2 && document.querySelector('#rail-toggle').getAttribute('aria-label') === 'Show folders'`)
+		shots(w, "one-window-folded")
+		w.click("Show folders", `document.querySelector('#rail-toggle')`)
+		w.waitFor("the rail back", `!document.body.classList.contains('rail-collapsed')`)
+
+		// Removing a folder where an agent works keeps it open, in the Agents list.
+		w.click("the shop row", row("shop"))
+		w.click("Remove shop", row("shop")+`?.querySelector('button.rm')`)
+		w.waitFor("no shop row", "!"+row("shop"))
+		w.click("the Agents list", listTab("agents"))
+		w.waitFor("shop still open", row("Add the cart")+`.classList.contains('selected') && document.querySelector('#folder-name').textContent === 'shop'`)
+		w.noErrors()
+	})
+
+	// A folder stays open after its agent ends. Once kijk restarts it no longer shows that folder,
+	// and the window closes it and says why.
+	t.Run("folder gone", func(t *testing.T) {
+		repo := namedRepo(t, "gone")
+		write(t, filepath.Join(repo, "a.txt"), "a\n")
+		claude := t.TempDir()
+		claudeAgent(t, claude, repo, "Short task", "idle")
+		g := startKijkIn(t, exe, t.TempDir(), "CLAUDE_CONFIG_DIR="+claude)
+		w := openPage(t, newTab(t, tab), g, "/")
+		w.selectAgent("Short task", "gone")
+		if err := os.Remove(filepath.Join(claude, "sessions", "1.json")); err != nil {
+			t.Fatal(err)
+		}
+		w.waitFor("no row, and the folder still open", `!`+row("Short task")+` && document.querySelector('#folder-name')?.textContent === 'gone' && `+treeItem("a.txt"))
+		g.restart(t, exe)
+		w.waitLong(30*time.Second, "the folder closed, and why", `document.querySelector('#sidebar-head').hidden && document.title === 'kijk' && document.querySelector('#statusbar').textContent.includes('gone is no longer in kijk.')`)
+		w.noErrors()
+	})
+
+	// With no window open, kijk <PR link> finds the clone an agent works in, and does not save it.
+	// The new window opens it in the agent's row once kijk has looked for agents.
+	t.Run("pull request link with no window", func(t *testing.T) {
+		repo := namedRepo(t, "cart")
+		write(t, filepath.Join(repo, "a.txt"), "a\n")
+		run(t, repo, "add", ".")
+		run(t, repo, "commit", "-qm", "a")
+		run(t, repo, "remote", "add", "origin", "https://github.com/acme/cart.git")
+		claude := t.TempDir()
+		claudeAgent(t, claude, repo, "Fix the cart", "idle")
+		g := startKijkIn(t, exe, t.TempDir(), "CLAUDE_CONFIG_DIR="+claude, newFakeForge(t).env())
+		out := runCmd(t, g.env, exe, "-port", fmt.Sprint(g.port), "-no-open", "https://github.com/acme/cart/pull/5")
+		if strings.TrimSpace(out) != "Opened #5 in cart." {
+			t.Fatalf("kijk <PR link> said:\n%s", out)
+		}
+		w := openPage(t, newTab(t, tab), g, "/?open=1")
+		w.waitFor("cart open in the agent's row", listShows("agents")+` && `+row("Fix the cart")+`?.classList.contains('selected') && document.querySelector('#folder-name')?.textContent === 'cart'`)
+		w.waitFor("no saved folder", listTab("folders")+`.getAttribute('aria-label') === 'Folders, No folders yet'`)
+		w.noErrors()
 	})
 
 	t.Run("remote machine", func(t *testing.T) {
@@ -2122,7 +2282,8 @@ func TestBrowser(t *testing.T) {
 		if out := runCmd(t, k.env, exe, "-port", fmt.Sprint(k.port), "-no-open", dir); !strings.Contains(out, "Added filetypes") {
 			p.on(t).fail("kijk <folder> said:\n%s", out)
 		}
-		f := openPage(t, newTab(t, tab), k, "/?window=folders")
+		f := openPage(t, newTab(t, tab), k, "/")
+		f.click("the Folders list", listTab("folders"))
 		f.click("the filetypes row", row("filetypes"))
 		for _, s := range samples {
 			name := s.Name()
@@ -2390,4 +2551,15 @@ func changeRow(name string) string {
 func inList(list, name string) string {
 	return fmt.Sprintf(`[...document.querySelectorAll('#changes section')].some(s => s.querySelector('h3')?.textContent.startsWith(%s) && [...s.querySelectorAll('li.item .name')].some(n => n.textContent === %s))`,
 		jsString(list+" "), jsString(name))
+}
+
+// listTab is the switcher's button of a list: "agents" or "folders".
+func listTab(list string) string {
+	return fmt.Sprintf(`document.querySelector('#lists [data-list=%s]')`, list)
+}
+
+// listShows is true when the rail shows list.
+func listShows(list string) string {
+	return listTab(list) + `?.getAttribute('aria-selected') === 'true' && document.querySelector('#rail').getAttribute('aria-label') === ` +
+		jsString(strings.ToUpper(list[:1])+list[1:])
 }

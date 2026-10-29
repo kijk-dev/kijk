@@ -5,19 +5,43 @@
   --status: 22px; /* the status bar along the bottom, one row tall */
 }
 body {
+  --lists-w: 36px;
   --rail-w: var(--rail);
-  --side-w: min(var(--side), max(160px, 100vw - var(--rail-w) - 320px));
+  --side-w: min(var(--side), max(160px, 100vw - var(--lists-w) - var(--rail-w) - 320px));
   margin: 0;
   height: 100vh;
   display: grid;
-  grid-template-columns: var(--rail-w) var(--side-w) minmax(0, 1fr);
+  grid-template-columns: var(--lists-w) var(--rail-w) var(--side-w) minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr) var(--status);
 }
 .split { position: fixed; top: 0; bottom: var(--status); width: 7px; margin-left: -4px; cursor: col-resize; touch-action: none; z-index: 1; }
-.split[data-var="--rail"] { left: var(--rail-w); }
-.split[data-var="--side"] { left: calc(var(--rail-w) + var(--side-w)); }
+.split[data-var="--rail"] { left: calc(var(--lists-w) + var(--rail-w)); }
+.split[data-var="--side"] { left: calc(var(--lists-w) + var(--rail-w) + var(--side-w)); }
+
+/* The list switcher: a strip left of the rail whose buttons look and act like the Files/Git icons.
+   The first sits centred on the shared top bar. */
+#lists {
+  display: flex; flex-direction: column; align-items: center; gap: 4px; padding-top: calc((var(--bar) - 28px) / 2);
+  background: var(--panel); border-right: 1px solid var(--border);
+}
+#lists button {
+  position: relative; display: flex; align-items: center; justify-content: center; width: 28px; height: 28px;
+  padding: 0; border: 0; border-radius: 4px; background: none; color: var(--muted); cursor: pointer;
+}
+#lists button:hover { color: var(--text); background: var(--border); }
+#lists button[aria-selected=true] { color: var(--modified); background: var(--select); }
+#lists button:active { background: color-mix(in srgb, var(--modified) 22%, var(--select)); }
+#lists svg { width: 16px; height: 16px; }
+/* While Folders shows, a dot on Agents says an agent works or finished. */
+#lists .dot { display: none; position: absolute; top: 3px; right: 3px; width: 7px; height: 7px; border-radius: 50%; box-shadow: 0 0 0 2px var(--panel); }
+#lists button:hover .dot { box-shadow: 0 0 0 2px var(--border); }
+#lists .dot.busy { display: block; background: var(--busy); animation: fade 1.2s ease-in-out infinite; }
+#lists .dot.fin { display: block; background: var(--modified); }
+@media (prefers-reduced-motion: reduce) { #lists .dot.busy { animation: none; } }
 .split:hover, .split:focus-visible { outline: none; background: linear-gradient(var(--modified), var(--modified)) center / 2px 100% no-repeat; }
 body.rail-collapsed { --rail-w: 32px; }
+/* A badge's number sits half a pixel past the strip, which is not worth a scroll bar. */
+.rail-collapsed #rail { overflow-x: hidden; }
 .rail-collapsed .split[data-var="--rail"], .rail-collapsed #rail header span, .rail-collapsed #rail .status,
 .rail-collapsed .names, .rail-collapsed .when, .rail-collapsed .repo { display: none; }
 .rail-collapsed #rail header { justify-content: center; padding: 0; }
@@ -51,8 +75,8 @@ header { display: flex; align-items: center; justify-content: space-between; hei
 .line { display: flex; align-items: center; gap: 6px; }
 .names { flex: 1; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .when, .repo { color: var(--muted); font-size: 12px; }
-.repo { padding-left: calc(17px * var(--icons, 1) + 3px); } /* under the names, after the agent icons */
-.where { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.repo { display: flex; min-width: 0; padding-left: calc(17px * var(--icons, 1) + 3px); } /* under the names, after the agent icons */
+.where { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agent { display: flex; width: 14px; height: 14px; flex: none; color: var(--agent-color, var(--text)); }
 .agent svg { width: 14px; height: 14px; fill: currentColor; stroke: none; }
 .agents { display: flex; gap: 3px; flex: none; }
@@ -161,8 +185,7 @@ body { --mh: color-mix(in srgb, var(--border) 65%, var(--panel)); }
 .rail-collapsed .mdiv .micon svg { width: 14px; height: 14px; }
 
 @media (prefers-reduced-motion: reduce) { .mdot.connecting, .mact i.busy { animation: none; } }
-/* Folders window: a folder icon where an agent row has its agent icons, and line 2 under the name. */
-#rows li.folder .repo { padding-left: 20px; }
+/* Folders list: a folder icon where no agent works, in the place of the agent icons. */
 .ficon { display: flex; flex: none; color: var(--muted); }
 .ficon svg { width: 14px; height: 14px; }
 /* The remove button takes the place of the line counts while the row is hovered or focused. */

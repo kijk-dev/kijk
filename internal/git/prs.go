@@ -50,7 +50,7 @@ func forgeTool(root string) (f *forge, tool, note string) {
 	if f == nil {
 		return nil, "", ""
 	}
-	tool = map[string]string{"github": "gh", "gitlab": "glab"}[f.Kind]
+	tool = Tool(f.Kind)
 	if _, err := exec.LookPath(tool); err != nil {
 		return f, tool, "Install " + tool + " and log in to see " + f.Word() + " status"
 	}
