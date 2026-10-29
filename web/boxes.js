@@ -1,5 +1,5 @@
 import { el, h, patch } from './api.js';
-import { line, pairRows, splitRow, setView, isCurrent, LINE_HEIGHT } from './view.js';
+import { line, pairRows, splitRow, setView, isCurrent, LINE_HEIGHT } from './lines.js';
 import { diffLayout } from './layout.js';
 import { lineCount, kind } from './git.js';
 import { onKey, keyLabel } from './keys.js';

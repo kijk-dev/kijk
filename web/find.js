@@ -1,5 +1,6 @@
 import { el, get } from './api.js';
-import { viewInfo, setHits, reveal, onView, LINE_HEIGHT } from './view.js';
+import { viewInfo, setHits, reveal, onView } from './view.js';
+import { LINE_HEIGHT } from './lines.js';
 import { keyLabel } from './keys.js';
 import { jump } from './tabs.js';
 

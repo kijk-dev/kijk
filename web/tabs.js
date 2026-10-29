@@ -1,5 +1,6 @@
 import { el } from './api.js';
-import { openFile, openDiff, showMessage, viewScroll, setViewScroll, LINE_HEIGHT } from './view.js';
+import { openFile, openDiff, showMessage, viewScroll, setViewScroll } from './view.js';
+import { LINE_HEIGHT } from './lines.js';
 import { openBranch } from './review.js';
 import { openChanges } from './changes.js';
 import { openOverview } from './overview.js';

@@ -24,7 +24,7 @@ in code, UI text and commit messages.
   `boxes.js` the file boxes of Branch changes and Changes, `changes.js`, `threads.js`, `drafts.js`
   what writes a review, `overview.js` with the checks graph and Squash and merge, `prstore.js` what
   kijk knows about pull requests, with the viewed marks and what changed since your review),
-  `layout.js` the Unified / Split choice of every diff, `dialog.js` the confirm dialog before a
+  `lines.js` the lines of a diff and which view is open, `layout.js` the Unified / Split choice of every diff, `dialog.js` the confirm dialog before a
   write, `api.js`, `keys.js`, `tip.js`, `viewer.css`, and `engines/` with one file per diagram
   engine.
   The app side is the page around it: `app.js` (the rail and the list switcher), `rail.js` (the

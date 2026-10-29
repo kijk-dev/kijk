@@ -1,5 +1,5 @@
 import { el, h, patch, get, storeKey, icon } from './api.js';
-import { isCurrent } from './view.js';
+import { isCurrent } from './lines.js';
 import { lineCount, ago, kind } from './git.js';
 import { forgeMark, forgeWords, ownPR } from './pr.js';
 import { keyLabel, mac } from './keys.js';
