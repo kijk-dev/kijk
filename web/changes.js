@@ -1,5 +1,5 @@
 import { el, h, patch, get } from './api.js';
-import { isCurrent } from './view.js';
+import { isCurrent } from './lines.js';
 import { boxView, showBoxes, noBoxes, goToBox, redraw, drawBox, marksChanged, oldLineOf, plural } from './boxes.js';
 import { pull, read, watch, mark, setSince } from './prstore.js';
 import { placeForge, threadCount } from './threads.js';

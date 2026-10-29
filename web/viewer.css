@@ -1,4 +1,6 @@
-:root {
+/* Scoped, so a page that shows kijk views inside its own can import this file. */
+@scope (.kijk) {
+:scope {
   --bg: #ffffff;
   --panel: #f5f7f9;
   --border: #dde0e4;
@@ -43,8 +45,10 @@
   --bar: 33px; /* top bars of the three areas, so their borders line up */
   color-scheme: light dark;
 }
+/* The page may choose a theme with data-theme; without it, kijk follows the system. */
+:scope[data-theme="kijk-light"] { color-scheme: light; }
 @media (prefers-color-scheme: dark) {
-  :root {
+  :scope:not([data-theme="kijk-light"]) {
     --bg: #15171b;
     --panel: #1c1f24;
     --border: #2d3137;
@@ -83,12 +87,52 @@
     --lane-target: #52bfb9;
   }
 }
+/* The same values as the dark block above; TestDarkThemeMatchesTheSystem keeps them equal. */
+:scope[data-theme="kijk-dark"] {
+  color-scheme: dark;
+  --bg: #15171b;
+  --panel: #1c1f24;
+  --border: #2d3137;
+  --text: #dee1e7;
+  --muted: #9a9fa6;
+  --edge: #666b73;
+  --accent-fill: #306dc4;
+  --busy: #e9a03e;
+  --select: #25344e;
+  --gutter-text: #8f9298;
+  --modified: #74a6ef;
+  --added: #69c27e;
+  --deleted: #989ca2;
+  --untracked: #e28b63;
+  --conflict: #f17776;
+  --ignored: #a09c84;
+  --add-bg: #19301e;
+  --del-bg: #3e2121;
+  --sep-bg: #22272e;
+  --word-mix: 20%;
+  --hl-keyword: #b699eb;
+  --hl-type: #6bcac9;
+  --hl-string: #84c485;
+  --hl-number: #e79e6b;
+  --hl-comment: #8b939f;
+  --hl-function: #7ec9ed;
+  --hl-builtin: #e08bbc;
+  --hl-tag: #b699eb;
+  --hl-attr: #ddae6c;
+  --hl-decorator: #cec068;
+  --error: #f17776;
+  --removed: #e87f7f;
+  --tip-bg: #06070a;
+  --tip-text: #e5e8ec;
+  --lane-main: #b191ea;
+  --lane-target: #52bfb9;
+}
 * { box-sizing: border-box; }
 ::selection { background: color-mix(in srgb, var(--modified) 30%, transparent); }
 button:focus-visible { outline: 2px solid var(--busy); outline-offset: 1px; }
 [hidden] { display: none !important; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-body {
+:scope {
   background: var(--bg);
   color: var(--text);
   font: 13px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -729,7 +773,8 @@ button.pill:hover { background: color-mix(in srgb, var(--modified) 22%, var(--se
   flex: none; display: flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 50%;
   background: hsl(var(--hue) 45% 85%); color: hsl(var(--hue) 40% 28%); font: 600 10.5px/1 system-ui, -apple-system, sans-serif;
 }
-@media (prefers-color-scheme: dark) { .av { background: hsl(var(--hue) 26% 30%); color: hsl(var(--hue) 45% 85%); } }
+@media (prefers-color-scheme: dark) { :where(:scope:not([data-theme="kijk-light"])) .av { background: hsl(var(--hue) 26% 30%); color: hsl(var(--hue) 45% 85%); } }
+:where(:scope[data-theme="kijk-dark"]) .av { background: hsl(var(--hue) 26% 30%); color: hsl(var(--hue) 45% 85%); }
 .thr .foot { display: flex; align-items: center; gap: 8px; padding: 10px 12px 12px 14px; border-top: 1px solid var(--border); background: var(--panel); border-radius: 0 0 7px 7px; }
 .thr .foot input { flex: 1; min-width: 0; font-size: 13px; padding: 4px 9px; }
 .thr .foot .hint { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -876,3 +921,4 @@ kbd { font: 11px/1 var(--code-font); padding: 1px 4px; border: 1px solid var(--b
 .thr.conv::before { display: none; }
 .thr.conv .c { padding-bottom: 10px; }
 @media (prefers-reduced-motion: reduce) { .rundot { animation: none; } }
+}

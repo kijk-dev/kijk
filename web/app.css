@@ -1,5 +1,6 @@
-/* After viewer.css, so a rule here wins a tie with a rule there. */
-:root {
+/* After viewer.css and in the same scope, so a rule here wins a tie with a rule there. */
+@scope (.kijk) {
+:scope {
   --rail: 240px;
   --side: 260px;
   --status: 22px; /* the status bar along the bottom, one row tall */
@@ -56,8 +57,9 @@ body.rail-collapsed { --rail-w: 32px; }
   font: 600 10px/1 system-ui, -apple-system, sans-serif; letter-spacing: .02em;
 }
 @media (prefers-color-scheme: dark) {
-  .rail-collapsed .badge { background: hsl(var(--hue) 26% 30%); color: hsl(var(--hue) 45% 85%); }
+  :where(:scope:not([data-theme="kijk-light"])) .rail-collapsed .badge { background: hsl(var(--hue) 26% 30%); color: hsl(var(--hue) 45% 85%); }
 }
+:where(:scope[data-theme="kijk-dark"]) .rail-collapsed .badge { background: hsl(var(--hue) 26% 30%); color: hsl(var(--hue) 45% 85%); }
 .rail-collapsed li.busy .badge { outline: 2px solid var(--busy); outline-offset: 2px; animation: ring 1.2s ease-in-out infinite; }
 @keyframes ring { 50% { outline-color: transparent; } }
 .key {
@@ -98,8 +100,8 @@ li.busy .agent.on svg { animation: zoom 1.2s ease-in-out infinite; }
   background: var(--panel); border-top: 1px solid var(--border);
   font-size: 12px; color: var(--muted); white-space: nowrap;
 }
-#statusbar .kijk { display: flex; align-items: center; gap: 6px; min-width: 0; }
-#statusbar .kijk.news { color: var(--text); animation: notice-in .15s ease-out; }
+#statusbar .notice { display: flex; align-items: center; gap: 6px; min-width: 0; }
+#statusbar .notice.news { color: var(--text); animation: notice-in .15s ease-out; }
 #statusbar .agent-error { margin-right: auto; }
 #statusbar .icon { flex: none; width: 14px; height: 14px; }
 #statusbar .dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--modified); }
@@ -112,7 +114,7 @@ li.busy .agent.on svg { animation: zoom 1.2s ease-in-out infinite; }
 #statusbar .icon-btn { flex: none; margin-right: -2px; }
 #statusbar .icon-btn svg { width: 12px; height: 12px; }
 @media (max-width: 520px) { #statusbar .long { display: none; } #statusbar .short { display: inline; } }
-@media (prefers-reduced-motion: reduce) { #statusbar .kijk.news, #statusbar .dot.busy { animation: none; } }
+@media (prefers-reduced-motion: reduce) { #statusbar .notice.news, #statusbar .dot.busy { animation: none; } }
 
 /* Remote machines: the Agents list groups rows under a header per machine. */
 body { --mh: color-mix(in srgb, var(--border) 65%, var(--panel)); }
@@ -206,3 +208,4 @@ body { --mh: color-mix(in srgb, var(--border) 65%, var(--panel)); }
 #start .cmd svg { width: 12px; height: 12px; margin: 0; }
 #start .hint { margin: 10px 0 0; font-size: 12px; }
 #statusbar .undo { margin-right: auto; }
+}

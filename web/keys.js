@@ -58,17 +58,20 @@ export function onKey(action, fn) {
 
 export const typing = t => t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName);
 
-document.addEventListener('keydown', e => {
-  // On macOS ⌥ alone types a character, such as ∑ for ⌥W, so a text field keeps it.
-  if (mac && e.altKey && !e.metaKey && !e.ctrlKey && typing(e.target)) return;
-  for (const [action, fn] of handlers) {
-    if (!combos(action).some(c => matches(e, c))) continue;
-    if (fn(e) === false) return;
-    e.preventDefault();
-    e.stopPropagation();
-    return;
-  }
-}, true);
+// listenKeys makes the bound actions work on the page.
+export function listenKeys() {
+  document.addEventListener('keydown', e => {
+    // On macOS ⌥ alone types a character, such as ∑ for ⌥W, so a text field keeps it.
+    if (mac && e.altKey && !e.metaKey && !e.ctrlKey && typing(e.target)) return;
+    for (const [action, fn] of handlers) {
+      if (!combos(action).some(c => matches(e, c))) continue;
+      if (fn(e) === false) return;
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+  }, true);
+}
 
 const SYMBOL = { Meta: '⌘', Ctrl: '⌃', Alt: '⌥', Shift: '⇧' };
 

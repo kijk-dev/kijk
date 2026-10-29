@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Another app</title>
+<link rel="stylesheet" href="/kijk/viewer.css">
+<style>
+  body { margin: 0; padding: 16px 24px; background: rgb(250, 245, 235); color: rgb(40, 30, 20); font: 15px/1.5 Georgia, serif; }
+  button { background: rgb(255, 210, 0); color: rgb(40, 30, 20); border: 2px solid rgb(40, 30, 20); border-radius: 8px; padding: 4px 12px; }
+  .bar { display: flex; align-items: center; gap: 16px; margin-bottom: 12px; }
+  .bar h1 { margin: 0; font-size: 22px; }
+  #layout { margin-left: auto; }
+  #boxes { display: flex; flex-direction: column; height: 360px; border: 1px solid rgb(200, 190, 170); border-radius: 8px; overflow: hidden; }
+</style>
+</head>
+<body>
+<div class="bar">
+  <h1>Run 42</h1>
+  <button id="own" type="button">Rerun</button>
+  <span class="kijk" id="layout"></span>
+</div>
+<section class="kijk" id="boxes"></section>
+<script type="module" src="host.js"></script>
+</body>
+</html>

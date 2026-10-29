@@ -98,7 +98,7 @@ function draw() {
     const icon = el('img', 'icon');
     icon.src = 'favicon.svg';
     icon.alt = '';
-    const version = el('span', 'kijk');
+    const version = el('span', 'notice');
     version.append(icon, `kijk ${k.version}`);
     parts.push(version);
   }
@@ -143,7 +143,7 @@ function then(text) {
 }
 
 function news(dot, long, short, tip, ...rest) {
-  const s = el('span', 'kijk news');
+  const s = el('span', 'notice news');
   s.dataset.tip = tip;
   const msg = el('span', 'msg');
   const l = el('span', 'long');

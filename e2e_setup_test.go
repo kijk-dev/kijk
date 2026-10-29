@@ -122,6 +122,16 @@ type consoleLog struct {
 // openPage shows kijk's window at path in tab, a context from startBrowser or newTab.
 func openPage(t *testing.T, tab context.Context, k *kijkProcess, path string) page {
 	t.Helper()
+	sep := "?"
+	if strings.Contains(path, "?") {
+		sep = "&"
+	}
+	return openURL(t, tab, k, fmt.Sprintf("http://127.0.0.1:%d%s%stoken=%s", k.port, path, sep, k.token))
+}
+
+// openURL shows url in tab. k is the kijk that serves it, or nil.
+func openURL(t *testing.T, tab context.Context, k *kijkProcess, url string) page {
+	t.Helper()
 	p := page{t: t, ctx: tab, k: k, log: &consoleLog{}}
 	msgs := chromedp.Console(tab)
 	go func() {
@@ -136,11 +146,7 @@ func openPage(t *testing.T, tab context.Context, k *kijkProcess, path string) pa
 	}()
 	// patch then throws when it makes the focused element again, and noErrors fails the test.
 	p.onEveryPage(`globalThis.kijkCheck = true`)
-	sep := "?"
-	if strings.Contains(path, "?") {
-		sep = "&"
-	}
-	p.act("open "+path, chromedp.Navigate(fmt.Sprintf("http://127.0.0.1:%d%s%stoken=%s", k.port, path, sep, k.token)))
+	p.act("open "+strings.TrimRight(strings.Split(url, "token=")[0], "?&"), chromedp.Navigate(url))
 	p.mac = evalJS[bool](p, `/Mac/.test(navigator.platform)`)
 	return p
 }
@@ -399,8 +405,10 @@ func (p page) fail(format string, args ...any) {
 	}
 	p.log.mu.Unlock()
 	os.WriteFile(filepath.Join(dir, "console.txt"), []byte(console.String()), 0o644)
-	if b, err := os.ReadFile(p.k.logFile); err == nil {
-		os.WriteFile(filepath.Join(dir, "kijk.log"), b, 0o644)
+	if p.k != nil {
+		if b, err := os.ReadFile(p.k.logFile); err == nil {
+			os.WriteFile(filepath.Join(dir, "kijk.log"), b, 0o644)
+		}
 	}
 	p.t.Fatalf(format+"\nThe screenshot, page, console and kijk log are in %s", append(args, dir)...)
 }

@@ -1,5 +1,5 @@
 import { el, h, get, patch } from './api.js';
-import { setView, isCurrent } from './view.js';
+import { setView, isCurrent } from './lines.js';
 import { pull, read, watch, write } from './prstore.js';
 import { avatar, comment, age, newTab } from './threads.js';
 import { forgeWords, forgeMark, MERGE } from './pr.js';

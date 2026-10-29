@@ -1,14 +1,17 @@
 import { el, h, patch } from './api.js';
-import { line, pairRows, splitRow, setView, isCurrent, LINE_HEIGHT } from './view.js';
+import { line, pairRows, splitRow, setView, isCurrent, LINE_HEIGHT, lineCount, kind } from './lines.js';
 import { diffLayout } from './layout.js';
-import { lineCount, kind } from './git.js';
 import { onKey, keyLabel } from './keys.js';
 
 // The file boxes of Branch changes and of a pull request's Changes: one box per file, each drawn
 // when it comes near the screen. A source says what the boxes show:
 //   files()                the files, in order: {path, orig, status, add, del}
 //   basis()                what every box depends on besides its own file
-//   fetch(f, context)      the diff of one file
+//   fetch(f, context)      the diff of one file, with context lines around each change: {hunks:
+//                          [{oldStart, newStart, lines: [{k, o, n, t, x}]}]}, where k is ' ', '+'
+//                          or '-', o and n the old and new line, t the text and x optional colored
+//                          pieces [class, text]. Or {binary: true}, or {error}
+//   more                   false when fetch cannot give more context lines: no "Show more lines"
 //   headParts(f)           extra parts of a box's header, after its line counts
 //   openFile(f)            opens the whole file; without it there is no button
 //   marks(res)             {line(l) → extra class, hunk(h) → a tag or null}, optional
@@ -410,7 +413,7 @@ function diffRows(v, b, hunks, split) {
   const cls = l => `${l.k === '+' ? 'add ch-add' : l.k === '-' ? 'del' : ''}${marks.line?.(l) || ''}`;
   hunks.forEach((hk, i) => {
     const count = k => hk.lines.filter(l => l.k !== k).length;
-    const more = i > 0 || hk.newStart > 1 || hk.oldStart > 1;
+    const more = v.src.more !== false && (i > 0 || hk.newStart > 1 || hk.oldStart > 1);
     const onclick = () => {
       b.context += 20;
       loadBox(v, b);

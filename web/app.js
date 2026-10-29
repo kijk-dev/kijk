@@ -1,11 +1,16 @@
 import { el, get, post } from './api.js';
 import { refreshTip, tipSide } from './tip.js';
 import { openKey, openFolder, openFolderPR, closeFolder, setMachine, setupFolder, showFetched, SERVER } from './folder.js';
-import { ago, lineCount } from './git.js';
-import { mac, typing } from './keys.js';
+import { ago } from './git.js';
+import { lineCount } from './lines.js';
+import { mac, typing, listenKeys } from './keys.js';
+import { initLayout } from './layout.js';
 import { showKijk, showAgentErrors, showUndo, showSaid, restarting } from './status.js';
 import { LISTS, inList, keyed, listRows, cwdIn, target, closeRule, finish } from './rail.js';
 import { plural } from './boxes.js';
+
+listenKeys();
+initLayout(document.getElementById('viewer'), document.getElementById('difflayout'));
 
 // The agent types kijk knows, in its order. They come from the local kijk, also for remote rows.
 const agentTypes = await get('agenttypes');
