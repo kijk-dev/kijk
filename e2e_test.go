@@ -792,6 +792,22 @@ func TestBrowser(t *testing.T) {
 		if out := gitOut(t, repo, "branch", "--list"); out != "* fix-login\n  main" {
 			t.Fatalf("branches changed: %q", out)
 		}
+		// The file list is one Tab stop. The arrows show the file they reach; Enter moves into Changes.
+		prStops := `document.querySelectorAll('#prs-pr .prfiles li[tabindex="0"]').length === 1`
+		prMarked := func(name string) string {
+			return prsRow(name) + `.matches('.selected[aria-current="true"][tabindex="0"]') && ` + prStops
+		}
+		b.waitFor("the Tab stop on Overview", prsRow("Overview")+`.tabIndex === 0 && `+prStops)
+		b.evalJS(prsRow("Overview") + `.focus()`)
+		b.key("↓", kb.ArrowDown)
+		b.waitFor("ci.yml focused and marked", `document.activeElement === `+prsRow("ci.yml")+` && `+prMarked("ci.yml"))
+		b.key("↓", kb.ArrowDown)
+		b.waitFor("README.md focused, marked and at the top", `document.activeElement === `+prsRow("README.md")+` && `+prMarked("README.md")+
+			` && (s => Math.abs(`+fileBox("README.md")+`.offsetTop - 12 - s.scrollTop) < 2)(document.querySelector('.allfiles'))`)
+		b.key("↑", kb.ArrowUp)
+		b.waitFor("ci.yml again", `document.activeElement === `+prsRow("ci.yml")+` && `+prMarked("ci.yml"))
+		b.key("Enter", "\r")
+		b.waitFor("Enter moves the focus to Changes", `document.activeElement === document.querySelector('.allfiles')`)
 		// Threads: open under its line, resolved folded to one line, outdated in the bar.
 		const retry = "internal/webhook/retry.go"
 		open := boxRow(retry, "\t\tif !retryable(err) {") + `.nextElementSibling`

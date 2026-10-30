@@ -424,7 +424,7 @@ function prParts(p, mine) {
     h('div', { key: 'files', class: 'prs-scroll prfiles' },
       h('h3', null, `Files ${files.length}`, lineCount(...sum), files.length > 0 && h('span', 'viewedcount', `${viewedNow} of ${files.length} viewed`)),
       fileList({
-        label: `Files of ${words().num}${n}`, files, selected: selectedFile, stop: selectedFile, pick: path => pickFile(n, path),
+        label: `Files of ${words().num}${n}`, files, selected: selectedFile, stop: selectedFile, pick: (path, focus) => pickFile(n, path, focus),
         first: overviewRow(n, res, !files.some(f => f.path === selectedFile)),
         row: f => ({
           class: state(f) === 'viewed' ? 'viewed' : '',
@@ -438,10 +438,10 @@ function prParts(p, mine) {
 }
 
 // pickFile shows a file of pull request n in Changes, or its Overview for no file.
-function pickFile(n, path) {
+function pickFile(n, path, focus) {
   if (!path) return openOverview(n);
   page.openTab({ kind: 'pr', n, path: '' }, true);
-  goToChange(folder, n, path);
+  goToChange(folder, n, path, focus);
   selectFile(path);
 }
 
@@ -468,7 +468,7 @@ function markRow(li) {
   const next = on && files.slice(files.indexOf(f) + 1).find(x => p.marks.state(x) !== 'viewed');
   const to = [...prEl.querySelectorAll('.prfiles li')].find(r => r.dataset.path === (next ? next.path : f.path));
   if (!to) return;
-  if (next) to.click(); // shows it in Changes, which takes the focus
+  if (next) to.click();
   to.focus();
 }
 
