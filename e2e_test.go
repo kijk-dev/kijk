@@ -322,8 +322,8 @@ func TestBrowser(t *testing.T) {
 		b.noErrors()
 	})
 
-	// Another app's page shows file boxes with diffs of its own. It gets only the files it copies from
-	// web/, and no kijk server.
+	// Another app's page shows file boxes and their file list with diffs of its own. It gets only the
+	// files it copies from web/, and no kijk server.
 	t.Run("boxes on another page", func(t *testing.T) {
 		web, err := fs.Sub(webFiles, "web")
 		if err != nil {
@@ -353,6 +353,24 @@ func TestBrowser(t *testing.T) {
 		b.waitFor("the diff of cart.js", has("src/cart.js", "add", "    this.prices = prices ?? {};"))
 		b.waitFor("the diff of price.js", has("src/price.js", "del", "  return prices[item] || 0;"))
 		b.waitFor("hunk headers with no Show more lines", `document.querySelectorAll('#boxes .ln.sep').length === 4 && !document.querySelector('#boxes .more')`)
+
+		row := func(path string) string {
+			return fmt.Sprintf(`document.querySelector('#files li[data-path=%s]')`, jsString(path))
+		}
+		marked := func(path string) string {
+			return fmt.Sprintf(`%s?.matches('.selected[aria-current="true"][tabindex="0"]') && document.querySelectorAll('#files li.selected').length === 1`, row(path))
+		}
+		scroll := `document.querySelector('#boxes .allfiles')`
+		b.waitFor("the file list", `[...document.querySelectorAll('#files li')].map(r => [...r.querySelectorAll('.letter, .name, .dir, .lc-add, .lc-del')].map(e => e.textContent).join(' ')).join('|') === 'M cart.js src +4 −3|M price.js src +2 −2'`)
+		b.click("price.js in the list", row("src/price.js"))
+		b.waitFor("price.js marked, and its box at the top", marked("src/price.js")+` && (s => Math.abs(s.scrollTop - Math.min(`+box("src/price.js")+`.offsetTop - 12, s.scrollHeight - s.clientHeight)) <= 1)(`+scroll+`)`)
+		b.evalJS(scroll + `.scrollTop = 0`)
+		b.waitFor("the boxes scrolled to cart.js mark its row", marked("src/cart.js"))
+		b.evalJS(row("src/cart.js") + `.focus()`)
+		b.key("↓", kb.ArrowDown)
+		b.waitFor("↓ marks price.js and shows its box", `document.activeElement === `+row("src/price.js")+` && `+marked("src/price.js")+` && `+scroll+`.scrollTop > 0`)
+		b.key("Enter", "\r")
+		b.waitFor("Enter moves the focus to the boxes", `document.activeElement === `+scroll)
 		samePage := evalJS[bool](b, `(() => {
 			const props = ['background-color', 'color', 'font', 'margin', 'padding', 'border', 'border-radius', 'box-sizing', 'color-scheme', 'outline'];
 			const look = () => JSON.stringify([document.documentElement, document.body, document.getElementById('own')]
@@ -392,11 +410,12 @@ func TestBrowser(t *testing.T) {
 		b.emulate("light", 1400)
 
 		// The app redraws a file the agent changed; the view stays where it is.
-		b.evalJS(`globalThis.before = {scroll: document.querySelector('#boxes .allfiles'), box: ` + box("src/cart.js") + `}; before.scroll.scrollTop = 150`)
-		b.waitFor("scrolled into cart.js", `document.querySelector('#boxes .allfiles').scrollTop === 150`)
+		b.evalJS(`globalThis.before = {scroll: document.querySelector('#boxes .allfiles'), box: ` + box("src/cart.js") + `, row: ` + row("src/cart.js") + `}; before.scroll.scrollTop = 150`)
+		b.waitFor("scrolled into cart.js", `document.querySelector('#boxes .allfiles').scrollTop === 150 && `+marked("src/cart.js"))
 		b.evalJS(`later()`)
 		b.waitFor("the new line, in the same box and scroll", has("src/cart.js", "add", "    // An item in both carts takes the count of the other cart.")+
 			` && document.querySelector('#boxes .allfiles') === before.scroll && `+box("src/cart.js")+` === before.box && before.scroll.scrollTop === 150`)
+		b.waitFor("the new count, in the same row", row("src/cart.js")+` === before.row && before.row.querySelector('.lc-add').textContent === '+5' && `+marked("src/cart.js"))
 
 		if os.Getenv("KIJK_E2E_SHOTS") != "" {
 			dir := e2eOut(t)

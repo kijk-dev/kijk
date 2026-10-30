@@ -1,5 +1,8 @@
-// A page of another app that shows kijk's file boxes with diffs of its own, and no kijk server.
-import { boxView, showBoxes } from '/kijk/boxes.js';
+// A page of another app that shows kijk's file boxes and their file list with diffs of its own, and
+// no kijk server.
+import { patch } from '/kijk/api.js';
+import { boxView, showBoxes, goToBox } from '/kijk/boxes.js';
+import { fileList } from '/kijk/files.js';
 import { initLayout } from '/kijk/layout.js';
 import { listenKeys } from '/kijk/keys.js';
 
@@ -67,16 +70,27 @@ const src = {
   basis: () => 'run 42',
   fetch: async f => parseDiff(diffs[f.path]),
   more: false,
+  onTop: path => {
+    top = path;
+    drawList();
+    list.querySelector('.selected')?.scrollIntoView({ block: 'nearest' });
+  },
 };
+
+let top = '';
+const list = document.getElementById('files');
+const drawList = () => patch(list, fileList({ label: 'Files', files: src.files(), selected: top, pick: (path, focus) => goToBox(v, path, focus) }));
 
 listenKeys();
 const viewer = document.getElementById('boxes');
 initLayout(viewer, document.getElementById('layout'));
 const v = boxView(viewer, 'run 42', {}, null, () => {}, src);
+drawList();
 await showBoxes(v);
 
 // The journey calls this as the app does when the agent changes a file.
 globalThis.later = () => {
   diffs['src/cart.js'] = CART_LATER;
+  drawList();
   return showBoxes(v, { paths: ['src/cart.js'] });
 };
