@@ -5,13 +5,13 @@ import { kind, lineCount } from './lines.js';
 // page next to its file boxes. Nothing here touches the page when it loads.
 
 // fileRow describes the row of a changed file f ({path, orig, status, add, del}): its status letter,
-// name, folder and line counts. before goes in front of the letter, marks between the folder and the
-// counts, after behind the counts; the other props are the row's own, and class adds to "item".
-export function fileRow(f, { before, marks, after, class: cls, ...props } = {}) {
+// name, folder and line counts. marks go between the folder and the counts, after behind the counts;
+// the other props are the row's own, and class adds to "item".
+export function fileRow(f, { marks, after, class: cls, ...props } = {}) {
   const name = f.path.replace(/\/$/, ''), slash = name.lastIndexOf('/'), k = kind(f.status);
   return h('li', {
     key: f.path, class: cls ? `item ${cls}` : 'item', tabIndex: -1, title: f.orig ? `${f.orig} → ${f.path}` : f.path, data: { path: f.path }, ...props,
-  }, before, h('span', `letter ${k}`, f.status), h('span', `name ${k}`, name.slice(slash + 1)), h('span', 'dir', slash > 0 ? name.slice(0, slash) : ''),
+  }, h('span', `letter ${k}`, f.status), h('span', `name ${k}`, name.slice(slash + 1)), h('span', 'dir', slash > 0 ? name.slice(0, slash) : ''),
   marks, lineCount(f.add, f.del), after);
 }
 
