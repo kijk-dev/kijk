@@ -1,10 +1,11 @@
 import { el, h, patch, get, storeKey, icon } from './api.js';
-import { isCurrent, lineCount, kind } from './lines.js';
+import { isCurrent, lineCount } from './lines.js';
 import { ago } from './git.js';
 import { forgeMark, forgeWords, ownPR } from './pr.js';
 import { keyLabel, mac } from './keys.js';
 import { textBox, unsentKey } from './drafts.js';
 import { boxView, showBoxes, noBoxes, redraw, drawBox, iconButton, goToBox, plural } from './boxes.js';
+import { fileList } from './files.js';
 import { pull, line, own, watch, type } from './prstore.js';
 import { threadEl, outdatedBar, threadCount, avatar, sent, threadsChanged } from './threads.js';
 
@@ -183,7 +184,7 @@ function notesChanged(paths) {
 function drawPanel() {
   if (!folder) return;
   if (!data) return patch(panel, h('p', 'note', error || 'Loading…'));
-  patch(panel, header(), error && h('p', 'note error', error), unpushedBar(), fileList(), notesBox());
+  patch(panel, header(), error && h('p', 'note error', error), unpushedBar(), branchFiles(), notesBox());
 }
 
 function header() {
@@ -229,47 +230,25 @@ function dashed(tip) {
 
 const NOT_PUSHED = "Not pushed yet\nReviewers don't see this file";
 
-function fileList() {
+function branchFiles() {
   const files = data.files;
   const sum = files.reduce(([a, d], f) => [a + (f.add || 0), d + (f.del || 0)], [0, 0]);
-  const stop = onOverview ? '' : files.some(f => f.path === selected) ? selected : files[0]?.path ?? '';
+  const stop = onOverview ? '' : undefined;
   return h('div', { key: 'files', class: 'prs-scroll prfiles' },
     h('h3', null, `Branch changes ${files.length}`, lineCount(...sum)),
-    h('ul', { attrs: { 'aria-label': 'Branch changes' }, onkeydown: rowKeys },
-      page.overviewRow?.(own(folder), branchPR(), stop === ''),
-      files.map(f => fileItem(f, f.path === stop))),
+    fileList({
+      label: 'Branch changes', files, selected, stop, pick,
+      first: page.overviewRow?.(own(folder), branchPR(), stop === '' || !files.length),
+      row: f => ({ marks: [f.notPushed && dashed(NOT_PUSHED), threadCount(threadsOn(f.path), notesOn(f.path).length)] }),
+    }),
     !files.length && h('p', 'note', 'No changes yet'));
 }
 
-// fileItem is a row of the file list, as fileRow draws it in the Git tab; stop says it holds the Tab stop.
-function fileItem(f, stop) {
-  const name = f.path.replace(/\/$/, ''), slash = name.lastIndexOf('/'), k = kind(f.status), on = f.path === selected;
-  return h('li', {
-    key: f.path, class: `item${on ? ' selected' : ''}`, tabIndex: stop ? 0 : -1, title: f.orig ? `${f.orig} → ${f.path}` : f.path,
-    data: { path: f.path }, attrs: on ? { 'aria-current': 'true' } : {}, onclick: () => goTo(f.path),
-  }, h('span', `letter ${k}`, f.status), h('span', `name ${k}`, name.slice(slash + 1)), h('span', 'dir', slash > 0 ? name.slice(0, slash) : ''),
-  f.notPushed && dashed(NOT_PUSHED), threadCount(threadsOn(f.path), notesOn(f.path).length), lineCount(f.add, f.del));
-}
-
-// rowKeys moves in the file list: a file the arrows reach shows at once.
-function rowKeys(e) {
-  const rows = [...e.currentTarget.children];
-  const at = rows.indexOf(e.target.closest('li'));
-  const to = { ArrowDown: at + 1, ArrowUp: at - 1, Home: 0, End: rows.length - 1 }[e.key];
-  if (to !== undefined && rows[to]) {
-    const path = rows[to].dataset.path;
-    onOverview = !path;
-    if (path) goTo(path);
-    drawPanel();
-    rows[to].focus();
-  } else if (e.key === 'Enter' && rows[at]) {
-    if (rows[at].dataset.path) goTo(rows[at].dataset.path, true);
-    else rows[at].click();
-  } else {
-    return;
-  }
-  e.preventDefault();
-  e.stopPropagation();
+// pick shows a file of the list; the arrows put the Tab stop on the Overview row with no file.
+function pick(path, focus) {
+  onOverview = !path;
+  if (path) goTo(path, focus);
+  drawPanel();
 }
 
 function selectRow(path) {

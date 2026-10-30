@@ -21,9 +21,10 @@ in code, UI text and commit messages.
   build step and no npm: edit the files, rebuild, reload. The viewer side is the view of one open
   folder: `folder.js`, `view.js`, `tabs.js`, `tree.js`, `git.js`, `find.js`, `diagram.js`, `pr.js`,
   the PRs tab (`prs.js` the list and an opened pull request, `review.js` the folder's own branch,
-  `boxes.js` the file boxes of Branch changes and Changes, `changes.js`, `threads.js`, `drafts.js`
-  what writes a review, `overview.js` with the checks graph and Squash and merge, `prstore.js` what
-  kijk knows about pull requests, with the viewed marks and what changed since your review),
+  `boxes.js` the file boxes of Branch changes and Changes, `files.js` the row of a changed file
+  and the file list beside the boxes, `changes.js`, `threads.js`, `drafts.js` what writes a
+  review, `overview.js` with the checks graph and Squash and merge, `prstore.js` what kijk knows
+  about pull requests, with the viewed marks and what changed since your review),
   `lines.js` the lines of a diff, a file's line counts and status, and which view is open,
   `layout.js` the Unified / Split choice of every diff, `dialog.js` the confirm dialog before a
   write, `api.js`, `keys.js`, `tip.js`, `viewer.css`, and `engines/` with one file per diagram
@@ -33,11 +34,12 @@ in code, UI text and commit messages.
   `index.html`. App files may import viewer files; viewer files never import app files, and a
   test in `main_test.go` checks it.
 - Another app's page copies the box files (`api.js`, `lines.js`, `layout.js`, `keys.js`,
-  `boxes.js`, `viewer.css`) and shows file boxes from a source of its own. The box files import
-  only each other, and do nothing when they load: no element lookup, no server call, no listener.
-  `app.js` starts them with `listenKeys()` and `initLayout(viewer, slot)`. A test in
-  `main_test.go` checks it, and the journey "boxes on another page" runs such a page. kijk's
-  styles apply only inside an element with the class `kijk`, which kijk's page puts on `<html>`.
+  `boxes.js`, `files.js`, `viewer.css`) and shows file boxes from a source of its own, with their
+  file list beside them. The box files import only each other, and do nothing when they load: no
+  element lookup, no server call, no listener. `app.js` starts them with `listenKeys()` and
+  `initLayout(viewer, slot)`. A test in `main_test.go` checks it, and the journey "boxes on
+  another page" runs such a page. kijk's styles apply only inside an element with the class
+  `kijk`, which kijk's page puts on `<html>`.
 
 ## Rules
 

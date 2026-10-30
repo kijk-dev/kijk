@@ -122,7 +122,7 @@ func TestPageKnowsEveryList(t *testing.T) {
 }
 
 // prsTabFiles are the web files of the PRs tab, besides prstore.js.
-var prsTabFiles = []string{"pr.js", "prs.js", "review.js", "drafts.js", "boxes.js", "changes.js", "overview.js", "threads.js"}
+var prsTabFiles = []string{"pr.js", "prs.js", "review.js", "drafts.js", "boxes.js", "files.js", "changes.js", "overview.js", "threads.js"}
 
 // TestPRsTabAsksThroughTheStore checks that only prstore.js asks the forge about pull requests or
 // writes to it, so every answer goes through its one rule of which answer is newer.
@@ -189,7 +189,7 @@ func TestPRsTabDrawsInPlace(t *testing.T) {
 }
 
 // boxFiles are the web files another page copies to show file boxes.
-var boxFiles = []string{"api.js", "lines.js", "layout.js", "keys.js", "boxes.js"}
+var boxFiles = []string{"api.js", "lines.js", "layout.js", "keys.js", "boxes.js", "files.js"}
 
 // TestBoxFilesDoNothingOnLoad checks that the box files need no other web file, and look up no
 // element, call no server and add no listener when they load. A page starts them when it is ready.

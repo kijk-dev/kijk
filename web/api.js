@@ -123,6 +123,13 @@ export function patch(parent, ...children) {
   }
 }
 
+// make builds the element of description d, for code that does not draw through patch.
+export function make(d) {
+  const box = document.createElement('div');
+  patch(box, d);
+  return box.firstChild;
+}
+
 const LIVE = new Set(['value', 'checked']); // the user changes these, so they compare with the page
 
 function update(node, d) {

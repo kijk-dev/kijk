@@ -1,9 +1,10 @@
 import { h, patch } from './api.js';
-import { lineCount, kind } from './lines.js';
+import { lineCount } from './lines.js';
 import { forgeMark, forgeWords, prChips } from './pr.js';
 import { onKey, keyLabel } from './keys.js';
 import { pull, read, line, own, list, askList, watch, redraw, mark, setSince, rowCounts } from './prstore.js';
 import { plural, markCurrent } from './boxes.js';
+import { fileList } from './files.js';
 import { avatar, threadCount, age } from './threads.js';
 import { goToChange, setupChanges } from './changes.js';
 import { setupOverview } from './overview.js';
@@ -362,11 +363,13 @@ export function overviewRow(n, res, stop) {
   const said = (res?.comments || []).filter(c => !c.draft).length;
   return h('li', {
     key: 'overview', class: 'item ov', tabIndex: stop ? 0 : -1, data: { path: '' },
-    onclick: () => {
-      page.openTab({ kind: 'overview', n, path: '' }, true);
-      selectFile('');
-    },
+    onclick: () => openOverview(n),
   }, h('span', { html: ICON.doc }), h('span', 'name', 'Overview'), h('span', 'dir', open ? plural(open, 'open thread') : said ? plural(said, 'comment') : ''));
+}
+
+function openOverview(n) {
+  page.openTab({ kind: 'overview', n, path: '' }, true);
+  selectFile('');
 }
 
 function prHead(p, mine, row) {
@@ -420,43 +423,26 @@ function prParts(p, mine) {
     why && h('p', 'note error', why),
     h('div', { key: 'files', class: 'prs-scroll prfiles' },
       h('h3', null, `Files ${files.length}`, lineCount(...sum), files.length > 0 && h('span', 'viewedcount', `${viewedNow} of ${files.length} viewed`)),
-      h('ul', { attrs: { 'aria-label': `Files of ${words().num}${n}` }, onkeydown: rowKeys },
-        overviewRow(n, res, !files.some(f => f.path === selectedFile)),
-        files.map(f => fileItem(f, state(f), () => {
-          page.openTab({ kind: 'pr', n, path: '' }, true);
-          goToChange(folder, n, f.path);
-          selectFile(f.path);
-        }, threadCount((res?.threads || []).filter(t => t.path === f.path)), p.own(f) && viewedBox(n, p.own(f), state(f))))),
+      fileList({
+        label: `Files of ${words().num}${n}`, files, selected: selectedFile, stop: selectedFile, pick: path => pickFile(n, path),
+        first: overviewRow(n, res, !files.some(f => f.path === selectedFile)),
+        row: f => ({
+          class: state(f) === 'viewed' ? 'viewed' : '',
+          marks: [state(f) === 'changed' && h('span', { class: 'again', data: { tip: 'Changed since you viewed it' } }, 'changed'),
+            threadCount((res?.threads || []).filter(t => t.path === f.path))],
+          after: p.own(f) && viewedBox(n, p.own(f), state(f)),
+        }),
+      }),
       !res && !why && h('p', 'note', `Fetching ${words().num}${n}…`)),
   ];
 }
 
-// fileItem is a file row of a pull request, as fileRow draws it in the Git tab, with its mark.
-function fileItem(f, state, onclick, tc, box) {
-  const slash = f.path.lastIndexOf('/'), k = kind(f.status);
-  return h('li', {
-    key: f.path, class: `item${state === 'viewed' ? ' viewed' : ''}${f.path === selectedFile ? ' selected' : ''}`,
-    tabIndex: f.path === selectedFile ? 0 : -1, title: f.orig ? `${f.orig} → ${f.path}` : f.path, data: { path: f.path }, onclick,
-  },
-  h('span', `letter ${k}`, f.status), h('span', `name ${k}`, f.path.slice(slash + 1)), h('span', 'dir', slash > 0 ? f.path.slice(0, slash) : ''),
-  state === 'changed' && h('span', { class: 'again', data: { tip: 'Changed since you viewed it' } }, 'changed'), tc, lineCount(f.add, f.del), box);
-}
-
-// rowKeys moves in a file list: a row the arrows reach shows at once.
-function rowKeys(e) {
-  const rows = [...e.currentTarget.children];
-  const at = rows.indexOf(e.target.closest('li'));
-  const to = { ArrowDown: at + 1, ArrowUp: at - 1, Home: 0, End: rows.length - 1 }[e.key];
-  if (to !== undefined && rows[to]) {
-    rows[to].focus();
-    rows[to].click();
-  } else if (e.key === 'Enter' && rows[at]) {
-    rows[at].click();
-  } else {
-    return;
-  }
-  e.preventDefault();
-  e.stopPropagation();
+// pickFile shows a file of pull request n in Changes, or its Overview for no file.
+function pickFile(n, path) {
+  if (!path) return openOverview(n);
+  page.openTab({ kind: 'pr', n, path: '' }, true);
+  goToChange(folder, n, path);
+  selectFile(path);
 }
 
 // viewedBox is a file row's Viewed box. It takes no Tab stop: V works on the focused row.
