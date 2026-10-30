@@ -16,14 +16,16 @@ export function fileRow(f, { before, marks, after, class: cls, ...props } = {}) 
 }
 
 // fileList describes a list of file rows with one selected row. The list is one Tab stop, on the
-// row of stop: by default the selected row, else the first. A click or an arrow key picks a row with
-// pick(path); Enter picks it with pick(path, true), to move the focus to what it shows.
+// row of path stop, or on first when no file has it: by default the selected row, else the first
+// file. A click or an arrow key picks a row with pick(path); Enter picks it with pick(path, true), to
+// move the focus to what it shows.
 //   label    names the list for screen readers
-//   first    a row before the files, with no path, or null; an arrow key to it picks '', Enter clicks it
+//   first    first(stop) describes a row before the files, with no path; stop says it holds the Tab
+//            stop. An arrow key to it picks '', Enter clicks it
 //   row(f)   more fileRow props for f's row, optional
 export function fileList({ label, files, selected, stop, first, row, pick }) {
   stop ??= files.some(f => f.path === selected) ? selected : files[0]?.path;
-  return h('ul', { class: 'filelist', attrs: { 'aria-label': label }, onkeydown: e => rowKeys(e, pick) }, first, files.map(f => {
+  return h('ul', { class: 'filelist', attrs: { 'aria-label': label }, onkeydown: e => rowKeys(e, pick) }, first?.(!files.some(f => f.path === stop)), files.map(f => {
     const more = row?.(f) || {}, on = f.path === selected;
     return fileRow(f, {
       ...more, class: [more.class, on && 'selected'].filter(Boolean).join(' '), tabIndex: f.path === stop ? 0 : -1,

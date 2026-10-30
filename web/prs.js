@@ -425,7 +425,7 @@ function prParts(p, mine) {
       h('h3', null, `Files ${files.length}`, lineCount(...sum), files.length > 0 && h('span', 'viewedcount', `${viewedNow} of ${files.length} viewed`)),
       fileList({
         label: `Files of ${words().num}${n}`, files, selected: selectedFile, stop: selectedFile, pick: (path, focus) => pickFile(n, path, focus),
-        first: overviewRow(n, res, !files.some(f => f.path === selectedFile)),
+        first: stop => overviewRow(n, res, stop),
         row: f => ({
           class: state(f) === 'viewed' ? 'viewed' : '',
           marks: [state(f) === 'changed' && h('span', { class: 'again', data: { tip: 'Changed since you viewed it' } }, 'changed'),

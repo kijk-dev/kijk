@@ -233,12 +233,11 @@ const NOT_PUSHED = "Not pushed yet\nReviewers don't see this file";
 function branchFiles() {
   const files = data.files;
   const sum = files.reduce(([a, d], f) => [a + (f.add || 0), d + (f.del || 0)], [0, 0]);
-  const stop = onOverview ? '' : undefined;
   return h('div', { key: 'files', class: 'prs-scroll prfiles' },
     h('h3', null, `Branch changes ${files.length}`, lineCount(...sum)),
     fileList({
-      label: 'Branch changes', files, selected, stop, pick,
-      first: page.overviewRow?.(own(folder), branchPR(), stop === '' || !files.length),
+      label: 'Branch changes', files, selected, stop: onOverview ? '' : undefined, pick,
+      first: stop => page.overviewRow?.(own(folder), branchPR(), stop),
       row: f => ({ marks: [f.notPushed && dashed(NOT_PUSHED), threadCount(threadsOn(f.path), notesOn(f.path).length)] }),
     }),
     !files.length && h('p', 'note', 'No changes yet'));
