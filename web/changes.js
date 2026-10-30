@@ -170,8 +170,9 @@ function closeEditor(v, focus) {
   if (focus && isCurrent(v)) v.scroll?.focus({ preventScroll: true });
 }
 
-// goToChange scrolls the Changes of pull request n to a file, now or once they show.
-export function goToChange(root, n, path) {
-  if (view && isCurrent(view) && view.root === root && view.n === n && view.scroll) return goToBox(view, path, true);
+// goToChange scrolls the Changes of pull request n to a file, now or once they show. focus moves the
+// focus there.
+export function goToChange(root, n, path, focus) {
+  if (view && isCurrent(view) && view.root === root && view.n === n && view.scroll) return goToBox(view, path, focus);
   goals.set(`${root}\n${n}`, path);
 }

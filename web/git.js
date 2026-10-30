@@ -1,8 +1,8 @@
-import { el, get } from './api.js';
+import { el, get, make } from './api.js';
 import { kind, lineCount } from './lines.js';
+import { fileRow } from './files.js';
 
 const filesOf = c => (c.orig ? [c.path, c.orig] : [c.path]);
-const shown = path => path.replace(/\/$/, '');
 
 // marks turns a git status into tree colors: per file, per folder with changes, and ignored paths.
 export function marks(st) {
@@ -34,23 +34,6 @@ export function marks(st) {
 let items = [];
 let selectedKey = null;
 let handlers = null;
-
-export function fileRow(c, onClick) {
-  const name = shown(c.path);
-  const slash = name.lastIndexOf('/');
-  const row = el('li', 'item');
-  row.tabIndex = -1;
-  row.title = c.orig ? `${c.orig} → ${c.path}` : c.path;
-  row.append(
-    el('span', `letter ${kind(c.status)}`, c.status),
-    el('span', `name ${kind(c.status)}`, name.slice(slash + 1)),
-    el('span', 'dir', slash > 0 ? name.slice(0, slash) : ''),
-  );
-  const lc = lineCount(c.add, c.del);
-  if (lc) row.append(lc);
-  row.onclick = onClick;
-  return row;
-}
 
 function box(title, list, action) {
   const section = el('section');
@@ -91,7 +74,7 @@ export function showChanges(container, st, h) {
     const ul = el('ul');
     list.forEach(([c, mode], index) => {
       const item = { key: `${mode}:${c.path}`, change: c, mode, list: title, index };
-      item.row = fileRow(c, () => select(item));
+      item.row = make(fileRow(c, { onclick: () => select(item) }));
       item.row.ondblclick = () => h.onOpen(c, mode, true);
       if (mode !== 'conflict') {
         const check = el('input');
@@ -312,11 +295,13 @@ export async function showGraph(container, root, onOpen, target = '') {
     const fill = list => {
       if (list instanceof Error) return files.replaceChildren(el('li', 'note', list.message));
       files.replaceChildren(...list.map(f => {
-        const fr = fileRow(f, () => {
-          container.querySelector('.item.selected')?.classList.remove('selected');
-          fr.classList.add('selected');
-          onOpen({ ...f, hash: c.hash }, 'commit');
-        });
+        const fr = make(fileRow(f, {
+          onclick: () => {
+            container.querySelector('.item.selected')?.classList.remove('selected');
+            fr.classList.add('selected');
+            onOpen({ ...f, hash: c.hash }, 'commit');
+          },
+        }));
         fr.ondblclick = () => onOpen({ ...f, hash: c.hash }, 'commit', true);
         fr.classList.add('sub');
         fr.prepend(laneCell(rows, i, width));

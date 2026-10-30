@@ -611,11 +611,11 @@ button.pill:hover { background: color-mix(in srgb, var(--modified) 22%, var(--se
 
 .prfiles h3 { display: flex; align-items: center; margin: 8px 12px 2px; font-size: 11px; text-transform: uppercase; color: var(--muted); }
 .prfiles h3 .lc { margin-left: 8px; padding-left: 0; font-weight: 600; }
-.prfiles ul:focus { outline: none; }
-.prfiles .item { gap: 6px; padding-left: 12px; }
-.prfiles .item > .dir { flex-shrink: 1000; min-width: 0; }
-.prfiles .item:focus { outline: none; }
-.prfiles .item:focus-visible { outline: 2px solid var(--busy); outline-offset: -2px; }
+.filelist:focus { outline: none; }
+.filelist .item { gap: 6px; padding-left: 12px; }
+.filelist .item > .dir { flex-shrink: 1000; min-width: 0; }
+.filelist .item:focus { outline: none; }
+.filelist .item:focus-visible { outline: 2px solid var(--busy); outline-offset: -2px; }
 .np { display: flex; flex: none; color: var(--muted); }
 .np svg { width: 12px; height: 12px; }
 .tc { flex: none; display: inline-flex; align-items: center; gap: 2px; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }

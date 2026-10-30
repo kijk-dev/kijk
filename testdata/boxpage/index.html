@@ -10,7 +10,9 @@
   .bar { display: flex; align-items: center; gap: 16px; margin-bottom: 12px; }
   .bar h1 { margin: 0; font-size: 22px; }
   #layout { margin-left: auto; }
-  #boxes { display: flex; flex-direction: column; height: 360px; border: 1px solid rgb(200, 190, 170); border-radius: 8px; overflow: hidden; }
+  .run { display: flex; gap: 12px; height: 360px; }
+  #files { flex: none; width: 220px; padding: 4px 0; overflow: auto; border: 1px solid rgb(200, 190, 170); border-radius: 8px; }
+  #boxes { flex: 1; min-width: 0; display: flex; flex-direction: column; border: 1px solid rgb(200, 190, 170); border-radius: 8px; overflow: hidden; }
 </style>
 </head>
 <body>
@@ -19,7 +21,10 @@
   <button id="own" type="button">Rerun</button>
   <span class="kijk" id="layout"></span>
 </div>
-<section class="kijk" id="boxes"></section>
+<div class="run">
+  <nav class="kijk" id="files"></nav>
+  <section class="kijk" id="boxes"></section>
+</div>
 <script type="module" src="host.js"></script>
 </body>
 </html>
