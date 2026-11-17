@@ -222,8 +222,9 @@ export async function openFile(viewer, root, path, keep, md) {
   file.reload = async (force = false) => {
     const info = await fileInfo(file).catch(() => null);
     if (current !== file || (!force && info && JSON.stringify(info) === file.json)) return;
-    const scrollTop = file.scroll?.scrollTop ?? keep?.scrollTop ?? 0;
-    openFile(viewer, root, path, { scrollTop, info, image: file.image?.(), versions: file.versions }, md);
+    // Before the first draw it opens where this open was going to.
+    const at = file.scroll ? { scrollTop: file.scroll.scrollTop } : { scrollTop: keep?.scrollTop, line: keep?.line };
+    openFile(viewer, root, path, { ...at, info, image: file.image?.(), versions: file.versions }, md);
   };
   setView(file);
   const draw = () => drawFile(viewer, file, keep, md);
@@ -666,7 +667,8 @@ export async function openDiff(viewer, root, change, mode, context = 3, keep, md
   d.reload = async () => {
     const res = await get('diff', params).catch(() => null);
     if (current !== d || (res && JSON.stringify(res) === d.json)) return;
-    again(context, { scrollTop: d.scroll?.scrollTop ?? 0, scrollLeft: d.scroll?.scrollLeft, res, openedAt: d.openedAt });
+    const at = d.scroll ? { scrollTop: d.scroll.scrollTop, scrollLeft: d.scroll.scrollLeft } : keep; // before the first draw, as this open
+    again(context, { ...at, res, openedAt: d.openedAt });
   };
   setView(d);
   const key = `diff\n${JSON.stringify(params)}`;
@@ -741,7 +743,7 @@ export async function openDiff(viewer, root, change, mode, context = 3, keep, md
       return i => (rows[i].sep ? 1 : Math.max(wrapped(rows[i].l?.t ?? '', fit), wrapped(rows[i].r?.t ?? '', fit)));
     });
     const at = keep?.line ? rows.findIndex(r => r.r?.n === keep.line) : -1;
-    const top = topOf => (at >= 0 ? topOf(at) - keep.offset : keep ? keep.scrollTop : topOf(Math.max(0, (d.starts[0] ?? 0) - 5)));
+    const top = topOf => (at >= 0 ? topOf(at) - keep.offset : keep?.scrollTop ?? topOf(Math.max(0, (d.starts[0] ?? 0) - 5)));
     d.relayout = () => { // the new-side line at the top stays where it is
       const first = d.indexAt(scroll.scrollTop);
       const i = rows.findIndex((r, j) => j >= first && r.r);
