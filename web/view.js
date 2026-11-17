@@ -22,6 +22,36 @@ function typeOf(path) {
 // rendered tells whether a type opens in a rendered view, with a switch to its source view.
 const rendered = t => t.show === 'rendered' || t.show === 'drawn' || !!t.text;
 
+const MOMENT = 100; // ms
+
+// loading shows Loading… when an open takes more than a moment. A quick one draws straight over the
+// old view, with no flash.
+async function loading(viewer, v, draw) {
+  const timer = setTimeout(() => { if (current === v) viewer.replaceChildren(el('p', 'empty', 'Loading…')); }, MOMENT);
+  try {
+    await draw();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Over a slow link a file or diff opened again shows at once, then is checked as a reload is.
+// Only remote folders keep them: key -> view data, newest last.
+const cached = new Map();
+
+function recall(root, key) {
+  const hit = splitKey(root).machine ? cached.get(key) : null;
+  if (hit) store(root, key, hit);
+  return hit;
+}
+
+function store(root, key, value) {
+  if (!splitKey(root).machine) return;
+  cached.delete(key);
+  cached.set(key, value);
+  if (cached.size > 30) cached.delete(cached.keys().next().value);
+}
+
 export function showMessage(viewer, msg) {
   setView(null);
   viewer.replaceChildren(typeof msg === 'string' ? el('p', 'empty', msg) : msg);
@@ -185,27 +215,49 @@ export async function openFile(viewer, root, path, keep, md) {
   const file = { kind: 'file', root, path, chunks: new Map(), pending: new Set() };
   // A file at a pull request's head comes from git; one on disk sends no pr.
   if (md?.pr) file.pr = md.pr;
-  const at = q => (file.pr ? { ...q, pr: file.pr } : q);
   // Image URLs in rendered markdown carry a version: new on each open, so the page never reuses an
   // older copy, and kept across a redraw, so an image that did not change is not fetched again.
   file.versions = keep?.versions || { at: Date.now(), of: new Map() };
   // Agents touch .git all the time; a reload that changes nothing must not redraw.
   file.reload = async (force = false) => {
-    const info = await get('file', at({ root, path })).catch(() => null);
+    const info = await fileInfo(file).catch(() => null);
     if (current !== file || (!force && info && JSON.stringify(info) === file.json)) return;
-    openFile(viewer, root, path, { scrollTop: file.scroll?.scrollTop ?? 0, info, image: file.image?.(), versions: file.versions }, md);
+    // Before the first draw it opens where this open was going to.
+    const at = file.scroll ? { scrollTop: file.scroll.scrollTop } : { scrollTop: keep?.scrollTop, line: keep?.line };
+    openFile(viewer, root, path, { ...at, info, image: file.image?.(), versions: file.versions }, md);
   };
   setView(file);
+  const draw = () => drawFile(viewer, file, keep, md);
+  return keep?.info !== undefined ? draw() : loading(viewer, file, draw); // a reload brings its info, or null
+}
+
+const fileInfo = file => get('file', { root: file.root, path: file.path, ...(file.pr ? { pr: file.pr } : {}) });
+
+async function drawFile(viewer, file, keep, md) {
+  const { root, path } = file;
+  const type = typeOf(path);
+  const showsText = md && rendered(type) ? md.source : type.show !== 'image';
+  const key = `file\n${root}\n${file.pr || ''}\n${path}`;
+  const hit = keep?.info === undefined && recall(root, key);
+  if (hit) file.chunks = hit.chunks;
+  const scrollTop = keep?.scrollTop ?? (keep?.line ? (keep.line - 1) * LINE_HEIGHT : 0);
+  const top = Math.floor(scrollTop / LINE_HEIGHT);
+  // The lines on screen load with the info, so the view draws with its text in one round trip.
+  const onScreen = info => Promise.all([...new Set([Math.floor(top / CHUNK), Math.floor((top + 100) / CHUNK)])]
+    .filter(c => !info || c * CHUNK < info.lines).map(c => load(file, c)));
+  const loads = showsText && onScreen(keep?.info || hit?.info);
   let info;
   try {
-    info = keep?.info || await get('file', at({ root, path }));
+    info = keep?.info || hit?.info || await fileInfo(file);
   } catch (err) {
     if (current === file) viewer.replaceChildren(el('p', 'empty', keep && err.message === 'Not found' ? 'Deleted' : err.message));
     return;
   }
   if (current !== file) return;
-  file.json = JSON.stringify(info);
-  const type = typeOf(path);
+  file.json = hit?.json ?? JSON.stringify(info);
+  file.kept = hit || { info, json: file.json, chunks: file.chunks };
+  store(root, key, file.kept);
+  if (hit) file.reload();
   let bar = md && rendered(type) ? modeBar(file, md) : null;
   const say = text => viewer.replaceChildren(...(bar ? [bar] : []), el('p', 'empty', text));
   if (type.show === 'image' && file.pr) return say("kijk shows a pull request's images only on the forge");
@@ -219,17 +271,8 @@ export async function openFile(viewer, root, path, keep, md) {
   }
   if (bar && type.show === 'image') picture(imageURL(file, info), true).then(img => img && bar.prepend(facts(img, info.size)));
 
-  const scrollTop = keep?.scrollTop ?? (keep?.line ? (keep.line - 1) * LINE_HEIGHT : 0);
-  if (keep) { // load the visible lines first, so a reload does not flash an empty view
-    const top = Math.floor(scrollTop / LINE_HEIGHT);
-    for (const c of new Set([Math.floor(top / CHUNK), Math.floor((top + 100) / CHUNK)])) {
-      if (c * CHUNK >= info.lines) continue;
-      try {
-        file.chunks.set(c, await get('lines', at({ root, path, from: c * CHUNK, to: (c + 1) * CHUNK })));
-      } catch { /* the view loads it again when drawn */ }
-    }
-    if (current !== file) return;
-  }
+  await (loads || onScreen(info));
+  if (current !== file) return;
   const scroll = el('div', 'scroll');
   const gutter = `${String(info.lines).length + 2}ch`;
   scroll.style.setProperty('--gutter', gutter);
@@ -354,15 +397,17 @@ async function openImage(viewer, file, info, bar, keep, say) {
 
 // openRendered returns 'too large' for a diagram file too large to draw, which shows as source.
 async function openRendered(viewer, file, info, bar, keep, md) {
-  let res;
+  let res = file.kept.markdown;
   try {
-    res = await get('markdown', { root: file.root, path: file.path, ...(file.pr ? { pr: file.pr } : {}) });
+    res ??= await get('markdown', { root: file.root, path: file.path, ...(file.pr ? { pr: file.pr } : {}) });
   } catch (err) {
     if (current === file && err.status === 413) return 'too large';
     if (current === file) viewer.replaceChildren(bar, el('p', 'empty', err.message));
     return;
   }
   if (current !== file) return;
+  // An included file can change while this file's info stays the same.
+  if (!res.includes?.length) file.kept.markdown = res;
   file.includes = res.includes || []; // the files it shows in place
   const t = document.createElement('template'); // inert: nothing loads before prepare runs
   t.innerHTML = res.html; // the server drops HTML inside the file, and the CSP blocks script as well
@@ -604,7 +649,7 @@ async function load(file, c) {
   try {
     const lines = await get('lines', { root: file.root, path: file.path, from: c * CHUNK, to: (c + 1) * CHUNK, ...(file.pr ? { pr: file.pr } : {}) });
     file.chunks.set(c, lines);
-    if (current === file) file.render();
+    if (current === file) file.render?.();
   } catch {
     // The file went, as during git switch; the refresh that follows shows it.
   } finally {
@@ -622,112 +667,120 @@ export async function openDiff(viewer, root, change, mode, context = 3, keep, md
   d.reload = async () => {
     const res = await get('diff', params).catch(() => null);
     if (current !== d || (res && JSON.stringify(res) === d.json)) return;
-    again(context, { scrollTop: d.scroll?.scrollTop ?? 0, scrollLeft: d.scroll?.scrollLeft, res, openedAt: d.openedAt });
+    const at = d.scroll ? { scrollTop: d.scroll.scrollTop, scrollLeft: d.scroll.scrollLeft } : keep; // before the first draw, as this open
+    again(context, { ...at, res, openedAt: d.openedAt });
   };
   setView(d);
-  let res;
-  try {
-    res = keep?.res || await get('diff', params);
-  } catch (err) {
-    if (current === d) viewer.replaceChildren(el('p', 'empty', err.message));
-    return;
-  }
-  if (current !== d) return;
-  d.json = JSON.stringify(res);
-
-  if (res.folder) return viewer.replaceChildren(el('p', 'empty', 'Untracked folder with its own git repository'));
-  // A picture diff of a type with a source view can show the line diff below.
-  const modes = md && (res.image || res.diagram) && rendered(typeOf(change.path)) ? sourceSwitch(md, () => 1) : null;
-  if ((res.image || res.diagram) && !(modes && md.source)) {
-    const bar = change.orig || modes ? el('div', 'diffbar', change.orig ? `Renamed from ${change.orig}` : '') : null;
-    if (modes) bar.append(modes);
-    if (res.diagram) return diagramDiff(viewer, d, res.diagram, root, change, mode, bar);
-    return imageDiff(viewer, d, res.image, root, change, mode, bar);
-  }
-  const say = text => {
-    const bar = el('div', 'diffbar');
-    if (modes) bar.append(modes);
-    viewer.replaceChildren(...(modes ? [bar] : []), el('p', 'empty', text));
-  };
-  if (res.binary) return say('Binary file changed');
-  if (!res.hunks.length) return say(change.orig ? `Renamed from ${change.orig}, no content changes` : 'No content changes');
-
-  // The tab names the file; this bar keeps what the tab cannot show.
-  const full = context >= FULL;
-  const bar = el('div', 'diffbar', change.orig ? `Renamed from ${change.orig}` : '');
-  const toggle = el('button', 'tool', full ? 'Show changes only' : 'Show full file');
-  toggle.onclick = () => again(full ? 3 : FULL);
-  bar.append(toggle);
-  if (modes) bar.append(modes);
-
-  const split = diffLayout() === 'split';
-  const rows = [];
-  const more = () => again(context + 20);
-  const changed = r => r.l !== r.r;
-  res.hunks.forEach((h, i) => {
-    if (!full && (i > 0 || h.oldStart > 1 || h.newStart > 1)) rows.push({ sep: true });
-    for (const r of pairRows(h.lines, split)) {
-      if (changed(r) && (rows.length === 0 || rows.at(-1).sep || !changed(rows.at(-1)))) d.starts.push(rows.length);
-      rows.push(r);
+  const key = `diff\n${JSON.stringify(params)}`;
+  const draw = async () => {
+    const hit = keep?.res === undefined && recall(root, key);
+    let res;
+    try {
+      res = keep?.res || hit || await get('diff', params);
+    } catch (err) {
+      if (current === d) viewer.replaceChildren(el('p', 'empty', err.message));
+      return;
     }
-  });
+    if (current !== d) return;
+    d.json = JSON.stringify(res);
+    store(root, key, res);
+    if (hit) d.reload();
 
-  let maxNo = 0, cols = 0;
-  for (const l of res.hunks.flatMap(h => h.lines)) {
-    maxNo = Math.max(maxNo, l.o || 0, l.n || 0);
-    cols = Math.max(cols, l.t.length);
-  }
-  const digits = String(maxNo).length;
-  const scroll = el('div', split ? 'scroll diff halves' : 'scroll diff');
-  const gutter = `${digits + 2}ch`;
-  scroll.style.setProperty('--gutter', gutter);
-  viewer.replaceChildren(bar, scroll);
-  d.scroll = scroll;
-  // A split row takes the lines its longer half needs; virtual corrects a guess that misses.
-  const lines = split && (() => {
-    const probe = scroll.appendChild(el('span', 'probe', 'x'.repeat(100)));
-    const ch = probe.getBoundingClientRect().width / 100;
-    probe.remove();
-    const fit = Math.max(1, Math.floor((scroll.clientWidth / 2 - 1) / ch) - digits - 3); // gutter, padding
-    return i => (rows[i].sep ? 1 : Math.max(wrapped(rows[i].l?.t ?? '', fit), wrapped(rows[i].r?.t ?? '', fit)));
-  });
-  const at = keep?.line ? rows.findIndex(r => r.r?.n === keep.line) : -1;
-  const top = topOf => (at >= 0 ? topOf(at) - keep.offset : keep ? keep.scrollTop : topOf(Math.max(0, (d.starts[0] ?? 0) - 5)));
-  d.relayout = () => { // the new-side line at the top stays where it is
-    const first = d.indexAt(scroll.scrollTop);
-    const i = rows.findIndex((r, j) => j >= first && r.r);
-    again(context, { scrollTop: scroll.scrollTop, line: rows[i]?.r.n, offset: d.topOf(i) - scroll.scrollTop, res, openedAt: d.openedAt });
-  };
-  d.rows = rows;
-  d.lines = maxNo;
-  d.gotoLine = n => { // the line number on the new side, else the old side
-    let i = rows.findIndex(r => r.r?.n >= n);
-    if (i < 0) i = rows.findIndex(r => r.l?.o >= n);
-    if (i >= 0) reveal(i, true);
-  };
-  const cls = l => (l.k === '+' ? 'add' : l.k === '-' ? 'del' : '');
-  const width = split ? '100%' : `calc(${gutter} * 2 + ${cols + 6}ch)`;
-  Object.assign(d, virtual(scroll, rows.length, width, top, (first, last) => {
-    const out = [];
-    for (let i = first; i < last; i++) {
-      const r = rows[i];
-      if (r.sep) {
-        const sep = el('div', 'ln sep');
-        const btn = el('button', 'more', '⋯ Show more lines');
-        btn.onclick = more;
-        sep.append(btn);
-        out.push(sep);
-      } else if (split) {
-        out.push(splitRow(r, i, cls));
-      } else {
-        const l = r.r || r.l;
-        out.push(line([l.o, l.n], l.x || l.t, cls(l), i));
+    if (res.folder) return viewer.replaceChildren(el('p', 'empty', 'Untracked folder with its own git repository'));
+    // A picture diff of a type with a source view can show the line diff below.
+    const modes = md && (res.image || res.diagram) && rendered(typeOf(change.path)) ? sourceSwitch(md, () => 1) : null;
+    if ((res.image || res.diagram) && !(modes && md.source)) {
+      const bar = change.orig || modes ? el('div', 'diffbar', change.orig ? `Renamed from ${change.orig}` : '') : null;
+      if (modes) bar.append(modes);
+      if (res.diagram) return diagramDiff(viewer, d, res.diagram, root, change, mode, bar);
+      return imageDiff(viewer, d, res.image, root, change, mode, bar);
+    }
+    const say = text => {
+      const bar = el('div', 'diffbar');
+      if (modes) bar.append(modes);
+      viewer.replaceChildren(...(modes ? [bar] : []), el('p', 'empty', text));
+    };
+    if (res.binary) return say('Binary file changed');
+    if (!res.hunks.length) return say(change.orig ? `Renamed from ${change.orig}, no content changes` : 'No content changes');
+
+    // The tab names the file; this bar keeps what the tab cannot show.
+    const full = context >= FULL;
+    const bar = el('div', 'diffbar', change.orig ? `Renamed from ${change.orig}` : '');
+    const toggle = el('button', 'tool', full ? 'Show changes only' : 'Show full file');
+    toggle.onclick = () => again(full ? 3 : FULL);
+    bar.append(toggle);
+    if (modes) bar.append(modes);
+
+    const split = diffLayout() === 'split';
+    const rows = [];
+    const more = () => again(context + 20);
+    const changed = r => r.l !== r.r;
+    res.hunks.forEach((h, i) => {
+      if (!full && (i > 0 || h.oldStart > 1 || h.newStart > 1)) rows.push({ sep: true });
+      for (const r of pairRows(h.lines, split)) {
+        if (changed(r) && (rows.length === 0 || rows.at(-1).sep || !changed(rows.at(-1)))) d.starts.push(rows.length);
+        rows.push(r);
       }
+    });
+
+    let maxNo = 0, cols = 0;
+    for (const l of res.hunks.flatMap(h => h.lines)) {
+      maxNo = Math.max(maxNo, l.o || 0, l.n || 0);
+      cols = Math.max(cols, l.t.length);
     }
-    return out;
-  }, lines));
-  if (keep?.scrollLeft) scroll.scrollLeft = keep.scrollLeft;
-  viewChanged();
+    const digits = String(maxNo).length;
+    const scroll = el('div', split ? 'scroll diff halves' : 'scroll diff');
+    const gutter = `${digits + 2}ch`;
+    scroll.style.setProperty('--gutter', gutter);
+    viewer.replaceChildren(bar, scroll);
+    d.scroll = scroll;
+    // A split row takes the lines its longer half needs; virtual corrects a guess that misses.
+    const lines = split && (() => {
+      const probe = scroll.appendChild(el('span', 'probe', 'x'.repeat(100)));
+      const ch = probe.getBoundingClientRect().width / 100;
+      probe.remove();
+      const fit = Math.max(1, Math.floor((scroll.clientWidth / 2 - 1) / ch) - digits - 3); // gutter, padding
+      return i => (rows[i].sep ? 1 : Math.max(wrapped(rows[i].l?.t ?? '', fit), wrapped(rows[i].r?.t ?? '', fit)));
+    });
+    const at = keep?.line ? rows.findIndex(r => r.r?.n === keep.line) : -1;
+    const top = topOf => (at >= 0 ? topOf(at) - keep.offset : keep?.scrollTop ?? topOf(Math.max(0, (d.starts[0] ?? 0) - 5)));
+    d.relayout = () => { // the new-side line at the top stays where it is
+      const first = d.indexAt(scroll.scrollTop);
+      const i = rows.findIndex((r, j) => j >= first && r.r);
+      again(context, { scrollTop: scroll.scrollTop, line: rows[i]?.r.n, offset: d.topOf(i) - scroll.scrollTop, res, openedAt: d.openedAt });
+    };
+    d.rows = rows;
+    d.lines = maxNo;
+    d.gotoLine = n => { // the line number on the new side, else the old side
+      let i = rows.findIndex(r => r.r?.n >= n);
+      if (i < 0) i = rows.findIndex(r => r.l?.o >= n);
+      if (i >= 0) reveal(i, true);
+    };
+    const cls = l => (l.k === '+' ? 'add' : l.k === '-' ? 'del' : '');
+    const width = split ? '100%' : `calc(${gutter} * 2 + ${cols + 6}ch)`;
+    Object.assign(d, virtual(scroll, rows.length, width, top, (first, last) => {
+      const out = [];
+      for (let i = first; i < last; i++) {
+        const r = rows[i];
+        if (r.sep) {
+          const sep = el('div', 'ln sep');
+          const btn = el('button', 'more', '⋯ Show more lines');
+          btn.onclick = more;
+          sep.append(btn);
+          out.push(sep);
+        } else if (split) {
+          out.push(splitRow(r, i, cls));
+        } else {
+          const l = r.r || r.l;
+          out.push(line([l.o, l.n], l.x || l.t, cls(l), i));
+        }
+      }
+      return out;
+    }, lines));
+    if (keep?.scrollLeft) scroll.scrollLeft = keep.scrollLeft;
+    viewChanged();
+  };
+  return keep?.res !== undefined ? draw() : loading(viewer, d, draw); // a reload brings its diff, or null
 }
 
 // imageDiff shows the before and after pictures side by side, each fit to its column.
