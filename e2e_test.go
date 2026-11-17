@@ -2333,6 +2333,7 @@ func TestBrowser(t *testing.T) {
 		publish(t, "0.0.1", exe)
 		app := namedRepo(t, "app")
 		write(t, filepath.Join(app, "app.go"), "package app\n")
+		write(t, filepath.Join(app, "notes.txt"), "Notes on the app.\n")
 		run(t, app, "add", ".")
 		run(t, app, "commit", "-qm", "Add the app")
 		appOrigin := filepath.Join(t.TempDir(), "app.git")
@@ -2357,6 +2358,37 @@ func TestBrowser(t *testing.T) {
 		r.waitFor("app.go in the tree", treeItem("app.go"))
 		r.click("app.go", treeItem("app.go"))
 		r.waitFor("the remote code", activeFile("app.go")+" && "+viewHas("package app"))
+
+		// A slow link: the machine's files and diffs wait until the test lets them through.
+		r.evalJS(`window.e2eHold = true; window.e2eHeld = []; window.e2eFetch = window.fetch;
+			window.fetch = (u, o) => e2eHold && /\/m\/.*\/api\/(file|lines|diff)\?/.test(u) ? new Promise(go => e2eHeld.push(go)).then(() => e2eFetch(u, o)) : e2eFetch(u, o);
+			window.e2eRelease = () => { e2eHold = false; e2eHeld.splice(0).forEach(go => go()); }`)
+		loadingShows := `document.querySelector('#viewer p.empty')?.textContent === 'Loading…'`
+		r.click("notes.txt", treeItem("notes.txt"))
+		r.waitFor("Loading… in place of app.go", activeFile("notes.txt")+" && "+loadingShows+" && !"+viewHas("package app"))
+		shots(r, "file-loading")
+		r.evalJS(`e2eRelease()`)
+		r.waitFor("the notes", activeFile("notes.txt")+" && "+viewHas("Notes on the app."))
+
+		// A file opened again shows what kijk kept of it at once, then shows the change on the machine.
+		r.evalJS(`e2eHold = true; window.e2eSawLoading = false;
+			window.e2eWatch = new MutationObserver(() => { if (` + loadingShows + `) e2eSawLoading = true; });
+			e2eWatch.observe(document.querySelector('#viewer'), {childList: true, subtree: true})`)
+		started := "package app\n\n// Start runs the app.\nfunc Start() {}\n"
+		write(t, filepath.Join(app, "app.go"), started+"\n// Stop ends the app.\nfunc Stop() {}\n")
+		// Once the change is seen, only the check after the open can show it.
+		r.waitFor("app.go marked as changed", treeItem("app.go")+`?.lastChild.classList.contains('modified')`)
+		r.evalJS(`e2eHeld.splice(0).forEach(go => go())`)
+		r.click("app.go", treeItem("app.go"))
+		r.waitFor("the kept app.go", activeFile("app.go")+" && "+viewHas("func Start() {}")+" && !"+viewHas("func Stop() {}")+" && e2eHeld.length > 0")
+		r.evalJS(`e2eRelease()`)
+		r.waitFor("the changed app.go", viewHas("func Stop() {}"))
+		if evalJS[bool](r, `e2eSawLoading`) {
+			t.Fatal("a kept file showed Loading…")
+		}
+		r.evalJS(`e2eWatch.disconnect(); window.fetch = e2eFetch`)
+		write(t, filepath.Join(app, "app.go"), started)
+		r.waitFor("app.go as committed", viewHas("func Start() {}")+" && !"+viewHas("func Stop() {}"))
 
 		// The PRs tab of a remote folder comes from the kijk on its machine; its copies count here.
 		r.waitFor("the PRs tab", `(b => b && !b.hidden && b.dataset.tip.startsWith('PRs\n'))(`+prsTab+`)`)
